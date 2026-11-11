@@ -413,3 +413,9 @@ fieldset[disabled] .input { opacity: .7; }
 .langsw button { border: 0; background: transparent; color: var(--tx-2); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; cursor: pointer; }
 .langsw button.on { background: var(--accent); color: var(--on-accent); }
 @media (max-width: 900px) { .langsw button { padding: 4px 7px; font-size: 11px; } }
+
+/* import center */
+.dropzone { display: grid; place-items: center; gap: 4px; text-align: center; margin-top: 14px; padding: 28px 16px; border: 2px dashed var(--line-2); border-radius: var(--r); cursor: pointer; background: var(--surface-2); transition: border-color .15s, background .15s; }
+.dropzone:hover, .dropzone.on { border-color: var(--accent); background: var(--accent-soft); }
+.kpi[data-f] { cursor: pointer; }
+.kpi .btn { max-width: 100%; }

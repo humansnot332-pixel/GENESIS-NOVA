@@ -12,6 +12,7 @@ import {
   openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync,
 } from "./comms.js";
+import { viewImport } from "./import.js";
 import { CONFIG } from "./config.js";
 import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
@@ -204,6 +205,7 @@ const NAV = [
   ["Admin", () => isMgr()],
   ["team", "Team", "users", () => isAdmin()],
   ["automation", "Automation", "bot", () => isMgr()],
+  ["import", "Data import", "upload", () => isMgr()],
   ["audit", "Audit log", "shield", () => isAdmin()],
 ];
 const TITLES = Object.fromEntries(NAV.filter((n) => n.length >= 3 && typeof n[1] === "string").map((n) => [n[0], n[1]]));
@@ -365,6 +367,7 @@ ACT.lead = (t) => openLead(+t.dataset.id);
 ACT.bell = (t) => toggleNotifications(t);
 VIEWS.inbox = (el, soft, params) => viewInbox(el, params || { id: location.hash.split("/")[2] });
 VIEWS.templates = (el) => viewTemplates(el);
+VIEWS.import = (el) => viewImport(el);
 VIEWS.requests = (el) => viewRequests(el);
 ACT.go = (t) => { location.hash = "#/" + t.dataset.go; };
 
@@ -570,6 +573,7 @@ async function openLead(id, opt = {}) {
           <dt>Status</dt><dd>${canEdit ? `<select class="input" id="stSel" style="height:30px">${STATUSES.map(([k, lab]) => `<option value="${k}" ${k === l.status ? "selected" : ""}>${lab}</option>`).join("")}</select>` : statusBadge(l.status)}</dd>
           <dt>Deal value</dt><dd>${l.deal_value ? inr(l.deal_value) : "—"}</dd>
           <dt>Industry</dt><dd>${h(l.industry || "—")}</dd>
+          ${l.gstin || l.address || l.state ? `<dt>GSTIN</dt><dd class="mono" data-raw>${h(l.gstin || "—")}</dd><dt>Address</dt><dd data-raw>${h([l.address, l.state, l.pincode].filter(Boolean).join(", ") || "—")}</dd>` : ""}
           <dt>Products</dt><dd>${(l.products || []).map((p) => `<span class="badge" style="margin:0 4px 4px 0">${h(p)}</span>`).join("") || "—"}</dd>
           <dt>Email</dt><dd>${h(see ? l.email || "—" : l.email ? maskEmail(l.email) : "—")}</dd>
           <dt>Emails</dt><dd>${l.email_count || 0} bheje · ${l.reply_count || 0} replies${l.last_reply_at ? " · last reply " + h(ago(l.last_reply_at)) : ""}</dd>
@@ -692,7 +696,7 @@ async function openLead(id, opt = {}) {
     await sb.from("tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", c.dataset.tdone); toast("Task done ✔"); reopen();
   });
   d.querySelector("[data-mkrfq]")?.addEventListener("click", () => rfqForm({ lead_id: id, company: l.company, contact: l.contact_name, phone: l.phone, email: l.email, city: l.city }));
-  d.querySelector("[data-mkq]")?.addEventListener("click", () => quoteEditor({ lead_id: id, to_party: { name: l.company, contact: l.contact_name, email: l.email, address: [l.area, l.city].filter(Boolean).join(", "), state: "Maharashtra" }, items: [] }));
+  d.querySelector("[data-mkq]")?.addEventListener("click", () => quoteEditor({ lead_id: id, to_party: { name: l.company, contact: l.contact_name, email: l.email, address: l.address || [l.area, l.city].filter(Boolean).join(", "), state: l.state || "Maharashtra", gstin: l.gstin || "" }, items: [] }));
   d.querySelector("[data-del]")?.addEventListener("click", async () => {
     if (!(await confirmBox(`"${l.company}" ko permanently delete karna hai?`, "Delete"))) return;
     const { error: e1 } = await sb.from("leads").delete().eq("id", id); if (e1) return fail(e1);
@@ -724,6 +728,10 @@ function leadForm(l = {}, done) {
       <div><label class="f">Category</label><select class="input" name="category">${CATEGORIES.map((c) => `<option ${c === l.category ? "selected" : ""}>${c}</option>`).join("")}</select></div>
       <div><label class="f">Deal value (₹)</label><input class="input" name="deal_value" type="number" min="0" step="1" value="${h(l.deal_value || "")}"></div>
       <div><label class="f">Tags (comma)</label><input class="input" name="tags" maxlength="200" value="${h((l.tags || []).join(", "))}"></div>
+      <div><label class="f">GSTIN</label><input class="input" name="gstin" maxlength="15" value="${h(l.gstin || "")}" style="text-transform:uppercase"></div>
+      <div><label class="f">State</label><input class="input" name="state" maxlength="60" value="${h(l.state || "")}"></div>
+      <div><label class="f">Address</label><input class="input" name="address" maxlength="500" value="${h(l.address || "")}"></div>
+      <div><label class="f">Pincode</label><input class="input" name="pincode" maxlength="12" value="${h(l.pincode || "")}"></div>
     </div>
     <label class="f">Products interest</label><div class="chips">${prods.map((p) => `<label class="chip ${(l.products || []).includes(p) ? "on" : ""}"><input type="checkbox" class="sr" name="products" data-multi="1" value="${h(p)}" ${(l.products || []).includes(p) ? "checked" : ""}>${h(p)}</label>`).join("")}</div>
     <label class="f">Notes</label><textarea class="input" name="notes" maxlength="5000">${h(l.notes || "")}</textarea></form>`,
@@ -734,6 +742,7 @@ function leadForm(l = {}, done) {
     const f = formData($("#lf", m));
     if (!f.company) return toast("Company naam zaroori hai", true);
     f.products = f.products || [];
+    if (f.gstin) f.gstin = f.gstin.toUpperCase().replace(/\s/g, "");
     f.tags = f.tags ? f.tags.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10) : [];
     f.deal_value = f.deal_value ? Number(f.deal_value) : null;
     let res;
