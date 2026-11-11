@@ -218,6 +218,7 @@ const NAV = [
   ["Admin", () => isMgr()],
   ["team", "Team", "users", () => isAdmin()],
   ["automation", "Automation", "bot", () => isMgr()],
+  ["company", "Company settings", "file", () => isMgr()],
   ["import", "Data import", "upload", () => isMgr()],
   ["duplicates", "Duplicate cleaner", "merge", () => isMgr()],
   ["audit", "Audit log", "shield", () => isAdmin()],
@@ -1383,6 +1384,39 @@ ACT.distribute = (b) => busy(b, async () => {
 // ---------------------------------------------------------------------
 //  AUTOMATION (admin edits, manager views + runs)
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+//  COMPANY SETTINGS (admin edits, manager views) — used on quotations,
+//  the customer quote page, invoices and GST (CGST/SGST vs IGST)
+// ---------------------------------------------------------------------
+const CO_FIELDS = [
+  ["name", "Company naam (quotation pe)", "Company name (on quotations)"], ["state", "State (GST ke liye zaroori)", "State (needed for GST)"],
+  ["gstin", "GSTIN", "GSTIN"], ["pan", "PAN", "PAN"], ["address", "Address", "Address"],
+  ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"],
+  ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
+];
+VIEWS.company = async (el) => {
+  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days"]);
+  const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
+  const c = m.company || {}, ro = !isAdmin();
+  el.innerHTML = `<div class="card" style="max-width:860px"><div class="card-h"><h3>🏢 ${L("Company details", "Company details")}</h3><span class="sp"></span>${ro ? `<span class="badge">${L("Read-only (Admin edit karega)", "Read-only (Admin edits)")}</span>` : ""}</div>
+    <div class="card-b"><fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
+      ${CO_FIELDS.map(([k, hi, en]) => `<div ${k === "address" ? 'style="grid-column:1/-1"' : ""}><label class="f">${h(L(hi, en))}</label><input class="input" data-co="${k}" value="${h(c[k] || "")}" maxlength="${k === "address" ? 300 : 120}"></div>`).join("")}
+      <div><label class="f">${L("Payment terms (din) — invoice due date ke liye", "Payment terms (days) — for invoice due dates")}</label><input class="input" type="number" min="0" max="365" id="coTerms" value="${h(m.payment_terms_days ?? 30)}"></div>
+    </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
+    <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
+  $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
+    if (!v.name || !v.state) return toast(L("Company naam aur State zaroori hai", "Company name and State are required"), true);
+    if (v.gstin && !/^\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/i.test(v.gstin)) return toast(L("GSTIN sahi format mein nahi hai", "GSTIN format looks wrong"), true);
+    const now = new Date().toISOString(), terms = Math.min(365, Math.max(0, +$("#coTerms", el).value || 0));
+    const { error } = await sb.from("settings").upsert([{ key: "company", value: v, updated_by: S.me.id, updated_at: now },
+      { key: "payment_terms_days", value: terms, updated_by: S.me.id, updated_at: now }]);
+    if (error) throw error;
+    S.settings.company = v; S.settings.payment_terms_days = terms;
+    toast(L("Company details saved ✔", "Company details saved ✔")); VIEWS.company(el);
+  }));
+};
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 VIEWS.automation = async (el) => {
   const [{ data: s }, { data: runs }] = await Promise.all([
