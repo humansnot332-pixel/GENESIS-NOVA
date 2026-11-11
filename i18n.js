@@ -192,7 +192,7 @@ const D = [
   ["ye RFQ maang raha/rahi hai", "is requesting this RFQ"], ["✅ Access mil gaya", "✅ Access granted"], ["❌ Request decline hui", "❌ Request declined"],
   ["ne lock aapko de diya", "gave you the lock"], ["ne request mana ki", "declined your request"], ["lead aapko assign hue", "leads assigned to you"],
   ["naye leads aapko mile", "new leads for you"], ["📨 Naya RFQ:", "📨 New RFQ:"], ["🔒 Lock liya:", "🔒 Locked by:"], ["🔓 Release kiya:", "🔓 Released by:"],
-  ["✉️ Email bheja →", "✉️ Email sent →"], ["📩 Reply aaya:", "📩 Reply received:"], ["banayi —", "created —"],
+  ["✉️ Email bheja →", "✉️ Email sent →"], ["delete ki", "deleted"], ["📩 Reply aaya:", "📩 Reply received:"], ["banayi —", "created —"],
   ["naye RFQs add hue", "new RFQs added"], ["naye leads,", "new leads,"], ["assign hue", "assigned"],
   ["Lead reassign sirf Manager/Admin kar sakta hai", "Only a Manager/Admin can reassign leads"], ["Admin apna khud ka role/active nahi hata sakta", "An Admin can't remove their own role / active status"],
   ["Lock badalne ke liye Claim / Release button use karo", "Use the Lock / Release buttons to change a lock"],

@@ -1114,10 +1114,22 @@ VIEWS.quotes = async (el) => {
   const { data, error } = await sb.from("quotations").select("id, quote_no, to_party, status, grand_total, created_at, owner_id, lead_id").order("created_at", { ascending: false }).limit(200);
   if (error) throw error;
   el.innerHTML = `<div class="toolbar"><span class="mu">GST quotations — CGST/SGST ya IGST state ke hisaab se apne aap.</span><span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
-  <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>` : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th></tr></thead><tbody>
-  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span></td><td class="num">${inr(q.grand_total)}</td><td>${h(userName(q.owner_id))}</td><td class="sub">${h(dOnly(q.created_at))}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
+  <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>` : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
+  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span></td><td class="num">${inr(q.grand_total)}</td><td>${h(userName(q.owner_id))}</td><td class="sub">${h(dOnly(q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
 };
 ACT.newQuote = () => quoteEditor({ to_party: { state: "Maharashtra" }, items: [] });
+ACT.delQuote = async (t) => {
+  const no = t.dataset.no || "", co = t.dataset.co || "";
+  if (!(await confirmBox(L(`Quotation ${no}${co ? " (" + co + ")" : ""} permanently delete karni hai? Ye wapas nahi aayegi.`,
+    `Delete quotation ${no}${co ? " (" + co + ")" : ""} permanently? This cannot be undone.`), L("Haan, delete karo", "Yes, delete")))) return;
+  const { data, error } = await sb.from("quotations").delete().eq("id", +t.dataset.id).select("id, lead_id, quote_no");
+  if (error) return fail(error);
+  if (!data?.length) return toast(L("Delete nahi hui — sirf banane wala ya Manager delete kar sakta hai", "Not deleted — only its creator or a Manager can delete it"), true);
+  const d = data[0];
+  if (d.lead_id) sb.from("activities").insert({ lead_id: d.lead_id, kind: "system", body: `🗑 Quotation ${d.quote_no} delete ki` }).then(() => {}, () => {});
+  closeModal(); toast(L(`🗑 Quotation ${no} delete ho gayi`, `🗑 Quotation ${no} deleted`));
+  if (S.route === "quotes") VIEWS.quotes($("#page"));
+};
 ACT.quote = async (t) => { const { data, error } = await sb.from("quotations").select("*").eq("id", +t.dataset.id).single(); if (error) return fail(error); quoteEditor(data); };
 
 function quoteEditor(q0) {
@@ -1137,7 +1149,7 @@ function quoteEditor(q0) {
     <div class="grid2 sec"><div><label class="f">Notes / terms</label><textarea class="input" id="qn" maxlength="3000">${h(q.notes || "Payment: 100% advance\nDelivery: 7-10 working days\nPrices valid for 7 days")}</textarea>
       <label class="f">Status</label><select class="input" id="qs">${["draft", "sent", "won", "lost"].map((s) => `<option ${s === (q.status || "draft") ? "selected" : ""}>${s}</option>`).join("")}</select></div>
       <div id="qt" style="padding-top:28px"></div></div>`,
-    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
+    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button>` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
   });
   const drawItems = () => {
     $("#qi tbody", m).innerHTML = q.items.map((it, i) => `<tr style="cursor:default">
