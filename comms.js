@@ -352,15 +352,15 @@ export async function viewInbox(el, params = {}) {
   }
   const s = IB.q.toLowerCase();
   if (s) { rows = rows.filter((r) => [r.counterpart, r.counterpart_name, r.subject, r.snippet, r.leads?.company].join(" ").toLowerCase().includes(s)); sentRows = sentRows.filter((r) => [r.counterpart, r.subject, r.leads?.company].join(" ").toLowerCase().includes(s)); }
-  const msOk = ms?.connected, outlookReady = !!CONFIG.MS_CLIENT_ID;
+  const msOk = ms?.connected, olReady = outlookReady();
   el.innerHTML = `
   <div class="card" style="padding:12px 16px;margin-bottom:14px"><div class="row">
     <b>📬 Reply sync</b>
     <span class="badge ${msOk ? "good" : ""}">Gmail: ${msOk ? "connected" + (ms.last_sync ? " · " + h(ago(ms.last_sync)) : "") : "setup nahi"}</span>
-    ${outlookReady ? `<span class="badge ${outlookConnected() ? "good" : ""}">Outlook: ${outlookConnected() ? "connected" : "connect nahi"}</span>` : ""}
+    ${olReady ? `<span class="badge ${outlookConnected() ? "good" : ""}">Outlook: ${outlookConnected() ? "connected" : "connect nahi"}</span>` : ""}
     <span class="sp" style="flex:1"></span>
     <button class="btn sm" id="ibGmail">${msOk ? "Gmail setup dobara" : "🔗 Gmail connect"}</button>
-    ${outlookReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
+    ${olReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
   </div></div>
   <div class="toolbar">
     <div class="chips">${[["replies", "📩 Replies"], ["sent", "📤 Sent"], ["due", "⏰ Follow-up due"]].map(([k, l]) => `<button class="chip ${IB.tab === k ? "on" : ""}" data-ibt="${k}">${l}</button>`).join("")}</div>
@@ -388,7 +388,7 @@ export async function viewInbox(el, params = {}) {
   $("#ibF", el)?.addEventListener("change", (e) => { IB.f = e.target.value; viewInbox(el); });
   let t; $("#ibQ", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { IB.q = e.target.value; viewInbox(el).then(() => { const i = $("#ibQ", el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 350); };
   $("#ibGmail", el).onclick = gmailSetup;
-  $("#ibOutlook", el)?.addEventListener("click", (e) => busy(e.target, async () => { const n = await outlookSync(true); toast(`Outlook sync: ${n} naye replies`); viewInbox(el); }));
+  $("#ibOutlook", el)?.addEventListener("click", (e) => busy(e.target, async () => { await outlookConnect(); viewInbox(el); }));
   $("#ibOutHelp", el)?.addEventListener("click", outlookHelp);
   $$("[data-ib]", el).forEach((d) => d.onclick = () => { $$(".ib-item", el).forEach((x) => x.classList.remove("on")); d.classList.add("on"); d.classList.remove("unread"); history.replaceState(null, "", "#/inbox/" + d.dataset.ib); readMail(+d.dataset.ib, $("#ibRead", el), () => viewInbox(el, { id: d.dataset.ib })); });
   $$("[data-fu]", el).forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await followupFor(+b.dataset.fu); });
@@ -531,32 +531,41 @@ export function gmailSetup() {
 // ---------------------------------------------------------------------
 //  Outlook / Microsoft 365 (Microsoft Graph, read-only Mail.Read)
 // ---------------------------------------------------------------------
-let pca = null, outlookTimer = null;
-const outlookConnected = () => { try { return !!sessionStorage.getItem("crm_ol"); } catch { return false; } };
+let pca = null, pcaId = "", outlookTimer = null;
+// Client ID comes from Admin → Company settings → Outlook (or config.js as a fallback)
+const msConf = () => { const o = S.settings?.outlook || {}; return { id: (o.client_id || CONFIG.MS_CLIENT_ID || "").trim(), tenant: (o.tenant_id || CONFIG.MS_TENANT_ID || "").trim() || "organizations" }; };
+export const outlookReady = () => /^[0-9a-f-]{36}$/i.test(msConf().id);
+// which Microsoft account belongs to which CRM user (shared laptops never mix two people's mail)
+const OLK = () => "crm_ol_" + (S.me?.id || "");
+const olAccount = () => { try { return localStorage.getItem(OLK()) || ""; } catch { return ""; } };
+const outlookConnected = () => !!olAccount();
 async function msal() {
-  if (pca) return pca;
+  const c = msConf();
+  if (pca && pcaId === c.id + c.tenant) return pca;
   await loadScript("msal-browser.min.js");
   const base = location.origin + location.pathname.replace(/[^/]*$/, "");
   pca = new window.msal.PublicClientApplication({
-    auth: { clientId: CONFIG.MS_CLIENT_ID, authority: "https://login.microsoftonline.com/" + (CONFIG.MS_TENANT_ID || "organizations"), redirectUri: base + "auth-redirect.html" },
-    cache: { cacheLocation: "sessionStorage" },
+    auth: { clientId: c.id, authority: "https://login.microsoftonline.com/" + c.tenant, redirectUri: base + "auth-redirect.html" },
+    cache: { cacheLocation: "localStorage" },      // stays connected after the browser is closed
   });
-  await pca.initialize();
+  await pca.initialize(); pcaId = c.id + c.tenant;
   return pca;
 }
 async function graphToken(interactive) {
   const p = await msal(), req = { scopes: ["Mail.Read"] };
-  const acc = p.getActiveAccount() || p.getAllAccounts()[0];
+  const mine = olAccount(), acc = mine && p.getAllAccounts().find((a) => a.homeAccountId === mine);
   if (acc) { try { return (await p.acquireTokenSilent({ ...req, account: acc })).accessToken; } catch (e) { if (!interactive) throw e; } }
   if (!interactive) throw new Error("Outlook login chahiye");
   const r = await p.loginPopup({ ...req, loginHint: S.me.email, prompt: "select_account" });
-  p.setActiveAccount(r.account);
+  try { localStorage.setItem(OLK(), r.account.homeAccountId); } catch { /* ignore */ }
   return (await p.acquireTokenSilent({ ...req, account: r.account })).accessToken;
 }
 export async function outlookSync(interactive = false) {
-  if (!CONFIG.MS_CLIENT_ID) return 0;
-  const token = await graphToken(interactive);
-  try { sessionStorage.setItem("crm_ol", "1"); } catch { /* ignore */ }
+  if (!outlookReady()) return 0;
+  let token;
+  try { token = await graphToken(interactive); }
+  catch (e) { if (!interactive) { try { localStorage.removeItem(OLK()); } catch { /* ignore */ } outlookBanner(); } throw e; }
+  document.getElementById("olBanner")?.replaceChildren();
   const { data: w, error } = await sb.functions.invoke("mail-sync?action=watchlist", { body: {} });
   if (error) throw error;
   const who = new Set(w.emails || []), doms = new Set(w.domains || []);
@@ -582,13 +591,38 @@ export async function outlookSync(interactive = false) {
   }
   return n;
 }
+// one click from anywhere: connect + first sync
+export async function outlookConnect() {
+  const n = await outlookSync(true);
+  toast(L(`✅ Outlook connected · ${n} naye replies`, `✅ Outlook connected · ${n} new replies`));
+  startOutlookAutoSync(); HOOK.refreshBadges();
+  return n;
+}
 export function startOutlookAutoSync() {
   clearInterval(outlookTimer);
-  if (!CONFIG.MS_CLIENT_ID || !outlookConnected()) return;
-  outlookTimer = setInterval(() => { if (!document.hidden) outlookSync(false).then((n) => { if (n) { toast(`📩 ${n} naye Outlook replies`); HOOK.refreshBadges(); } }).catch(() => {}); }, 5 * 60e3);
+  if (!outlookReady()) return;
+  if (!outlookConnected()) return outlookBanner();
+  const run = () => { if (!document.hidden) outlookSync(false).then((n) => { if (n) { toast(L(`📩 ${n} naye Outlook replies`, `📩 ${n} new Outlook replies`)); HOOK.refreshBadges(); } }).catch(() => {}); };
+  run();
+  outlookTimer = setInterval(run, 5 * 60e3);
+}
+// top-of-page reminder for Outlook users who haven't connected on this device yet
+function outlookBanner() {
+  const el = document.getElementById("olBanner");
+  if (!el || !outlookReady() || outlookConnected() || (S.me?.mail_provider || "outlook") !== "outlook") return;
+  try { if (sessionStorage.getItem("crm_ol_skip")) return; } catch { /* ignore */ }
+  el.innerHTML = `<div class="banner">📩 <div><b>${h(L("Outlook connect karo", "Connect Outlook"))}</b> — <span>${h(L("customers ke replies apne aap CRM Inbox mein aayenge (1 click, office account se login).", "customer replies will arrive in the CRM Inbox automatically (1 click, sign in with your office account)."))}</span></div>
+    <button class="btn sm primary right" id="olGo">🔗 ${h(L("Connect", "Connect"))}</button><button class="btn ghost sm" id="olSkip">${h(L("Baad mein", "Later"))}</button></div>`;
+  el.querySelector("#olGo").onclick = (e) => busy(e.target, outlookConnect);
+  el.querySelector("#olSkip").onclick = () => { try { sessionStorage.setItem("crm_ol_skip", "1"); } catch { /* ignore */ } el.replaceChildren(); };
+}
+// logout: forget Microsoft sign-in on this device
+export function outlookForget() {
+  clearInterval(outlookTimer); pca = null; pcaId = "";
+  try { Object.keys(localStorage).filter((k) => k.startsWith("msal.") || k.startsWith("crm_ol_") || /login\.windows\.net|microsoftonline/.test(k)).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
 }
 function outlookHelp() {
-  modal({ title: "Outlook / Microsoft 365 replies", body: `<p>Outlook replies padhne ke liye Admin ko ek baar Microsoft (Azure) mein free app register karni hogi (5 minute). Steps <span class="mono">SETUP.md → Outlook</span> mein hain. Uske baad <span class="mono">config.js</span> mein <span class="mono">MS_CLIENT_ID</span> daalte hi yahan "Outlook connect" button aa jayega.</p><p class="mu">Gmail / Google Workspace wale abhi “Gmail connect” use kar sakte hain.</p>` });
+  modal({ title: "Outlook / Microsoft 365 replies", body: `<p>${h(L("Outlook replies ke liye Admin ko ek baar setup karna hai (10 minute): Admin → Company settings → “Outlook setup” mein step-by-step guide hai. Uske baad yahan “Outlook connect” button aa jayega.", "To receive Outlook replies an Admin sets it up once (10 minutes): Admin → Company settings → “Outlook setup” has a step-by-step guide. After that an “Outlook connect” button appears here."))}</p>` });
 }
 
 // ---------------------------------------------------------------------

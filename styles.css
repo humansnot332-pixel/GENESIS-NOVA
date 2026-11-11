@@ -431,3 +431,6 @@ fieldset[disabled] .input { opacity: .7; }
 .lp-row[data-lpr], .lp-row[data-lpt] { cursor: pointer }
 .tbl.att td { padding-top: 6px; padding-bottom: 6px }
 .dupg .card-h h3 { font-size: 14px }
+.steps { margin: 6px 0 14px; padding-left: 20px; line-height: 1.9 }
+.steps li { margin-bottom: 4px }
+.steps .btn.sm { vertical-align: middle; height: 24px; padding: 0 8px }

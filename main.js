@@ -10,7 +10,7 @@ import {
 } from "./core.js";
 import {
   openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, toggleNotifications, unreadCounts,
-  requestAccess, startOutlookAutoSync,
+  requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
 import { viewImport } from "./import.js";
 import {
@@ -180,6 +180,7 @@ HOOK.go = (link) => { if (location.hash === link) route(); else location.hash = 
 
 sb.auth.onAuthStateChange((ev, session) => {
   if (ev === "PASSWORD_RECOVERY") return renderLogin("newpw");
+  if (ev === "SIGNED_OUT") outlookForget();
   if (ev === "SIGNED_OUT" || !session) { S.me = null; return renderLogin(); }
   if (ev === "SIGNED_IN" && !started) setTimeout(start, 0);
 });
@@ -253,7 +254,7 @@ function renderShell() {
         ${langSwitch()}
         <button class="btn ghost icon" id="themeBtn" data-act="theme" aria-label="Toggle theme">${ic(isDark() ? "sun" : "moon")}</button>
       </header>
-      <div id="banner"></div>
+      <div id="banner"></div><div id="olBanner"></div>
       <main class="page" id="page" tabindex="-1"></main>
     </div>
   </div>`;
@@ -1394,8 +1395,40 @@ const CO_FIELDS = [
   ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"],
   ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
 ];
+const redirectUrl = () => location.origin + location.pathname.replace(/[^/]*$/, "") + "auth-redirect.html";
+function outlookCard(o, ro) {
+  const ok = /^[0-9a-f-]{36}$/i.test(o.client_id || ""), cp = (v) => `<button class="btn sm" data-copy="${h(v)}">${ic("copy")} Copy</button>`;
+  return `<div class="card sec" style="max-width:860px"><div class="card-h"><h3>📩 Outlook / Microsoft 365 setup</h3><span class="sp"></span>
+    <span class="badge ${ok ? "good" : "warn"}">${ok ? L("Setup ho gaya", "Set up") : L("Setup baaki", "Not set up")}</span></div><div class="card-b">
+    <p class="mu" style="margin-top:0">${h(L("Isse customers ke Outlook replies CRM Inbox mein aate hain. Ek baar Microsoft 365 Admin karega (~10 min, free). CRM sirf mail padhta hai — na bhejta, na delete karta.", "This brings customers' Outlook replies into the CRM Inbox. A Microsoft 365 admin does it once (~10 min, free). The CRM only reads mail — it never sends or deletes."))}</p>
+    <ol class="steps">
+      <li>${L("Kholo", "Open")} <a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" target="_blank" rel="noopener noreferrer"><b>Entra → App registrations → New registration</b></a> ${L("(office admin account se)", "(with the office admin account)")}</li>
+      <li>Name: <span class="mono">Genesis CRM</span> ${cp("Genesis CRM")} · ${L("Supported accounts", "Supported accounts")}: <b>Accounts in this organizational directory only</b></li>
+      <li>Redirect URI → <b>Single-page application (SPA)</b> → <span class="mono" style="word-break:break-all">${h(redirectUrl())}</span> ${cp(redirectUrl())} → <b>Register</b></li>
+      <li><b>API permissions → Add a permission → Microsoft Graph → Delegated → Mail.Read</b> → Add → <b>Grant admin consent</b> ${L("(isse kisi user ko alag permission nahi deni padegi)", "(so no user is asked for permission)")}</li>
+      <li>${L("Overview page se dono IDs copy karke yahan paste karo aur Save:", "Copy both IDs from the Overview page, paste them here and Save:")}</li></ol>
+    <fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
+      <div><label class="f">Application (client) ID</label><input class="input mono" id="olId" value="${h(o.client_id || "")}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" maxlength="36"></div>
+      <div><label class="f">Directory (tenant) ID</label><input class="input mono" id="olTen" value="${h(o.tenant_id || "")}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" maxlength="36"></div></div>
+      <div class="row" style="margin-top:12px">${ro ? "" : `<button class="btn primary" id="olSave">Save</button>`}${ok ? `<button class="btn" id="olTest">🔗 ${L("Mera Outlook connect karke test karo", "Connect my Outlook & test")}</button>` : ""}</div></fieldset>
+    <p class="mu" style="font-size:12.5px;margin-bottom:0">${h(L("Save ke baad har Outlook user ko CRM ke upar “Outlook connect karo” ka 1-click button dikhega. Ek baar connect kiya toh browser band karne ke baad bhi connected rehta hai (logout karne pe hat jata hai).", "After saving, every Outlook user sees a 1-click “Connect Outlook” button at the top of the CRM. Once connected it stays connected after the browser is closed (logging out disconnects it)."))}</p>
+  </div></div>`;
+}
+function wireOutlookCard(el, o) {
+  $$("[data-copy]", el).forEach((b) => b.onclick = () => { navigator.clipboard?.writeText(b.dataset.copy).then(() => toast(L("Copied ✔", "Copied ✔")), () => prompt("Copy", b.dataset.copy)); });
+  $("#olTest", el)?.addEventListener("click", (e) => busy(e.target, outlookConnect));
+  $("#olSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const id = $("#olId", el).value.trim(), ten = $("#olTen", el).value.trim(), G = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (id && !G.test(id)) return toast(L("Client ID galat lag raha hai — 36 characters ka hota hai (xxxxxxxx-xxxx-…)", "Client ID looks wrong — it is 36 characters (xxxxxxxx-xxxx-…)"), true);
+    if (ten && !G.test(ten)) return toast(L("Tenant ID galat lag raha hai", "Tenant ID looks wrong"), true);
+    const v = { client_id: id, tenant_id: ten };
+    const { error } = await sb.from("settings").upsert({ key: "outlook", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    S.settings.outlook = v; toast(L("Outlook setup saved ✔ — ab test button dabao", "Outlook setup saved ✔ — now press the test button")); VIEWS.company(el); startOutlookAutoSync();
+  }));
+}
 VIEWS.company = async (el) => {
-  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days"]);
+  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook"]);
   const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
   const c = m.company || {}, ro = !isAdmin();
   el.innerHTML = `<div class="card" style="max-width:860px"><div class="card-h"><h3>🏢 ${L("Company details", "Company details")}</h3><span class="sp"></span>${ro ? `<span class="badge">${L("Read-only (Admin edit karega)", "Read-only (Admin edits)")}</span>` : ""}</div>
@@ -1403,7 +1436,9 @@ VIEWS.company = async (el) => {
       ${CO_FIELDS.map(([k, hi, en]) => `<div ${k === "address" ? 'style="grid-column:1/-1"' : ""}><label class="f">${h(L(hi, en))}</label><input class="input" data-co="${k}" value="${h(c[k] || "")}" maxlength="${k === "address" ? 300 : 120}"></div>`).join("")}
       <div><label class="f">${L("Payment terms (din) — invoice due date ke liye", "Payment terms (days) — for invoice due dates")}</label><input class="input" type="number" min="0" max="365" id="coTerms" value="${h(m.payment_terms_days ?? 30)}"></div>
     </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
+    ${outlookCard(m.outlook || {}, ro)}
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
+  wireOutlookCard(el, m.outlook || {});
   $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
     if (!v.name || !v.state) return toast(L("Company naam aur State zaroori hai", "Company name and State are required"), true);
