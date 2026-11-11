@@ -129,6 +129,8 @@ export function friendly(e) {
   if (/duplicate key.*phone/i.test(m)) return "Ye phone number pehle se kisi lead mein hai";
   if (/row-level security|permission denied/i.test(m)) return "Aapko ye karne ki permission nahi hai";
   if (/Failed to fetch|NetworkError/i.test(m)) return "Internet / server se connect nahi ho paya";
+  if (/PGRST116|0 rows|multiple \(or no\) rows/i.test(m)) return "Ye record ab aapke paas locked nahi hai (ya mila nahi) — refresh karo";
+  if (/Lock badalne/i.test(m)) return m;
   return m.length > 160 ? m.slice(0, 160) + "…" : m;
 }
 
@@ -220,3 +222,121 @@ export async function loadTeam() {
   S.teamById = new Map(S.team.map((u) => [u.id, u]));
 }
 export const assignable = () => S.team.filter((u) => u.active);
+
+// =====================================================================
+//  Cross-module hooks (main.js fills these; comms.js calls them)
+// =====================================================================
+export const HOOK = { openLead: null, softRefresh: () => {}, refreshBadges: () => {}, openRfq: null, go: (l) => { location.hash = l; } };
+
+// ---------- locks ----------
+export function lockOf(row) {
+  const free = !row?.owner_id || (row.lock_until && new Date(row.lock_until).getTime() < Date.now());
+  const mine = !free && row.owner_id === S.me?.id;
+  return { free, mine, other: !free && !mine, holder: free ? null : userName(row.owner_id), until: row?.lock_until };
+}
+export const canWork = (row) => isMgr() || lockOf(row).mine;
+export function lockBadge(row) {
+  const k = lockOf(row);
+  if (k.free) return `<span class="badge">🔓 Free</span>`;
+  if (k.mine) return `<span class="badge acc">🔒 Aap</span>`;
+  return `<span class="badge warn" title="Lock: ${h(k.holder)}">🔒 ${h(k.holder)}</span>`;
+}
+export async function claim(entity, id) {
+  const { data, error } = await sb.rpc("claim", { p_entity: entity, p_id: id });
+  if (error) throw error;
+  return data || { ok: false };
+}
+export function claimFailMsg(r) {
+  if (r.reason === "limit") return `Aapke paas already ${r.limit} active locks hain — pehle kuch release karo`;
+  if (r.reason === "locked") return `🔒 ${r.holder_name || "Koi aur"} is pe kaam kar raha hai (till ${dt(r.until)})`;
+  return "Lock nahi mil paya";
+}
+export const maskPhone = (p) => { const s = String(p || ""); const d = s.replace(/\D/g, ""); return d.length < 6 ? "•••" : s.slice(0, 7) + " ••• " + d.slice(-3); };
+export const maskEmail = (e) => { const [a, b] = String(e || "").split("@"); return b ? a.slice(0, 1) + "•••@" + b : "•••"; };
+
+// ---------- template variables ----------
+export function tplContext({ lead, rfq } = {}) {
+  const co = S.settings.company || {};
+  const products = rfq?.product || (lead?.products || []).slice(0, 3).join(", ");
+  return {
+    company: rfq?.company || lead?.company || "",
+    contact_name: rfq?.contact || lead?.contact_name || "",
+    city: rfq?.city || lead?.city || "",
+    area: lead?.area || "",
+    product: products || "",
+    rfq_no: rfq?.rfq_no || "",
+    qty_text: rfq?.qty ? ` (Qty: ${rfq.qty})` : "",
+    category: lead?.category || "",
+    my_name: S.me?.full_name || "",
+    my_first_name: (S.me?.full_name || "").split(" ")[0],
+    my_designation: S.me?.designation || ROLE[S.me?.role] || "",
+    my_email: S.me?.email || "",
+    my_phone: S.me?.phone || "",
+    company_name: co.name || "",
+    our_website: co.website || "www.genesisinfoserve.com",
+    today: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+  };
+}
+export const TPL_VARS = ["company", "contact_name", "city", "product", "rfq_no", "qty_text", "my_name", "my_designation", "my_email", "my_phone", "our_website", "today"];
+export function fillTemplate(text, ctx) {
+  return String(text || "").replace(/\{\{\s*([a-z_]+)\s*(?:\|([^}]*))?\}\}/gi, (_, k, fb) => {
+    const v = ctx[k.toLowerCase()];
+    return v != null && String(v).trim() !== "" ? String(v) : (fb ?? "");
+  }).replace(/[ \t]+\n/g, "\n").replace(/\n{4,}/g, "\n\n\n");
+}
+
+// **bold** → Unicode sans-serif bold (works inside plain-text compose links)
+const boldChar = (c) => {
+  const x = c.codePointAt(0);
+  if (x >= 65 && x <= 90) return String.fromCodePoint(0x1d5d4 + x - 65);
+  if (x >= 97 && x <= 122) return String.fromCodePoint(0x1d5ee + x - 97);
+  if (x >= 48 && x <= 57) return String.fromCodePoint(0x1d7ec + x - 48);
+  return c;
+};
+export const mdToPlain = (t) => String(t || "").replace(/\*\*([^*\n]+)\*\*/g, (_, s) => [...s].map(boldChar).join(""));
+export const mdStrip = (t) => String(t || "").replace(/\*\*([^*\n]+)\*\*/g, "$1");
+export function mdToHtml(t) {
+  return h(t).replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+\.[a-z]{2,}[^\s<]*)/gi, (u) => `<a href="${u.startsWith("http") ? u : "https://" + u}">${u}</a>`)
+    .replace(/\n/g, "<br>");
+}
+// WhatsApp uses *bold*
+export const mdToWhatsApp = (t) => String(t || "").replace(/\*\*([^*\n]+)\*\*/g, "*$1*");
+
+// ---------- compose links ----------
+const enc = encodeURIComponent;
+export function composeUrl(provider, { to = "", cc = "", bcc = "", subject = "", body = "" }) {
+  const qp = (o) => Object.entries(o).filter(([, v]) => v).map(([k, v]) => `${k}=${enc(v)}`).join("&");
+  if (provider === "gmail") return "https://mail.google.com/mail/?view=cm&fs=1&tf=1&" + qp({ authuser: S.me?.email, to, cc, bcc, su: subject, body });
+  if (provider === "outlook") return "https://outlook.office.com/mail/deeplink/compose?" + qp({ to, cc, bcc, subject, body });
+  return "mailto:" + String(to).split(/[,;]\s*/).filter(Boolean).map(enc).join(",") + "?" + qp({ cc, bcc, subject, body });
+}
+export const URL_LIMIT = { gmail: 7000, outlook: 7000, mailto: 1800 };
+export function waUrl(phone, text, web = false) {
+  let d = String(phone || "").replace(/\D/g, "");
+  if (d.length === 10) d = "91" + d; else if (d.length === 11 && d[0] === "0") d = "91" + d.slice(1);
+  return web ? `https://web.whatsapp.com/send?phone=${d}&text=${enc(text)}` : `https://wa.me/${d}?text=${enc(text)}`;
+}
+export function openTab(url) {
+  const w = window.open(url, "_blank");
+  if (w) { try { w.opener = null; } catch { /* ignore */ } return true; }
+  return false;
+}
+export async function copyRich(md) {
+  const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${mdToHtml(md)}</div>`;
+  try {
+    if (window.ClipboardItem) {
+      await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([mdToPlain(md)], { type: "text/plain" }) })]);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try { await navigator.clipboard.writeText(mdToPlain(md)); return true; } catch { return false; }
+}
+export function loadScript(src) {
+  return new Promise((res, rej) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) return res();
+    const s = document.createElement("script"); s.src = src; s.dataset.src = src;
+    s.onload = () => res(); s.onerror = () => rej(new Error(src + " load nahi hui"));
+    document.head.append(s);
+  });
+}

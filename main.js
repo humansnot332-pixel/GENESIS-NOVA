@@ -6,7 +6,12 @@ import {
   isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, telHref, waHref, isMobile, statusBadge, rfqBadge,
   userName, online, followBadge, toLocalInput, ic, toast, fail, modal, closeModal, confirmBox, formData, busy,
   toCSV, download, parseCSV, callFn, loadTeam, assignable,
+  HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, maskPhone, maskEmail,
 } from "./core.js";
+import {
+  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, toggleNotifications, unreadCounts,
+  requestAccess, startOutlookAutoSync,
+} from "./comms.js";
 import { CONFIG } from "./config.js";
 import { SCRIPTS, PRODUCTS } from "./data.js";
 
@@ -129,7 +134,8 @@ async function start() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
   S.session = session;
-  const { data: me, error } = await sb.from("profiles").select("*").eq("id", session.user.id).single();
+  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, last_seen")
+    .eq("id", session.user.id).single();
   if (error || !me) return renderLogin("login", "Profile load nahi hua: " + (error?.message || ""));
   if (!me.active) return renderPending();
   S.me = me;
@@ -145,8 +151,15 @@ async function start() {
   beat();
   timers.push(setInterval(() => !document.hidden && beat(), 60e3));
   timers.push(setInterval(() => !document.hidden && loadTeam().then(updateOnline).catch(() => {}), 120e3));
+  timers.push(setInterval(() => !document.hidden && refreshBadges(), 90e3));
   subscribeRealtime();
+  startOutlookAutoSync();
 }
+HOOK.openLead = (id, o) => openLead(id, o);
+HOOK.softRefresh = () => softRefresh();
+HOOK.refreshBadges = () => refreshBadges();
+HOOK.openRfq = (r) => rfqForm(r);
+HOOK.go = (link) => { if (location.hash === link) route(); else location.hash = link; };
 
 sb.auth.onAuthStateChange((ev, session) => {
   if (ev === "PASSWORD_RECOVERY") return renderLogin("newpw");
@@ -173,8 +186,11 @@ const NAV = [
   ["leads", "Leads", "list"],
   ["pipeline", "Pipeline", "kanban"],
   ["rfqs", "RFQs", "inbox"],
+  ["inbox", "Inbox (replies)", "mail"],
   ["tasks", "Follow-ups & tasks", "check"],
   ["quotes", "Quotations", "file"],
+  ["templates", "Email / WA templates", "copy"],
+  ["requests", "Lock requests", "shield"],
   ["Insights"],
   ["reports", "Reports", "chart"],
   ["Admin", () => isMgr()],
@@ -193,7 +209,7 @@ function renderShell() {
         ${NAV.map((n) => {
           if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
           if (n[3] && !n[3]()) return "";
-          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}</a>`;
+          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}</a>`;
         }).join("")}
       </nav>
       <div class="side-foot">
@@ -207,6 +223,7 @@ function renderShell() {
         <button class="btn ghost icon menu-btn" data-act="menu" aria-label="Menu">${ic("menu")}</button>
         <h1 id="title"></h1><div class="sp"></div>
         <button class="search-btn" data-act="palette">${ic("search")}<span>Search leads…</span><kbd>Ctrl K</kbd></button>
+        <button class="btn ghost icon bell" id="bellBtn" data-act="bell" aria-label="Notifications">🔔<span class="badge bad" id="bellBadge" hidden></span></button>
         <button class="btn ghost icon" id="themeBtn" data-act="theme" aria-label="Toggle theme">${ic(isDark() ? "sun" : "moon")}</button>
       </header>
       <div id="banner"></div>
@@ -220,13 +237,15 @@ function updateOnline() { if (S.route === "team" || S.route === "dashboard") sof
 
 async function refreshBadges() {
   const end = new Date(); end.setHours(23, 59, 59, 999);
-  const [r, d] = await Promise.all([
+  if (!S.me) return;
+  const [r, d, u, q] = await Promise.all([
     sb.from("rfqs").select("id", { count: "exact", head: true }).eq("status", "new"),
     sb.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", S.me.id).lte("next_follow_up", end.toISOString()).in("status", OPEN_STATUSES),
+    unreadCounts().catch(() => ({ notif: 0, replies: 0 })),
+    sb.from("lock_requests").select("id", { count: "exact", head: true }).eq("holder", S.me.id).eq("status", "pending"),
   ]);
-  const rb = $("#rfqBadge"), db = $("#dueBadge");
-  if (rb) { rb.hidden = !r.count; rb.textContent = r.count || ""; }
-  if (db) { db.hidden = !d.count; db.textContent = d.count || ""; }
+  const set = (id, n) => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n || ""; } };
+  set("#rfqBadge", r.count); set("#dueBadge", d.count); set("#inboxBadge", u.replies); set("#bellBadge", u.notif); set("#reqBadge", q.count);
 }
 
 async function loadAnnouncement() {
@@ -255,7 +274,12 @@ function route() {
   $("#side")?.classList.remove("open");
   const page = $("#page");
   page.innerHTML = `<div class="empty">Loading…</div>`;
-  Promise.resolve(VIEWS[S.route](page)).catch(fail);
+  closeDrawer();
+  refreshBadges();
+  Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
+    if (S.params.id && S.route === "leads") openLead(+S.params.id);
+    if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
+  }).catch(fail);
 }
 addEventListener("hashchange", route);
 
@@ -278,8 +302,23 @@ function subscribeRealtime() {
       if (["rfqs", "dashboard"].includes(S.route)) softRefresh();
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, (p) => {
-      if (p.eventType === "UPDATE" && p.new.owner_id === S.me.id && p.old && "owner_id" in p.old && p.old.owner_id !== S.me.id) toast(`📋 Naya lead assign hua: ${p.new.company}`);
+      const d = document.querySelector(".drawer");
+      // someone else took / released the lead that is open on my screen → refresh it
+      if (p.eventType === "UPDATE" && d && +d.dataset.id === p.new.id && p.old && "owner_id" in p.old && p.old.owner_id !== p.new.owner_id
+          && !document.activeElement?.matches(".drawer input, .drawer textarea") && !document.querySelector("[data-modal]")) {
+        if (p.new.owner_id && p.new.owner_id !== S.me.id) toast(`🔒 ${userName(p.new.owner_id)} ne ye lead lock kar liya`);
+        openLead(p.new.id, { queue: d.dataset.queue === "1" });
+      }
       if (["leads", "today", "pipeline", "dashboard"].includes(S.route)) softRefresh();
+      refreshBadges();
+    })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${S.me.id}` }, (p) => {
+      toast(p.new.title + (p.new.body ? " — " + p.new.body : ""));
+      refreshBadges();
+      if (S.route === "requests" && p.new.kind === "lock_request") softRefresh();
+    })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "email_messages", filter: `user_id=eq.${S.me.id}` }, () => {
+      if (["inbox", "dashboard"].includes(S.route)) softRefresh();
       refreshBadges();
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "announcements" }, () => loadAnnouncement())
@@ -305,6 +344,10 @@ ACT.menu = () => $("#side").classList.toggle("open");
 ACT.logout = async () => { if (await confirmBox("Logout karna hai?", "Logout")) sb.auth.signOut(); };
 ACT.dismissAnn = (t) => { try { localStorage.setItem("crm_ann", t.dataset.v); } catch { /* ignore */ } $("#banner").innerHTML = ""; };
 ACT.lead = (t) => openLead(+t.dataset.id);
+ACT.bell = (t) => toggleNotifications(t);
+VIEWS.inbox = (el, soft, params) => viewInbox(el, params || { id: location.hash.split("/")[2] });
+VIEWS.templates = (el) => viewTemplates(el);
+VIEWS.requests = (el) => viewRequests(el);
 ACT.go = (t) => { location.hash = "#/" + t.dataset.go; };
 
 // ---------------------------------------------------------------------
@@ -372,7 +415,9 @@ VIEWS.dashboard = async (el) => {
     ${isMgr() ? `<div class="card kpi"><div class="l">Team calls aaj</div><div class="v">${num(s.team_calls_today)}</div><div class="s">${S.team.filter(online).length} log online</div></div>` : ""}
     <div class="card kpi" data-act="go" data-go="tasks"><div class="l">Follow-ups (24 ghante)</div><div class="v">${num(s.followups_due)}</div><div class="s" style="color:${s.overdue ? "var(--bad)" : ""}">${num(s.overdue)} overdue</div></div>
     <div class="card kpi" data-act="go" data-go="rfqs"><div class="l">Open RFQs</div><div class="v">${num(s.rfqs_open)}</div><div class="s">${num(s.rfqs_new)} naye</div></div>
-    <div class="card kpi" data-act="go" data-go="leads"><div class="l">${isMgr() ? "Total leads" : "Mere leads"}</div><div class="v">${num(s.leads_total)}</div><div class="s">+${num(s.leads_new_week)} is hafte</div></div>
+    <div class="card kpi" data-act="go" data-go="leads"><div class="l">${isMgr() ? "Total leads" : "Mere active leads"}</div><div class="v">${num(isMgr() ? s.leads_total : s.my_leads)}</div><div class="s">${num(s.pool_free)} free pool mein · +${num(s.leads_new_week)} is hafte</div></div>
+    <div class="card kpi" data-act="go" data-go="inbox"><div class="l">Unread replies</div><div class="v">${num(s.replies_unread)}</div><div class="s">${num(s.emails_today)} emails aaj bheje</div></div>
+    ${s.requests_pending ? `<div class="card kpi" data-act="go" data-go="requests" style="border-color:var(--warn)"><div class="l">🙋 Lock requests</div><div class="v">${num(s.requests_pending)}</div><div class="s">Koi aapka lead maang raha hai</div></div>` : ""}
     <div class="card kpi" data-act="go" data-go="pipeline"><div class="l">Pipeline value</div><div class="v">${inrShort(s.pipeline_value)}</div><div class="s">Won (month): ${inrShort(s.won_value_month)}</div></div>
   </div>
   <div class="cols">
@@ -409,30 +454,43 @@ let queueIds = [];
 VIEWS.today = async (el) => {
   const end = new Date(); end.setHours(23, 59, 59, 999);
   const cols = "id, company, contact_name, phone, city, area, industry, category, status, score, next_follow_up, call_count, last_contacted, source";
-  const [{ data: due }, { data: fresh }, { data: st }] = await Promise.all([
+  const [{ data: due }, { data: fresh }, { data: pool }, { data: st }] = await Promise.all([
     sb.from("leads").select(cols).eq("owner_id", S.me.id).in("status", OPEN_STATUSES).lte("next_follow_up", end.toISOString()).order("next_follow_up").limit(100),
     sb.from("leads").select(cols).eq("owner_id", S.me.id).eq("status", "new").is("next_follow_up", null).order("score", { ascending: false }).order("created_at", { ascending: false }).limit(60),
+    sb.from("leads").select(cols).is("owner_id", null).eq("status", "new").order("score", { ascending: false }).order("created_at", { ascending: false }).limit(30),
     sb.rpc("dashboard_stats"),
   ]);
   const target = S.me.daily_target || 40, done = st?.my_calls_today || 0;
   queueIds = [...(due || []), ...(fresh || [])].map((l) => l.id);
+  poolIds = (pool || []).map((l) => l.id);
   const card = (l) => `
     <div class="card qi" data-act="lead" data-id="${l.id}">
       <div style="min-width:0"><h4>${h(l.company)} ${l.score >= 70 ? '<span class="badge good">🔥 Hot</span>' : ""}</h4>
         <div class="meta"><span>${h([l.area, l.city].filter(Boolean).join(", "))}</span><span>${h(l.industry || l.category)}</span>${statusBadge(l.status)}${followBadge(l.next_follow_up)}${l.call_count ? `<span>${l.call_count} calls</span>` : ""}${l.source === "google_places" || l.source === "indiamart" ? '<span class="badge acc">🆕 Auto</span>' : ""}</div></div>
-      <div class="acts">${l.phone ? `<a class="btn" href="${h(telHref(l.phone))}" data-stop>${ic("phone")} ${h(l.phone)}</a>` : ""}<button class="btn primary" data-act="lead" data-id="${l.id}">Open</button></div>
+      <div class="acts">${l.owner_id ? (l.phone ? `<a class="btn" href="${h(telHref(l.phone))}" data-stop>${ic("phone")} ${h(l.phone)}</a>` : "") : `<span class="badge">🔓 Free</span>`}<button class="btn primary" data-act="lead" data-id="${l.id}">${l.owner_id ? "Open" : "🔒 Lock & open"}</button></div>
     </div>`;
   el.innerHTML = `
   <div class="card" style="padding:16px;margin-bottom:16px"><div class="row"><div><div class="mu">Aaj ka target</div><div style="font-size:24px;font-weight:700">${done} / ${target} calls</div></div>
     <div style="flex:1;min-width:160px"><div class="meter" style="height:10px"><i style="width:${Math.min(100, (done / target) * 100)}%"></i></div></div>
-    <button class="btn primary" data-act="callNext" ${queueIds.length ? "" : "disabled"}>${ic("next")} Next lead call karo</button></div></div>
+    <button class="btn primary" data-act="callNext" ${queueIds.length || poolIds.length ? "" : "disabled"}>${ic("next")} Next lead call karo</button></div></div>
   <div class="sec-t">⏰ Follow-ups due (${(due || []).length})</div>
   <div class="queue">${(due || []).map(card).join("") || '<div class="card empty">Koi follow-up due nahi</div>'}</div>
   <div class="sec-t" style="margin-top:22px">🆕 Fresh leads (${(fresh || []).length})</div>
-  <div class="queue">${(fresh || []).map(card).join("") || `<div class="card empty"><b>Fresh leads khatam!</b>${isMgr() ? 'Automation se naye leads lao ya Leads page se assign karo.' : "Manager se naye leads assign karwao."}</div>`}</div>`;
+  <div class="queue">${(fresh || []).map(card).join("") || `<div class="card empty"><b>Aapke naam koi fresh lead nahi</b>Neeche free pool se lo — ya "Next lead" dabao, system apne aap agla free lead lock kar dega.</div>`}</div>
+  <div class="sec-t" style="margin-top:22px">🔓 Free pool — jo pehle lock kare uska (${st?.pool_free ?? (pool || []).length})</div>
+  <div class="queue">${(pool || []).map(card).join("") || `<div class="card empty">Pool khaali hai${isMgr() ? " — Automation se naye leads lao" : ""}</div>`}</div>`;
   $$("[data-stop]", el).forEach((a) => a.addEventListener("click", (e) => e.stopPropagation()));
 };
-ACT.callNext = () => { if (queueIds.length) openLead(queueIds[0], { queue: true }); };
+let poolIds = [];
+ACT.callNext = (b) => busy(b, async () => {
+  if (queueIds.length) return openLead(queueIds[0], { queue: true });
+  for (const id of poolIds.slice(0, 15)) {                 // grab the next free lead nobody else took
+    const r = await claim("lead", id);
+    if (r.ok) { poolIds = poolIds.filter((x) => x !== id); softRefresh(); return openLead(id, { queue: true }); }
+    if (r.reason === "limit") return toast(claimFailMsg(r), true);
+  }
+  toast("Abhi koi free lead nahi mila — refresh karke dekho", true);
+});
 
 // ---------------------------------------------------------------------
 //  LEAD DRAWER
@@ -449,10 +507,11 @@ async function openLead(id, opt = {}) {
   closeDrawer();
   const sc = SCRIPTS[l.category] || SCRIPTS["IT Hardware"];
   const name = S.me.full_name.split(" ")[0];
-  const waText = `Namaste! Main ${name}, ${CONFIG.COMPANY} se. ${sc.wa}`;
-  const canEdit = isMgr() || l.owner_id === S.me.id;
+  const lk = lockOf(l), canEdit = canWork(l), see = canEdit;     // only the holder (or a manager) sees full contact
+  const { data: mails } = await sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20);
   const scrim = document.createElement("div"); scrim.className = "scrim"; scrim.onclick = closeDrawer;
   const d = document.createElement("aside"); d.className = "drawer"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", l.company);
+  d.dataset.id = l.id; d.dataset.queue = opt.queue ? "1" : "";
   const actIc = { call: "📞", note: "📝", email: "✉️", whatsapp: "💬", meeting: "🤝", status: "🔁", assign: "👤", system: "⚙️" };
   d.innerHTML = `
     <div class="drawer-h">
@@ -460,11 +519,15 @@ async function openLead(id, opt = {}) {
         <div class="mu" style="font-size:13px">${h([l.contact_name, l.designation].filter(Boolean).join(" · "))}${l.contact_name ? " · " : ""}${h([l.area, l.city].filter(Boolean).join(", "))}</div></div>
         <button class="btn ghost icon" data-dclose aria-label="Close">${ic("x")}</button></div>
       <div class="row" style="margin-top:8px">${statusBadge(l.status)}<span class="badge">${h(l.category)}</span><span class="badge ${l.score >= 70 ? "good" : ""}">Score ${l.score}</span><span class="badge">${h(SOURCES[l.source] || l.source)}</span>${followBadge(l.next_follow_up)}</div>
+      ${lk.mine ? `<div class="lockbar mine">🔒 <div><b>Aap is lead pe kaam kar rahe ho</b><small>Lock ${lk.until && new Date(lk.until).getFullYear() > 9000 ? "permanent (won)" : "till " + h(dt(lk.until))} · har call / email pe apne aap badhta hai</small></div><button class="btn sm" data-lk="release">🔓 Release</button></div>`
+      : lk.other ? `<div class="lockbar other">🔒 <div><b>${h(lk.holder)} is lead pe kaam kar raha/rahi hai</b><small>Locked ${h(ago(l.locked_at))} · till ${h(dt(lk.until))}. Aap dekh sakte ho, par call / email / edit sirf ${h(lk.holder)} karega.</small></div>
+          ${isMgr() ? `<button class="btn sm" data-lk="force">Force release</button>` : `<button class="btn sm primary" data-lk="request">🙋 Request access</button>`}</div>`
+      : `<div class="lockbar free">🔓 <div><b>Free lead</b><small>Jo pehle lock karega, wahi kaam karega. Lock karte hi number dikhega.</small></div><button class="btn sm primary" data-lk="claim">🔒 Lock karke shuru karo</button></div>`}
       <div class="contact">
-        ${l.phone ? `<a class="btn primary" href="${h(telHref(l.phone))}">${ic("phone")} ${h(l.phone)}</a><button class="btn icon" data-copy="${h(l.phone)}" title="Copy" aria-label="Copy number">${ic("copy")}</button>` : ""}
-        ${isMobile(l.phone) ? `<a class="btn" target="_blank" rel="noopener noreferrer" href="${h(waHref(l.phone, waText))}">${ic("wa")} WhatsApp</a>` : ""}
-        ${l.email ? `<a class="btn" href="mailto:${h(l.email)}?subject=${encodeURIComponent("Genesis Infoserve – " + l.category)}">${ic("mail")} Email</a>` : ""}
-        ${(l.alt_phones || []).map((p) => `<a class="btn sm" href="${h(telHref(p))}">${h(p)}</a>`).join("")}
+        ${l.phone ? (see ? `<a class="btn primary" href="${h(telHref(l.phone))}">${ic("phone")} ${h(l.phone)}</a><button class="btn icon" data-copy="${h(l.phone)}" title="Copy" aria-label="Copy number">${ic("copy")}</button>`
+          : lk.free ? `<button class="btn primary" data-lk="claimcall">${ic("phone")} Lock & call</button>` : `<span class="btn" aria-disabled="true">${ic("phone")} ${h(maskPhone(l.phone))}</span>`) : ""}
+        ${see || lk.free ? `<button class="btn" data-comp="email">${ic("mail")} Email</button><button class="btn" data-comp="whatsapp">${ic("wa")} WhatsApp</button>` : ""}
+        ${see ? (l.alt_phones || []).map((p) => `<a class="btn sm" href="${h(telHref(p))}">${h(p)}</a>`).join("") : ""}
       </div>
     </div>
     <div class="drawer-b">
@@ -490,7 +553,8 @@ async function openLead(id, opt = {}) {
           <dt>Deal value</dt><dd>${l.deal_value ? inr(l.deal_value) : "—"}</dd>
           <dt>Industry</dt><dd>${h(l.industry || "—")}</dd>
           <dt>Products</dt><dd>${(l.products || []).map((p) => `<span class="badge" style="margin:0 4px 4px 0">${h(p)}</span>`).join("") || "—"}</dd>
-          <dt>Email</dt><dd>${h(l.email || "—")}</dd>
+          <dt>Email</dt><dd>${h(see ? l.email || "—" : l.email ? maskEmail(l.email) : "—")}</dd>
+          <dt>Emails</dt><dd>${l.email_count || 0} bheje · ${l.reply_count || 0} replies${l.last_reply_at ? " · last reply " + h(ago(l.last_reply_at)) : ""}</dd>
           <dt>Website</dt><dd>${l.website && /^https?:\/\//i.test(l.website) ? `<a href="${h(l.website)}" target="_blank" rel="noopener noreferrer">${h(l.website)}</a>` : h(l.website || "—")}</dd>
           <dt>Calls</dt><dd>${l.call_count} · last ${h(ago(l.last_contacted))}</dd>
           <dt>Added</dt><dd>${h(dOnly(l.created_at))} · ${h(SOURCES[l.source] || l.source)}</dd>
@@ -502,11 +566,17 @@ async function openLead(id, opt = {}) {
       </div></div>
 
       <div class="row sec">
-        <button class="btn" data-note>${ic("file")} Note add karo</button>
+        ${canEdit ? `<button class="btn" data-note>${ic("file")} Note add karo</button>
         <button class="btn" data-mkrfq>${ic("inbox")} RFQ banao</button>
-        <button class="btn" data-mkq>${ic("file")} Quotation banao</button>
+        <button class="btn" data-mkq>${ic("file")} Quotation banao</button>` : ""}
         ${isAdmin() ? `<button class="btn danger right" data-del>${ic("trash")} Delete</button>` : ""}
       </div>
+
+      ${(mails || []).length ? `<div class="card sec"><div class="card-h"><h3>✉️ Emails</h3><span class="sp"></span><a href="#/inbox" class="mu">Inbox →</a></div><div class="card-b" style="padding:4px 16px">
+        ${mails.map((e) => `<div class="row" style="padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:nowrap;cursor:${e.direction === "in" ? "pointer" : "default"}" ${e.direction === "in" ? `data-mail="${e.id}"` : ""}>
+          <span>${e.direction === "in" ? "📩" : "📤"}</span><div style="min-width:0;flex:1"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${h(e.subject || "(no subject)")}</b></div>
+          <div class="mu" style="font-size:12px">${e.direction === "in" ? "From " : "To "}${h(e.counterpart)} · ${h(ago(e.created_at))} · ${h(userName(e.user_id))}</div></div></div>`).join("")}
+      </div></div>` : ""}
 
       <div class="card sec"><div class="card-h"><h3>Activity</h3></div><div class="card-b" style="padding:4px 16px">
         <ul class="timeline">${(acts || []).map((a) => `<li><span class="ic">${actIc[a.kind] || "•"}</span><div><div>${a.outcome ? `<b>${h(OUTCOME[a.outcome]?.[1] || a.outcome)}</b> ` : ""}${h(a.body || (a.kind === "call" ? "" : a.kind))}</div><div class="t">${h(userName(a.user_id))} · ${h(dt(a.created_at))}</div></div></li>`).join("") || '<li><span></span><span class="mu">Abhi koi activity nahi</span></li>'}</ul>
@@ -516,11 +586,35 @@ async function openLead(id, opt = {}) {
   const reopen = () => openLead(id, opt);
   const after = () => { softRefresh(); refreshBadges(); };
   d.querySelector("[data-dclose]").onclick = closeDrawer;
+  $$("[data-mail]", d).forEach((x) => x.onclick = () => { closeDrawer(); location.hash = "#/inbox/" + x.dataset.mail; });
+  $$("[data-comp]", d).forEach((b) => b.onclick = async () => {
+    if (!(await ensureWork("lead", l))) return;
+    openComposer({ channel: b.dataset.comp, lead: l, onSent: reopen });
+  });
+  $$("[data-lk]", d).forEach((b) => b.onclick = () => busy(b, async () => {
+    const a = b.dataset.lk;
+    if (a === "claim" || a === "claimcall") {
+      const r = await claim("lead", id);
+      if (!r.ok) { toast(claimFailMsg(r), true); return reopen(); }
+      toast("🔒 Lead aapke naam lock ho gaya"); after();
+      if (a === "claimcall" && l.phone) location.href = telHref(l.phone);
+      return reopen();
+    }
+    if (a === "release" || a === "force") {
+      if (!(await confirmBox(a === "force" ? `${lk.holder} ka lock hatana hai? Unhe notification jayega.` : "Lead release karna hai? Phir koi bhi isko le sakta hai.", "Release"))) return;
+      const { data, error: e1 } = await sb.rpc("release", { p_entity: "lead", p_id: id });
+      if (e1) throw e1;
+      toast(data?.ok ? "🔓 Lead release ho gaya — ab pool mein hai" : "Release nahi hua", !data?.ok); after();
+      return opt.queue ? nextInQueue(id) : reopen();
+    }
+    if (a === "request") return requestAccess("lead", l);
+  }));
   d.querySelector("[data-copy]")?.addEventListener("click", (e) => { navigator.clipboard?.writeText(e.currentTarget.dataset.copy); toast("Copied"); });
 
   const setFollow = async (at) => {
-    const { error: e } = await sb.from("leads").update({ next_follow_up: at }).eq("id", id);
+    const { data: ok, error: e } = await sb.from("leads").update({ next_follow_up: at }).eq("id", id).select("id");
     if (e) return fail(e);
+    if (!ok?.length) { toast("Lead ab aapke paas locked nahi hai", true); return reopen(); }
     toast(at ? "Follow-up set: " + dt(at) : "Follow-up hata diya"); after(); reopen();
   };
   $$("[data-fu]", d).forEach((b) => b.onclick = () => {
@@ -545,7 +639,7 @@ async function openLead(id, opt = {}) {
     if (hrs) upd.next_follow_up = new Date(Date.now() + hrs * 3600e3).toISOString();
     else if (st) upd.next_follow_up = null;
     if (value) upd.deal_value = value;
-    if (Object.keys(upd).length) { const { error: e2 } = await sb.from("leads").update(upd).eq("id", id); if (e2) throw e2; }
+    if (Object.keys(upd).length) { const { error: e2 } = await sb.from("leads").update(upd).eq("id", id).select("id"); if (e2) throw e2; }
     toast("✔ " + lab + (hrs ? " · follow-up " + (hrs < 24 ? hrs + " ghante" : Math.round(hrs / 24) + " din") + " baad" : ""));
     after();
     if (opt.queue) return nextInQueue(id);
@@ -555,8 +649,9 @@ async function openLead(id, opt = {}) {
 
   $("#stSel", d)?.addEventListener("change", async (e) => {
     const v = e.target.value;
-    const { error: e1 } = await sb.from("leads").update({ status: v }).eq("id", id);
+    const { data: ok, error: e1 } = await sb.from("leads").update({ status: v }).eq("id", id).select("id");
     if (e1) return fail(e1);
+    if (!ok?.length) { toast("Lead ab aapke paas locked nahi hai", true); return reopen(); }
     await sb.from("activities").insert({ lead_id: id, kind: "status", body: `Status → ${STATUS[v].l}` });
     toast("Status updated"); after(); reopen();
   });
@@ -566,20 +661,20 @@ async function openLead(id, opt = {}) {
     toast("Assigned to " + userName(e.target.value || null)); after(); reopen();
   });
   d.querySelector("[data-edit]")?.addEventListener("click", () => leadForm(l, reopen));
-  d.querySelector("[data-note]").onclick = () => {
+  d.querySelector("[data-note]")?.addEventListener("click", () => {
     const m = modal({ title: "Note", body: `<textarea class="input" id="nt" maxlength="4000" style="min-height:120px"></textarea>`, foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="ns">Save</button>` });
     m.querySelector("#ns").onclick = (e) => busy(e.target, async () => {
       const body = $("#nt").value.trim(); if (!body) return;
       const { error: e1 } = await sb.from("activities").insert({ lead_id: id, kind: "note", body }); if (e1) throw e1;
       closeModal(); reopen();
     });
-  };
+  });
   d.querySelector("[data-task]")?.addEventListener("click", () => taskForm({ lead_id: id, title: "Call back: " + l.company }, reopen));
   $$("[data-tdone]", d).forEach((c) => c.onchange = async () => {
     await sb.from("tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", c.dataset.tdone); toast("Task done ✔"); reopen();
   });
-  d.querySelector("[data-mkrfq]").onclick = () => rfqForm({ lead_id: id, company: l.company, contact: l.contact_name, phone: l.phone, email: l.email, city: l.city });
-  d.querySelector("[data-mkq]").onclick = () => quoteEditor({ lead_id: id, to_party: { name: l.company, contact: l.contact_name, email: l.email, address: [l.area, l.city].filter(Boolean).join(", "), state: "Maharashtra" }, items: [] });
+  d.querySelector("[data-mkrfq]")?.addEventListener("click", () => rfqForm({ lead_id: id, company: l.company, contact: l.contact_name, phone: l.phone, email: l.email, city: l.city }));
+  d.querySelector("[data-mkq]")?.addEventListener("click", () => quoteEditor({ lead_id: id, to_party: { name: l.company, contact: l.contact_name, email: l.email, address: [l.area, l.city].filter(Boolean).join(", "), state: "Maharashtra" }, items: [] }));
   d.querySelector("[data-del]")?.addEventListener("click", async () => {
     if (!(await confirmBox(`"${l.company}" ko permanently delete karna hai?`, "Delete"))) return;
     const { error: e1 } = await sb.from("leads").delete().eq("id", id); if (e1) return fail(e1);
@@ -647,7 +742,10 @@ function leadQuery(sel, count) {
   if (LF.status === "open") q = q.in("status", OPEN_STATUSES); else if (LF.status) q = q.eq("status", LF.status);
   if (LF.category) q = q.eq("category", LF.category);
   if (LF.source) q = q.eq("source", LF.source);
-  if (LF.owner === "none") q = q.is("owner_id", null); else if (LF.owner === "me") q = q.eq("owner_id", S.me.id); else if (LF.owner) q = q.eq("owner_id", LF.owner);
+  if (LF.owner === "none") q = q.is("owner_id", null);
+  else if (LF.owner === "me") q = q.eq("owner_id", S.me.id);
+  else if (LF.owner === "others") q = q.not("owner_id", "is", null).neq("owner_id", S.me.id);
+  else if (LF.owner) q = q.eq("owner_id", LF.owner);
   return q;
 }
 VIEWS.leads = async (el, soft) => {
@@ -658,8 +756,8 @@ VIEWS.leads = async (el, soft) => {
       <select class="input" id="lst" aria-label="Status"><option value="">All status</option><option value="open" ${LF.status === "open" ? "selected" : ""}>Open (active)</option>${STATUSES.map(([k, l]) => `<option value="${k}" ${LF.status === k ? "selected" : ""}>${l}</option>`).join("")}</select>
       <select class="input" id="lcat" aria-label="Category"><option value="">All categories</option>${CATEGORIES.map((c) => `<option ${LF.category === c ? "selected" : ""}>${c}</option>`).join("")}</select>
       <select class="input" id="lsrc" aria-label="Source"><option value="">All sources</option>${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${LF.source === k ? "selected" : ""}>${v}</option>`).join("")}</select>
-      ${isMgr() ? `<select class="input" id="lown" aria-label="Owner"><option value="">All owners</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>Mine</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>Unassigned pool</option>${assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>${h(u.full_name)}</option>`).join("")}</select>` : ""}
-      <button class="btn" data-act="exportLeads">${ic("download")} Export</button>
+      <select class="input" id="lown" aria-label="Lock"><option value="">Sab leads</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>🔒 Mere (locked by me)</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>🔓 Free pool</option><option value="others" ${LF.owner === "others" ? "selected" : ""}>🔒 Doosron ke paas</option>${isMgr() ? assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>👤 ${h(u.full_name)}</option>`).join("") : ""}</select>
+      ${isMgr() ? `<button class="btn" data-act="exportLeads">${ic("download")} Export</button>` : ""}
       <button class="btn" data-act="importLeads">${ic("upload")} Import</button>
       <button class="btn primary" data-act="newLead">${ic("plus")} Lead</button>
     </div>
@@ -672,19 +770,19 @@ VIEWS.leads = async (el, soft) => {
   await drawLeads(el);
 };
 async function drawLeads(el) {
-  const { data, count, error } = await leadQuery("id, company, contact_name, phone, city, area, category, status, score, owner_id, next_follow_up, last_contacted, deal_value, source, created_at", true)
+  const { data, count, error } = await leadQuery("id, company, contact_name, phone, email, city, area, category, status, score, owner_id, lock_until, next_follow_up, last_contacted, deal_value, source, created_at, email_count, reply_count", true)
     .order(LF.sort, { ascending: LF.asc, nullsFirst: false }).order("id", { ascending: false }).range(LF.page * PAGE, LF.page * PAGE + PAGE - 1);
   if (error) return fail(error);
   const th = (k, l, cls = "") => `<th class="${cls}" data-sort="${k}" aria-sort="${LF.sort === k ? (LF.asc ? "ascending" : "descending") : "none"}">${l}${LF.sort === k ? (LF.asc ? " ↑" : " ↓") : ""}</th>`;
   $("#ltb", el).innerHTML = !data.length ? `<div class="empty"><b>Koi lead nahi mila</b>Filters badal ke dekho</div>` : `
-    <table class="tbl"><thead><tr>${isMgr() ? `<th style="width:34px"><input type="checkbox" id="lall" aria-label="Select all"></th>` : ""}
-      ${th("company", "Company")}<th>Phone</th>${th("city", "City")}${th("status", "Status")}${th("score", "Score", "num")}<th>Owner</th>${th("next_follow_up", "Follow-up")}${th("deal_value", "Value", "num")}${th("created_at", "Added")}</tr></thead>
+    <table class="tbl"><thead><tr><th style="width:34px"><input type="checkbox" id="lall" aria-label="Select all"></th>
+      ${th("company", "Company")}<th>Phone</th>${th("city", "City")}${th("status", "Status")}${th("score", "Score", "num")}<th>Lock</th>${th("next_follow_up", "Follow-up")}${th("deal_value", "Value", "num")}${th("created_at", "Added")}</tr></thead>
     <tbody>${data.map((l) => `<tr data-act="lead" data-id="${l.id}">
-      ${isMgr() ? `<td data-nolink><input type="checkbox" data-sel="${l.id}" ${LF.sel.has(l.id) ? "checked" : ""} aria-label="Select"></td>` : ""}
-      <td><div class="co">${h(l.company)}</div><div class="sub">${h(l.contact_name || l.category)}</div></td>
-      <td class="mono">${h(l.phone || "")}</td><td>${h(l.city || "")}<div class="sub">${h(l.area || "")}</div></td>
+      <td data-nolink><input type="checkbox" data-sel="${l.id}" ${LF.sel.has(l.id) ? "checked" : ""} aria-label="Select"></td>
+      <td><div class="co">${h(l.company)}${l.reply_count ? ' <span title="Reply aaya">📩</span>' : l.email_count ? ' <span title="Email bheja">📤</span>' : ""}</div><div class="sub">${h(l.contact_name || l.category)}</div></td>
+      <td class="mono">${h(canWork(l) ? l.phone || "" : l.phone ? maskPhone(l.phone) : "")}</td><td>${h(l.city || "")}<div class="sub">${h(l.area || "")}</div></td>
       <td>${statusBadge(l.status)}</td><td class="num">${l.score}</td>
-      <td>${l.owner_id ? h(userName(l.owner_id)) : '<span class="mu">Pool</span>'}</td>
+      <td>${lockBadge(l)}</td>
       <td>${followBadge(l.next_follow_up) || '<span class="mu">—</span>'}</td>
       <td class="num">${l.deal_value ? inrShort(l.deal_value) : ""}</td>
       <td class="sub">${h(ago(l.created_at))}<div>${h(SOURCES[l.source] || l.source)}</div></td></tr>`).join("")}</tbody></table>`;
@@ -702,22 +800,34 @@ function drawBulk(el) {
   const b = $("#lbulk", el); if (!b) return;
   if (!LF.sel.size) { b.innerHTML = ""; return; }
   b.innerHTML = `<div class="bulk"><b>${LF.sel.size} selected</b>
-    <select class="input" id="bOwn" aria-label="Assign to"><option value="">Assign to…</option><option value="__pool">— Unassigned pool —</option>${assignable().map((u) => `<option value="${u.id}">${h(u.full_name)}</option>`).join("")}</select>
-    <select class="input" id="bSt" aria-label="Set status"><option value="">Status set…</option>${STATUSES.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
+    <button class="btn sm" id="bMail">✉️ Bulk email</button>
+    ${isMgr() ? `<select class="input" id="bOwn" aria-label="Assign to"><option value="">Assign to…</option><option value="__pool">— Free pool —</option>${assignable().map((u) => `<option value="${u.id}">${h(u.full_name)}</option>`).join("")}</select>
+    <select class="input" id="bSt" aria-label="Set status"><option value="">Status set…</option>${STATUSES.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>` : ""}
     <button class="btn sm" id="bClr">Clear</button></div>`;
   $("#bClr", b).onclick = () => { LF.sel.clear(); drawLeads(el); };
-  $("#bOwn", b).onchange = async (e) => {
+  $("#bMail", b).onclick = (e) => busy(e.target, async () => {
+    const ids = [...LF.sel];
+    if (ids.length > 50) return toast("Ek baar mein max 50 companies ko bulk email (Gmail limit) — kam select karo", true);
+    const { data, error } = await sb.from("leads").select("id, company, email, owner_id, lock_until, status, email_count, reply_count").in("id", ids);
+    if (error) throw error;
+    const ok = data.filter((l) => canWork(l)), locked = data.length - ok.length;
+    if (!ok.length) return toast("Bulk email sirf apne locked leads ko — pehle lock karo", true);
+    if (!ok.some((l) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l.email || ""))) return toast("Selected leads mein kisi ka email address nahi hai", true);
+    if (locked) toast(`${locked} leads skip (doosron ke / free) — sirf aapke ${ok.length} leads ko jayega`);
+    openComposer({ channel: "email", bulk: ok, onSent: () => { LF.sel.clear(); drawLeads(el); } });
+  });
+  $("#bOwn", b)?.addEventListener("change", async (e) => {
     const v = e.target.value; if (!v) return;
     const { data: n, error } = await sb.rpc("assign_leads", { ids: [...LF.sel], owner: v === "__pool" ? null : v });
     if (error) return fail(error);
     toast(`${n} leads assign ho gaye ✔`); LF.sel.clear(); drawLeads(el);
-  };
-  $("#bSt", b).onchange = async (e) => {
+  });
+  $("#bSt", b)?.addEventListener("change", async (e) => {
     const v = e.target.value; if (!v) return;
     const { error } = await sb.from("leads").update({ status: v }).in("id", [...LF.sel]);
     if (error) return fail(error);
     toast("Status updated ✔"); LF.sel.clear(); drawLeads(el);
-  };
+  });
 }
 ACT.newLead = () => leadForm({});
 ACT.exportLeads = (b) => busy(b, async () => {
@@ -784,7 +894,7 @@ ACT.importLeads = () => {
 const PCOLS = ["new", "contacted", "interested", "quote_sent", "demo", "negotiation", "won"];
 VIEWS.pipeline = async (el) => {
   const mineOnly = el.dataset.mine === "1" || !isMgr();
-  let q = sb.from("leads").select("id, company, city, deal_value, status, owner_id, next_follow_up, score").in("status", PCOLS).order("score", { ascending: false }).limit(700);
+  let q = sb.from("leads").select("id, company, city, deal_value, status, owner_id, lock_until, next_follow_up, score").in("status", PCOLS).order("score", { ascending: false }).limit(700);
   if (mineOnly) q = q.eq("owner_id", S.me.id);
   const { data, error } = await q; if (error) throw error;
   const by = Object.fromEntries(PCOLS.map((k) => [k, []])); data.forEach((l) => by[l.status]?.push(l));
@@ -793,7 +903,7 @@ VIEWS.pipeline = async (el) => {
       <span class="mu">Card ko drag karke status badlo · har column max 100 dikhte hain</span></div>
     <div class="board">${PCOLS.map((k) => `<div class="col" data-col="${k}">
       <div class="col-h">${statusBadge(k)} <span>${by[k].length}</span><small>${inrShort(by[k].reduce((a, l) => a + Number(l.deal_value || 0), 0))}</small></div>
-      ${by[k].slice(0, 100).map((l) => `<div class="card kc" draggable="true" data-id="${l.id}" data-act="lead"><b>${h(l.company)}</b><div class="sub">${h(l.city || "")}${l.deal_value ? " · " + inrShort(l.deal_value) : ""}</div><div class="row" style="margin-top:6px;gap:6px">${followBadge(l.next_follow_up)}${isMgr() ? `<span class="sub">${h(userName(l.owner_id))}</span>` : ""}</div></div>`).join("")}
+      ${by[k].slice(0, 100).map((l) => `<div class="card kc" draggable="${canWork(l)}" data-id="${l.id}" data-act="lead"><b>${h(l.company)}</b><div class="sub">${h(l.city || "")}${l.deal_value ? " · " + inrShort(l.deal_value) : ""}</div><div class="row" style="margin-top:6px;gap:6px">${followBadge(l.next_follow_up)}${isMgr() ? `<span class="sub">${h(userName(l.owner_id))}</span>` : ""}</div></div>`).join("")}
     </div>`).join("")}</div>`;
   $$("[data-pm]", el).forEach((b) => b.onclick = () => { el.dataset.mine = b.dataset.pm; VIEWS.pipeline(el); });
   let dragId = null;
@@ -807,8 +917,10 @@ VIEWS.pipeline = async (el) => {
     col.addEventListener("drop", async (e) => {
       e.preventDefault(); col.classList.remove("drop");
       const st = col.dataset.col, l = data.find((x) => x.id === dragId); if (!l || l.status === st) return;
-      const { error: e1 } = await sb.from("leads").update({ status: st }).eq("id", dragId);
+      if (!canWork(l)) return toast("Ye lead aapke paas locked nahi hai", true);
+      const { data: upd, error: e1 } = await sb.from("leads").update({ status: st }).eq("id", dragId).select("id");
       if (e1) return fail(e1);
+      if (!upd?.length) { toast("Lock badal gaya — status update nahi hua", true); return VIEWS.pipeline(el); }
       sb.from("activities").insert({ lead_id: dragId, kind: "status", body: `Status → ${STATUS[st].l}` }).then(() => {});
       toast(`${l.company} → ${STATUS[st].l}`); VIEWS.pipeline(el);
     });
@@ -832,7 +944,7 @@ VIEWS.rfqs = async (el) => {
       <button class="btn" data-act="rfqHook">🔗 Website form</button>
       <button class="btn primary" data-act="newRfq">${ic("plus")} RFQ</button></div>
     <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Koi RFQ nahi</b>IndiaMART / website se naye RFQ apne aap yahan aayenge.</div>` : `
-      <table class="tbl"><thead><tr><th>RFQ</th><th>Company</th><th>Requirement</th><th>Due</th><th>Status</th><th>Owner</th><th class="num">Quoted</th><th>Source</th></tr></thead><tbody>
+      <table class="tbl"><thead><tr><th>RFQ</th><th>Company</th><th>Requirement</th><th>Due</th><th>Status</th><th>Lock</th><th class="num">Quoted</th><th>Source</th></tr></thead><tbody>
       ${data.map((r) => {
         const dd = r.due_date ? Math.round((new Date(r.due_date) - today) / 864e5) : null;
         const open = !["won", "lost"].includes(r.status);
@@ -840,7 +952,7 @@ VIEWS.rfqs = async (el) => {
         <td><div class="co">${h(r.company)}</div><div class="sub">${h([r.contact, r.city].filter(Boolean).join(" · "))}</div></td>
         <td>${h(r.product || "")}${r.qty ? ` <span class="sub">× ${h(r.qty)}</span>` : ""}<div class="sub" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(r.details || "")}</div></td>
         <td>${dd === null ? "—" : open ? `<span class="badge ${dd < 0 ? "bad" : dd <= 2 ? "warn" : ""}">${dd < 0 ? "Overdue " + -dd + "d" : dd === 0 ? "Aaj" : dd + " din"}</span>` : h(dOnly(r.due_date))}</td>
-        <td>${rfqBadge(r.status)}</td><td>${r.owner_id ? h(userName(r.owner_id)) : '<span class="mu">—</span>'}</td>
+        <td>${rfqBadge(r.status)}</td><td>${lockBadge(r)}</td>
         <td class="num">${r.quoted_value ? inrShort(r.quoted_value) : ""}</td><td class="sub">${h(SOURCES[r.source] || r.source)}</td></tr>`;
       }).join("")}</tbody></table>`}</div></div>`;
   $$("[data-rs]", el).forEach((b) => b.onclick = () => { RF.st = b.dataset.rs; VIEWS.rfqs(el); });
@@ -867,9 +979,13 @@ ACT.rfqHook = () => {
 };
 function rfqForm(r) {
   const isNew = !r.id;
+  const lk = lockOf(r), work = isNew || canWork(r);
   const m = modal({
     title: isNew ? "Naya RFQ" : `${r.rfq_no} · ${r.company}`, wide: true,
-    body: `<form id="rf"><div class="grid2">
+    body: `${isNew ? "" : lk.mine ? `<div class="lockbar mine" style="margin-top:12px">🔒 <div><b>Ye RFQ aapke paas hai</b><small>Lock till ${h(dt(lk.until))}</small></div><button type="button" class="btn sm" id="rfRel">🔓 Release</button></div>`
+      : lk.other ? `<div class="lockbar other" style="margin-top:12px">🔒 <div><b>${h(lk.holder)} is RFQ pe kaam kar raha/rahi hai</b><small>Aap dekh sakte ho, edit / quote / email sirf ${h(lk.holder)} karega.</small></div>${isMgr() ? `<button type="button" class="btn sm" id="rfRel">Force release</button>` : `<button type="button" class="btn sm primary" id="rfReq">🙋 Request access</button>`}</div>`
+      : `<div class="lockbar free" style="margin-top:12px">🔓 <div><b>Free RFQ</b><small>Lock karo — phir sirf aap is pe kaam karoge.</small></div><button type="button" class="btn sm primary" id="rfClaim">🔒 Lock karo</button></div>`}
+    <form id="rf"><fieldset ${work ? "" : "disabled"} style="border:0;padding:0;margin:0"><div class="grid2">
       <div><label class="f">Company *</label><input class="input" name="company" required maxlength="200" value="${h(r.company || "")}"></div>
       <div><label class="f">Contact</label><input class="input" name="contact" maxlength="120" value="${h(r.contact || "")}"></div>
       <div><label class="f">Phone</label><input class="input" name="phone" maxlength="40" value="${h(r.phone || "")}"></div>
@@ -879,22 +995,37 @@ function rfqForm(r) {
       <div><label class="f">Due date</label><input class="input" name="due_date" type="date" value="${h(r.due_date || new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10))}"></div>
       <div><label class="f">Status</label><select class="input" name="status">${RFQ_STATUSES.map(([k, l]) => `<option value="${k}" ${k === (r.status || "new") ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Quoted value (₹)</label><input class="input" name="quoted_value" type="number" min="0" value="${h(r.quoted_value || "")}"></div>
-      <div><label class="f">Owner</label>${isMgr() ? `<select class="input" name="owner_id"><option value="">— Unassigned —</option>${assignable().map((u) => `<option value="${u.id}" ${u.id === r.owner_id ? "selected" : ""}>${h(u.full_name)}</option>`).join("")}</select>` : `<input class="input" disabled value="${h(r.owner_id ? userName(r.owner_id) : "Mujhe assign karo (save pe)")}">`}</div>
-    </div><label class="f">Details</label><textarea class="input" name="details" maxlength="5000">${h(r.details || "")}</textarea>
+      <div><label class="f">Lock / owner</label>${isMgr() ? `<select class="input" name="owner_id"><option value="">— Free pool —</option>${assignable().map((u) => `<option value="${u.id}" ${u.id === r.owner_id ? "selected" : ""}>${h(u.full_name)}</option>`).join("")}</select>` : `<input class="input" disabled value="${h(isNew ? "Aap (save pe)" : lk.free ? "Free" : lk.holder)}">`}</div>
+    </div><label class="f">Details</label><textarea class="input" name="details" maxlength="5000">${h(r.details || "")}</textarea></fieldset>
     ${r.source && r.source !== "manual" ? `<p class="mu">Source: ${h(SOURCES[r.source] || r.source)} ${r.source_ref ? "· " + h(r.source_ref) : ""}</p>` : ""}</form>`,
-    foot: `${r.lead_id ? `<button class="btn" id="rfLead">Lead kholo</button>` : ""}${!isNew ? `<button class="btn" id="rfQ">${ic("file")} Quotation</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="rfS">Save</button>`,
+    foot: `${r.lead_id ? `<button class="btn" id="rfLead">Lead kholo</button>` : ""}${!isNew && (work || lk.free) ? `<button class="btn" id="rfMail">${ic("mail")} Email</button><button class="btn" id="rfWa">${ic("wa")} WhatsApp</button><button class="btn" id="rfQ">${ic("file")} Quotation</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button>${work ? `<button class="btn primary" id="rfS">Save</button>` : ""}`,
   });
+  const reload = async () => { const { data } = await sb.from("rfqs").select("*").eq("id", r.id).single(); if (data) rfqForm(data); };
+  $("#rfClaim", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const x = await claim("rfq", r.id); if (!x.ok) toast(claimFailMsg(x), true); else toast("🔒 RFQ aapke naam lock"); refreshBadges(); reload(); if (S.route === "rfqs") softRefresh();
+  }));
+  $("#rfRel", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+    if (!(await confirmBox(lk.mine ? "RFQ release karna hai?" : `${lk.holder} ka lock hatana hai?`, "Release"))) return;
+    const { error } = await sb.rpc("release", { p_entity: "rfq", p_id: r.id }); if (error) throw error;
+    toast("🔓 Released"); reload(); if (S.route === "rfqs") softRefresh();
+  }));
+  $("#rfReq", m)?.addEventListener("click", () => requestAccess("rfq", r));
+  const outreach = async (channel) => { if (!(await ensureWork("rfq", r))) return; openComposer({ channel, rfq: r, onSent: () => S.route === "rfqs" && softRefresh() }); };
+  $("#rfMail", m)?.addEventListener("click", () => outreach("email"));
+  $("#rfWa", m)?.addEventListener("click", () => outreach("whatsapp"));
   $("#rfLead", m)?.addEventListener("click", () => { closeModal(); openLead(r.lead_id); });
-  $("#rfQ", m)?.addEventListener("click", () => quoteEditor({ rfq_id: r.id, lead_id: r.lead_id, to_party: { name: r.company, contact: r.contact, email: r.email, address: r.city, state: "Maharashtra" }, items: [{ desc: [r.product, r.details].filter(Boolean).join(" — ").slice(0, 300), hsn: "", qty: parseFloat(r.qty) || 1, price: 0, tax: 18 }] }));
-  $("#rfS", m).onclick = (e) => busy(e.target, async () => {
+  $("#rfQ", m)?.addEventListener("click", async () => { if (!(await ensureWork("rfq", r))) return; quoteEditor({ rfq_id: r.id, lead_id: r.lead_id, to_party: { name: r.company, contact: r.contact, email: r.email, address: r.city, state: "Maharashtra" }, items: [{ desc: [r.product, r.details].filter(Boolean).join(" — ").slice(0, 300), hsn: "", qty: parseFloat(r.qty) || 1, price: 0, tax: 18 }] }); });
+  $("#rfS", m)?.addEventListener("click", (e) => busy(e.target, async () => {
     const f = formData($("#rf", m));
     if (!f.company || !f.product) return toast("Company aur product zaroori", true);
     f.quoted_value = f.quoted_value ? Number(f.quoted_value) : null;
-    if (!isMgr()) { delete f.owner_id; if (!r.owner_id) f.owner_id = S.me.id; }
-    const res = isNew ? await sb.from("rfqs").insert({ ...f, lead_id: r.lead_id || null, source: "manual" }) : await sb.from("rfqs").update(f).eq("id", r.id);
+    if (!isMgr()) delete f.owner_id; else if (!f.owner_id) f.owner_id = null;
+    const res = isNew ? await sb.from("rfqs").insert({ ...f, lead_id: r.lead_id || null, source: "manual" }).select("id")
+      : await sb.from("rfqs").update(f).eq("id", r.id).select("id");
     if (res.error) throw res.error;
+    if (!res.data?.length) return toast("Save nahi hua — RFQ ab aapke paas locked nahi hai", true);
     closeModal(); toast("RFQ saved ✔"); refreshBadges(); if (S.route === "rfqs") VIEWS.rfqs($("#page"));
-  });
+  }));
 }
 
 // ---------------------------------------------------------------------
@@ -1048,7 +1179,7 @@ function printQuote(q) {
 // ---------------------------------------------------------------------
 VIEWS.reports = async (el) => {
   const days = +(el.dataset.days || 30);
-  const [{ data: calls, error }, { data: st }] = await Promise.all([sb.rpc("calls_report", { days }), sb.rpc("dashboard_stats")]);
+  const [{ data: calls, error }, { data: st }, { data: em }] = await Promise.all([sb.rpc("calls_report", { days }), sb.rpc("dashboard_stats"), sb.rpc("email_report", { days })]);
   if (error) throw error;
   const users = new Map();
   (calls || []).forEach((c) => { const u = users.get(c.user_id) || { calls: 0, pos: 0, days: new Set() }; u.calls += +c.calls; u.pos += +c.positive; u.days.add(c.day); users.set(c.user_id, u); });
@@ -1071,7 +1202,10 @@ VIEWS.reports = async (el) => {
         ${rows.map((r) => `<tr style="cursor:default"><td class="co">${h(r.name)}</td><td class="num">${num(r.calls)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num">${num(r.pos)}</td><td class="num">${r.conv.toFixed(1)}%</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Is period mein koi call nahi</td></tr>`}</tbody></table></div></div>
       <div class="stack"><div class="card"><div class="card-h"><h3>Funnel</h3></div><div class="card-b">${hbars(STATUSES.map(([k, l]) => ({ l, v: bs[k] || 0 })))}</div></div>
         <div class="card"><div class="card-h"><h3>Lead sources</h3></div><div class="card-b">${hbars(Object.entries(src).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ l: SOURCES[k] || k, v })))}</div></div></div>
-    </div>`;
+    </div>
+    <div class="card sec"><div class="card-h"><h3>✉️ Email performance (${days} din)</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Emails bheje</th><th class="num">Replies</th><th class="num">Companies jinhone reply kiya</th><th class="num">Reply rate</th></tr></thead><tbody>
+      ${(em || []).sort((a, b) => b.sent - a.sent).map((r) => `<tr style="cursor:default"><td class="co">${h(userName(r.user_id))}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.replies)}</td><td class="num">${num(r.replied_contacts)}</td><td class="num">${r.sent ? ((r.replied_contacts / r.sent) * 100).toFixed(1) : "0.0"}%</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Is period mein CRM se koi email nahi gaya</td></tr>`}
+    </tbody></table></div></div>`;
   $$("[data-rd]", el).forEach((b) => b.onclick = () => { el.dataset.days = b.dataset.rd; VIEWS.reports(el); });
   $("#rexp", el).onclick = () => download(`calls-report-${days}d.csv`, toCSV((calls || []).map((c) => ({ ...c, name: userName(c.user_id) })), [["day", "Date"], ["name", "User"], ["calls", "Calls"], ["positive", "Positive"]]));
 };
@@ -1247,7 +1381,10 @@ VIEWS.audit = async (el) => {
 // ---------------------------------------------------------------------
 ACT.profile = () => {
   const m = modal({
-    title: "Mera profile", body: `<label class="f">Naam</label><input class="input" id="pn" maxlength="80" value="${h(S.me.full_name)}">
+    title: "Mera profile", body: `<div class="grid2"><div><label class="f">Naam (email signature mein jayega)</label><input class="input" id="pn" maxlength="80" value="${h(S.me.full_name)}"></div>
+      <div><label class="f">Designation</label><input class="input" id="pd" maxlength="80" value="${h(S.me.designation || "")}" placeholder="e.g. Sales Executive"></div>
+      <div><label class="f">Phone (signature)</label><input class="input" id="pph" maxlength="40" value="${h(S.me.phone || "")}" placeholder="+91 …"></div>
+      <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
       <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}/din</p>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">
@@ -1256,7 +1393,8 @@ ACT.profile = () => {
   });
   $("#ps", m).onclick = (e) => busy(e.target, async () => {
     const n = $("#pn", m).value.trim(), p1 = $("#pp1", m).value, p2 = $("#pp2", m).value;
-    if (n && n !== S.me.full_name) { const { error } = await sb.from("profiles").update({ full_name: n }).eq("id", S.me.id); if (error) throw error; S.me.full_name = n; }
+    const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value };
+    { const { error } = await sb.from("profiles").update(upd).eq("id", S.me.id); if (error) throw error; Object.assign(S.me, upd); }
     if (p1) {
       if (p1 !== p2) return toast("Password match nahi hua", true);
       if (!pwOk(p1)) return toast("10+ chars, letters + number", true);

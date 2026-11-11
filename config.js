@@ -9,4 +9,7 @@ export const CONFIG = {
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJyb2VvcGZsd29md2Zmam9hbGZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQzMTMxODIsImV4cCI6MjEwOTg4OTE4Mn0.yT_kru79EyWBq2R9sAiap3qaw_vQBaPpywkMj8VYK_4",
   COMPANY: "Genesis Infoserve",
   IDLE_LOGOUT_MIN: 30,
+  // Outlook / Microsoft 365 replies (optional) — Azure "App registration" ke IDs. Khaali = Outlook button nahi dikhega.
+  MS_CLIENT_ID: "",
+  MS_TENANT_ID: "",
 };

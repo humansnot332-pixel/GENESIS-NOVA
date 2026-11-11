@@ -359,3 +359,51 @@ pre.log { background: var(--surface-2); border-radius: var(--r-sm); padding: 10p
   .qdoc { padding: 0; }
 }
 .print-root { display: none; }
+
+/* ---------- locks ---------- */
+.lockbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; padding: 9px 12px; border-radius: var(--r-sm); font-size: 13.5px; border: 1px solid transparent; }
+.lockbar > div { flex: 1; min-width: 0; }
+.lockbar b { display: block; }
+.lockbar small { color: var(--tx-2); font-size: 12px; }
+.lockbar.mine { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.lockbar.other { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.lockbar.free { background: var(--surface-2); border-color: var(--line); }
+.btn[aria-disabled="true"] { cursor: default; opacity: .75; }
+fieldset[disabled] .input { opacity: .7; }
+
+/* ---------- bell + notifications ---------- */
+.bell { position: relative; font-size: 16px; }
+.bell .badge { position: absolute; top: -2px; right: -4px; height: 17px; min-width: 17px; padding: 0 4px; font-size: 10.5px; justify-content: center; }
+.notif-panel { position: fixed; z-index: 90; width: min(380px, calc(100vw - 16px)); max-height: 70vh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg); animation: pop2 .15s ease-out; }
+.notif-list { overflow-y: auto; }
+.notif { padding: 11px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.notif:hover { background: var(--hover); }
+.notif.unread { background: var(--accent-soft); }
+.notif.unread:hover { background: color-mix(in srgb, var(--accent-soft) 70%, var(--hover)); }
+
+/* ---------- inbox ---------- */
+.inbox { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 14px; align-items: start; }
+.ib-list { max-height: calc(100vh - 250px); overflow-y: auto; }
+.ib-item { padding: 11px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ib-item:hover { background: var(--hover); }
+.ib-item.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.ib-item.unread .ib-co, .ib-item.unread .ib-sub { font-weight: 700; }
+.ib-co { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ib-sub { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ib-snip { font-size: 12.5px; color: var(--mu); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ib-read { min-height: 300px; position: sticky; top: 70px; }
+.ib-head { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.ib-body { padding: 16px 18px; font-size: 14px; line-height: 1.6; max-height: calc(100vh - 380px); overflow-y: auto; overflow-wrap: anywhere; }
+.ib-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); }
+@media (max-width: 900px) {
+  .inbox { grid-template-columns: 1fr; }
+  .ib-list { max-height: none; }
+  .ib-read { position: static; }
+  .ib-body { max-height: none; }
+}
+
+/* modal: header + footer always visible, only the body scrolls */
+.modal { display: flex; flex-direction: column; overflow: hidden; max-height: 88vh; top: 6vh; }
+.modal-b { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.modal-h, .modal-f { flex: none; }
+.modal-f { flex-wrap: wrap; background: var(--surface); }
