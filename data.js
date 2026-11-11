@@ -161,7 +161,15 @@ export const PRODUCTS = {
   {
    "n": "AMC & IT Support",
    "d": "Annual maintenance contract aur IT support. Hardware bechne ke baad recurring income ke liye."
-  }
+  },
+  { "n": "Facility Management (FMS)", "d": "Onsite engineer mid-large companies ke liye — infra management, fast response." },
+  { "n": "IT Security & Audit", "d": "Network access control, email security, IDS, security audit." },
+  { "n": "Server Room & Board Room", "d": "Server room design, board room / conference room setup." },
+  { "n": "Email Server & Microsoft 365 Migration", "d": "Email server, communication solutions, M365 migration." },
+  { "n": "Thin Clients", "d": "Low-cost desktops on a central server." },
+  { "n": "Laptop Repair", "d": "All-brand laptop service & repair — motherboard, BGA, hinges, LCD; laptop AMC." },
+  { "n": "Audio Video Conferencing", "d": "Zoom / Teams rooms, cameras, speakers." },
+  { "n": "Data Recovery", "d": "HDD / SSD / RAID data recovery." }
  ]
 };
 

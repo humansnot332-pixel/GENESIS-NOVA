@@ -434,3 +434,18 @@ fieldset[disabled] .input { opacity: .7; }
 .steps { margin: 6px 0 14px; padding-left: 20px; line-height: 1.9 }
 .steps li { margin-bottom: 4px }
 .steps .btn.sm { vertical-align: middle; height: 24px; padding: 0 8px }
+
+/* ---------- product catalogue ---------- */
+.pcat { columns: 2 420px; column-gap: 16px }
+.pgroup { break-inside: avoid; margin-bottom: 16px; display: inline-block; width: 100% }
+.plist { padding: 4px 8px 8px }
+.pitem { display: flex; align-items: center; gap: 12px; padding: 9px 8px; border-radius: 10px }
+.pitem + .pitem { border-top: 1px solid var(--line) }
+.pitem[data-pid] { cursor: pointer }
+.pitem[data-pid]:hover { background: var(--hover) }
+.pitem.off { opacity: .55 }
+.pbadge { flex: none; width: 34px; height: 34px; border-radius: 9px; color: #fff; font: 700 12px/34px Inter, sans-serif; text-align: center; letter-spacing: -.3px }
+.pmain { flex: 1; min-width: 0 }
+.pname { font-size: 13.5px }
+.pmain .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.pprice { text-align: right; white-space: nowrap }
