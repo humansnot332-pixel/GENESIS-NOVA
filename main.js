@@ -1472,7 +1472,7 @@ VIEWS.automation = async (el) => {
       <label class="f">Run days (alternate days default: Mon / Wed / Fri)</label>
       <div class="chips">${DAYS.map((d, i) => `<label class="chip ${(c.days || []).includes(i) ? "on" : ""}"><input type="checkbox" class="sr" data-day="${i}" ${(c.days || []).includes(i) ? "checked" : ""}>${d}</label>`).join("")}</div>
       <div class="grid2"><div><label class="f">Max naye leads per run</label><input class="input" id="aMax" type="number" min="5" max="300" value="${c.max_new_leads_per_run || 60}"></div>
-        <div><label class="f">Sources</label><label class="check"><input type="checkbox" id="aG" ${c.sources?.google_places !== false ? "checked" : ""}> Google Places</label> &nbsp; <label class="check"><input type="checkbox" id="aI" ${c.sources?.indiamart !== false ? "checked" : ""}> IndiaMART</label></div></div>
+        <div><label class="f">Sources</label><label class="check"><input type="checkbox" id="aO" ${c.sources?.osm !== false ? "checked" : ""}> OpenStreetMap <span class="badge good">free</span></label> &nbsp; <label class="check"><input type="checkbox" id="aG" ${c.sources?.google_places !== false ? "checked" : ""}> Google Places <span class="mu">(key)</span></label> &nbsp; <label class="check"><input type="checkbox" id="aI" ${c.sources?.indiamart !== false ? "checked" : ""}> IndiaMART</label></div></div>
       <label class="check" style="margin-top:12px"><input type="checkbox" id="aAs" ${c.auto_assign !== false ? "checked" : ""}> Naye leads team mein apne aap baanto (least-loaded first, category match)</label>
       <label class="f">Cities (comma separated)</label><input class="input" id="aCity" value="${h((c.cities || []).join(", "))}">
       <label class="f">Search queries — ek line = <span class="mono">query with {city} | Category | Industry | product1; product2</span></label>
@@ -1495,7 +1495,7 @@ VIEWS.automation = async (el) => {
     const v = {
       ...c, enabled: $("#aEn", el).checked, days: $$("[data-day]", el).filter((x) => x.checked).map((x) => +x.dataset.day),
       max_new_leads_per_run: Math.min(300, Math.max(5, +$("#aMax", el).value || 60)), auto_assign: $("#aAs", el).checked,
-      sources: { google_places: $("#aG", el).checked, indiamart: $("#aI", el).checked },
+      sources: { ...(c.sources || {}), osm: $("#aO", el).checked, google_places: $("#aG", el).checked, indiamart: $("#aI", el).checked },
       cities: $("#aCity", el).value.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 30), queries,
     };
     if (!v.days.length && v.enabled) return toast("Kam se kam ek din choose karo", true);

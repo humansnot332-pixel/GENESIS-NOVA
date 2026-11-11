@@ -29,7 +29,7 @@ export const RFQ_STATUSES = [["new", "New", "info"], ["in_progress", "In progres
 export const RFQ_STATUS = Object.fromEntries(RFQ_STATUSES.map(([k, l, c]) => [k, { l, c }]));
 export const ROLES = [["admin", "Admin"], ["manager", "Manager"], ["sales", "Sales Executive"], ["telecaller", "Telecaller"], ["presales", "Presales / Tech"]];
 export const ROLE = Object.fromEntries(ROLES);
-export const SOURCES = { manual: "Manual", import: "CSV import", legacy: "Old desk", google_places: "Auto · Google", indiamart: "IndiaMART", webform: "Website", webhook: "Webhook" };
+export const SOURCES = { manual: "Manual", import: "CSV import", legacy: "Old desk", google_places: "Auto · Google", osm: "Auto · OpenStreetMap", indiamart: "IndiaMART", webform: "Website", webhook: "Webhook" };
 
 // call outcomes → [label, tone, new lead status | null, auto follow-up in hours | null]
 export const OUTCOMES = [
