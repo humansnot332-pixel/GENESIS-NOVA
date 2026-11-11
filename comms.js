@@ -81,11 +81,11 @@ export async function openComposer(opts) {
   const all = (await loadTemplates()).filter((t) => t.channel === channel && (t.use_for === "any" || t.use_for === (rfq ? "rfq" : "lead")));
   // current-language templates first (auto-picked), the other language still selectable
   const list = [...all.filter((t) => (t.lang || "en") === getLang()), ...all.filter((t) => (t.lang || "en") !== getLang())];
-  const stage = pickStage({ channel, lead, rfq, reply });
+  const stage = opts.stage || pickStage({ channel, lead, rfq, reply });
   const mine = (t) => (t.lang || "en") === getLang();
   const auto = reply ? null : (list.find((t) => mine(t) && t.is_shared && t.stage === stage) || list.find((t) => mine(t) && t.stage === stage)
     || list.find((t) => t.is_shared && t.stage === stage) || list[0]);
-  const ctx = tplContext({ lead: bulk ? null : lead, rfq });
+  const ctx = { ...tplContext({ lead: bulk ? null : lead, rfq }), ...(opts.vars || {}) };
   if (bulk) { ctx.company = L("aapki company", "your organization"); ctx.contact_name = ""; }
   const isEmail = channel === "email";
   const lastMail = lead?.last_emailed_at || rfq?.last_emailed_at;

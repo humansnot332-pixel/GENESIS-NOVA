@@ -204,6 +204,13 @@ const D = [
   ["Ye record ab aapke paas locked nahi hai (ya mila nahi) — refresh karo", "This record is no longer locked to you (or wasn't found) — refresh"],
   ["load nahi hui", "failed to load"], ["Data nahi hai", "No data"], ["Kuch nahi mila", "Nothing found"],
   ["Company, phone, RFQ… ya page ka naam", "Company, phone, RFQ… or a page name"], ["Search leads…", "Search leads…"],
+  // ---------- business suite (server texts) ----------
+  ["🛠 Ticket aapko assign hua:", "🛠 Ticket assigned to you:"], ["👁 Quotation kholi gayi:", "👁 Quotation opened:"],
+  ["Pehli baar dekhi — abhi call karne ka sahi time hai!", "Opened for the first time — great moment to call!"], ["Dobara dekhi:", "Viewed again:"],
+  ["✅ Quotation ACCEPT hui:", "✅ Quotation ACCEPTED:"], ["✏️ Customer ne changes maange:", "✏️ Customer requested changes:"],
+  ["🔁 Renewal aaj:", "🔁 Renewal today:"], ["din mein:", "days:"], ["📊 Aaj ka report", "📊 Today's report"],
+  ["👁 Customer ne quotation online dekhi:", "👁 Customer viewed quotation online:"], ["✅ Customer ne quotation online accept ki:", "✅ Customer accepted quotation online:"],
+  ["duplicate lead(s) merge kiye", "duplicate lead(s) merged"], ["payment mila", "payment received"],
 ];
 
 const EXACT = new Map(D.map(([a, b]) => [a.replace(/\s+/g, " ").trim(), b]));

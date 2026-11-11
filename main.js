@@ -13,11 +13,19 @@ import {
   requestAccess, startOutlookAutoSync,
 } from "./comms.js";
 import { viewImport } from "./import.js";
+import {
+  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct,
+  marginHtml, shareQuote, quoteTrackHtml, orderFromQuote,
+} from "./biz.js";
 import { CONFIG } from "./config.js";
 import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 
 const $ = (s, r = document) => r.querySelector(s);
+// ---------- PWA: installable app (only on https; never during local tests) ----------
+let installEvt = null;
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; const b = document.getElementById("installBtn"); if (b) b.hidden = false; });
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const root = $("#root");
 
@@ -198,14 +206,20 @@ const NAV = [
   ["inbox", "Inbox (replies)", "mail"],
   ["tasks", "Follow-ups & tasks", "check"],
   ["quotes", "Quotations", "file"],
+  ["orders", "Orders & payments", "rupee"],
+  ["renewals", "Renewals / AMC", "refresh"],
+  ["support", "Support tickets", "tool"],
+  ["products", "Products & prices", "tag"],
   ["templates", "Email / WA templates", "copy"],
   ["requests", "Lock requests", "shield"],
   ["Insights"],
   ["reports", "Reports", "chart"],
+  ["daily", "Daily report", "clock"],
   ["Admin", () => isMgr()],
   ["team", "Team", "users", () => isAdmin()],
   ["automation", "Automation", "bot", () => isMgr()],
   ["import", "Data import", "upload", () => isMgr()],
+  ["duplicates", "Duplicate cleaner", "merge", () => isMgr()],
   ["audit", "Audit log", "shield", () => isAdmin()],
 ];
 const TITLES = Object.fromEntries(NAV.filter((n) => n.length >= 3 && typeof n[1] === "string").map((n) => [n[0], n[1]]));
@@ -219,7 +233,7 @@ function renderShell() {
         ${NAV.map((n) => {
           if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
           if (n[3] && !n[3]()) return "";
-          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}</a>`;
+          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}${n[0] === "support" ? '<span class="badge warn" id="tktBadge" hidden></span>' : ""}${n[0] === "renewals" ? '<span class="badge bad" id="renBadge" hidden></span>' : ""}</a>`;
         }).join("")}
       </nav>
       <div class="side-foot">
@@ -234,6 +248,7 @@ function renderShell() {
         <h1 id="title"></h1><div class="sp"></div>
         <button class="search-btn" data-act="palette">${ic("search")}<span>Search leads…</span><kbd>Ctrl K</kbd></button>
         <button class="btn ghost icon bell" id="bellBtn" data-act="bell" aria-label="Notifications">🔔<span class="badge bad" id="bellBadge" hidden></span></button>
+        <button class="btn sm" id="installBtn" data-act="install" ${installEvt ? "" : "hidden"} title="${L("Phone / PC pe app install karo", "Install as an app on phone / PC")}">📲 ${L("App install", "Install app")}</button>
         ${langSwitch()}
         <button class="btn ghost icon" id="themeBtn" data-act="theme" aria-label="Toggle theme">${ic(isDark() ? "sun" : "moon")}</button>
       </header>
@@ -249,14 +264,17 @@ function updateOnline() { if (S.route === "team" || S.route === "dashboard") sof
 async function refreshBadges() {
   const end = new Date(); end.setHours(23, 59, 59, 999);
   if (!S.me) return;
-  const [r, d, u, q] = await Promise.all([
+  const in7 = new Date(Date.now() + 7 * 864e5).toLocaleDateString("en-CA");
+  const [r, d, u, q, tk, rn] = await Promise.all([
     sb.from("rfqs").select("id", { count: "exact", head: true }).eq("status", "new"),
     sb.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", S.me.id).lte("next_follow_up", end.toISOString()).in("status", OPEN_STATUSES),
     unreadCounts().catch(() => ({ notif: 0, replies: 0 })),
     sb.from("lock_requests").select("id", { count: "exact", head: true }).eq("holder", S.me.id).eq("status", "pending"),
+    sb.from("tickets").select("id", { count: "exact", head: true }).eq("assignee_id", S.me.id).in("status", ["open", "in_progress"]),
+    sb.from("renewals").select("id", { count: "exact", head: true }).eq("status", "active").lte("end_date", in7).or(`owner_id.eq.${S.me.id}${isMgr() ? ",owner_id.is.null" : ""}`),
   ]);
   const set = (id, n) => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n || ""; } };
-  set("#rfqBadge", r.count); set("#dueBadge", d.count); set("#inboxBadge", u.replies); set("#bellBadge", u.notif); set("#reqBadge", q.count);
+  set("#rfqBadge", r.count); set("#dueBadge", d.count); set("#inboxBadge", u.replies); set("#bellBadge", u.notif); set("#reqBadge", q.count); set("#tktBadge", tk.count); set("#renBadge", rn.count);
 }
 
 async function loadAnnouncement() {
@@ -286,10 +304,12 @@ function route() {
   const page = $("#page");
   page.innerHTML = `<div class="empty">Loading…</div>`;
   closeDrawer();
+  page.onclick = null;
   refreshBadges();
   Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
     if (S.params.id && S.route === "leads") openLead(+S.params.id);
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
+    if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
   }).catch(fail);
 }
 addEventListener("hashchange", route);
@@ -351,6 +371,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (document.querySelector("[data-modal]")) closeModal(); else closeDrawer(); }
 });
 ACT.theme = toggleTheme;
+ACT.install = async (t) => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; t.hidden = true; };
 ACT.lang = (t) => {
   const v = t.dataset.v; if (v === getLang()) return;
   setLang(v);
@@ -369,6 +390,12 @@ VIEWS.inbox = (el, soft, params) => viewInbox(el, params || { id: location.hash.
 VIEWS.templates = (el) => viewTemplates(el);
 VIEWS.import = (el) => viewImport(el);
 VIEWS.requests = (el) => viewRequests(el);
+VIEWS.products = (el) => viewProducts(el);
+VIEWS.renewals = (el) => viewRenewals(el);
+VIEWS.orders = (el) => viewOrders(el);
+VIEWS.support = (el, soft, params) => viewSupport(el, soft, params);
+VIEWS.daily = (el) => viewDaily(el);
+VIEWS.duplicates = (el) => viewDuplicates(el);
 ACT.go = (t) => { location.hash = "#/" + t.dataset.go; };
 
 // ---------------------------------------------------------------------
@@ -587,6 +614,8 @@ async function openLead(id, opt = {}) {
         ${(tasks || []).map((t) => `<label class="row check" style="padding:6px 0"><input type="checkbox" data-tdone="${t.id}"> <span style="flex:1">${h(t.title)}</span> ${followBadge(t.due_at)}</label>`).join("") || '<div class="mu" style="padding:8px 0">Koi open task nahi</div>'}
       </div></div>
 
+      <div id="lpanel"></div>
+
       <div class="row sec">
         ${canEdit ? `<button class="btn" data-note>${ic("file")} Note add karo</button>
         <button class="btn" data-mkrfq>${ic("inbox")} RFQ banao</button>
@@ -606,6 +635,7 @@ async function openLead(id, opt = {}) {
     </div>`;
   document.body.append(scrim, d);
   const reopen = () => openLead(id, opt);
+  leadPanel($("#lpanel", d), l, reopen).catch(() => {});
   const after = () => { softRefresh(); refreshBadges(); };
   d.querySelector("[data-dclose]").onclick = closeDrawer;
   $$("[data-mail]", d).forEach((x) => x.onclick = () => { closeDrawer(); location.hash = "#/inbox/" + x.dataset.mail; });
@@ -1120,11 +1150,11 @@ function wInt(n) { if (!n) return "Zero"; const p = [], cr = Math.floor(n / 1e7)
 const rupeesWords = (v) => { v = r2(v); const r = Math.floor(v), ps = Math.round((v - r) * 100); return wInt(r) + " Rupees" + (ps ? " and " + w2(ps) + " Paise" : "") + " Only"; };
 
 VIEWS.quotes = async (el) => {
-  const { data, error } = await sb.from("quotations").select("id, quote_no, to_party, status, grand_total, created_at, owner_id, lead_id").order("created_at", { ascending: false }).limit(200);
+  const { data, error } = await sb.from("quotations").select("id, quote_no, to_party, status, grand_total, created_at, owner_id, lead_id, view_count, customer_response").order("created_at", { ascending: false }).limit(200);
   if (error) throw error;
   el.innerHTML = `<div class="toolbar"><span class="mu">GST quotations — CGST/SGST ya IGST state ke hisaab se apne aap.</span><span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>` : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
-  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span></td><td class="num">${inr(q.grand_total)}</td><td>${h(userName(q.owner_id))}</td><td class="sub">${h(dOnly(q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
+  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${h(userName(q.owner_id))}</td><td class="sub">${h(dOnly(q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
 };
 ACT.newQuote = () => quoteEditor({ to_party: { state: "Maharashtra" }, items: [] });
 ACT.delQuote = async (t) => {
@@ -1141,7 +1171,8 @@ ACT.delQuote = async (t) => {
 };
 ACT.quote = async (t) => { const { data, error } = await sb.from("quotations").select("*").eq("id", +t.dataset.id).single(); if (error) return fail(error); quoteEditor(data); };
 
-function quoteEditor(q0) {
+async function quoteEditor(q0) {
+  await loadProducts().catch(() => {});
   const q = structuredClone(q0); q.items = q.items?.length ? q.items : [{ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }]; q.to_party ||= {};
   const tp = q.to_party;
   const m = modal({
@@ -1153,16 +1184,17 @@ function quoteEditor(q0) {
       <div><label class="f">Address</label><input class="input" data-tp="address" value="${h(tp.address || "")}" maxlength="300"></div>
       <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60"></div>
       <div><label class="f">GSTIN</label><input class="input" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="15"></div></div>
+    ${quoteTrackHtml(q)}${productDatalist()}
     <div class="sec tbl-wrap"><table class="tbl" id="qi"><thead><tr><th>Description</th><th style="width:100px">HSN/SAC</th><th style="width:80px">Qty</th><th style="width:120px">Rate ₹</th><th style="width:96px">GST %</th><th class="num" style="width:110px">Amount</th><th></th></tr></thead><tbody></tbody></table>
       <button class="btn sm" id="qadd" style="margin-top:8px">${ic("plus")} Item</button></div>
     <div class="grid2 sec"><div><label class="f">Notes / terms</label><textarea class="input" id="qn" maxlength="3000">${h(q.notes || "Payment: 100% advance\nDelivery: 7-10 working days\nPrices valid for 7 days")}</textarea>
       <label class="f">Status</label><select class="input" id="qs">${["draft", "sent", "won", "lost"].map((s) => `<option ${s === (q.status || "draft") ? "selected" : ""}>${s}</option>`).join("")}</select></div>
       <div id="qt" style="padding-top:28px"></div></div>`,
-    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button>` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
+    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button>${q.status !== "lost" ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
   });
   const drawItems = () => {
     $("#qi tbody", m).innerHTML = q.items.map((it, i) => `<tr style="cursor:default">
-      <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400"></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="12"></td>
+      <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400" list="prodDL" placeholder="${h(L("Product list se chuno ya likho…", "Pick from product list or type…"))}"></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="12"></td>
       <td><input class="input" type="number" min="0" data-i="${i}" data-k="qty" value="${h(it.qty)}"></td><td><input class="input" type="number" min="0" data-i="${i}" data-k="price" value="${h(it.price)}"></td>
       <td><select class="input" data-i="${i}" data-k="tax">${[0, 5, 12, 18, 28].map((t) => `<option ${+it.tax === t ? "selected" : ""}>${t}</option>`).join("")}</select></td>
       <td class="num">${inr(r2((+it.qty || 0) * (+it.price || 0)))}</td><td><button class="btn ghost icon sm" data-rm="${i}" aria-label="Remove">${ic("x")}</button></td></tr>`).join("");
@@ -1170,18 +1202,33 @@ function quoteEditor(q0) {
   };
   const drawTotals = () => {
     const c = qCalc(q);
-    $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>`;
+    $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>${marginHtml(q.items)}`;
   };
   m.addEventListener("input", (e) => {
     const t = e.target;
     if (t.dataset.tp) { tp[t.dataset.tp] = t.value; if (t.dataset.tp === "state") drawTotals(); }
     if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (t.dataset.k !== "desc" && t.dataset.k !== "hsn") { const row = t.closest("tr"); const it = q.items[+t.dataset.i]; row.cells[5].textContent = inr(r2((+it.qty || 0) * (+it.price || 0))); drawTotals(); } }
   });
-  m.addEventListener("change", (e) => { if (e.target.dataset.k === "tax") { q.items[+e.target.dataset.i].tax = +e.target.value; drawTotals(); } });
+  m.addEventListener("change", (e) => {
+    if (e.target.dataset.k === "tax") { q.items[+e.target.dataset.i].tax = +e.target.value; drawTotals(); }
+    if (e.target.dataset.k === "desc") {      // picked from the product list → fill HSN, GST and price
+      const it = q.items[+e.target.dataset.i], p = findProduct(e.target.value);
+      if (p && (it._pid !== p.id)) { it._pid = p.id; if (!it.hsn) it.hsn = p.hsn || ""; it.tax = +p.gst_rate; if (!+it.price && p.sell_price != null) it.price = +p.sell_price; setTimeout(drawItems, 0); }
+      else drawTotals();
+    }
+  });
   m.addEventListener("click", (e) => { const r = e.target.closest("[data-rm]"); if (r) { q.items.splice(+r.dataset.rm, 1); if (!q.items.length) q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); } });
   $("#qadd", m).onclick = () => { q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); };
   drawItems();
   $("#qp", m)?.addEventListener("click", () => printQuote(q));
+  const shared = async (ch) => {
+    const link = await shareQuote(q, ch);
+    if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
+  };
+  $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
+  $("#qmail", m)?.addEventListener("click", (e) => busy(e.target, () => shared("email")));
+  $("#qwa", m)?.addEventListener("click", (e) => busy(e.target, () => shared("whatsapp")));
+  $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
   $("#qsave", m).onclick = (e) => busy(e.target, async () => {
     if (!tp.name) return toast("Customer naam daalo", true);
     const c = qCalc(q);

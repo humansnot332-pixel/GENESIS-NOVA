@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://*.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests">
+<title>Quotation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#f4f6fa; --card:#fff; --ink:#0f172a; --mu:#64748b; --line:#e2e8f0; --acc:#2563eb; --good:#059669; --warn:#d97706; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b1020; --card:#121a2e; --ink:#e5e9f2; --mu:#94a3b8; --line:#243049; --acc:#60a5fa; --good:#34d399; --warn:#fbbf24; } }
+  * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink); font:14.5px/1.55 Inter, system-ui, sans-serif }
+  .wrap { max-width:900px; margin:0 auto; padding:24px 16px 60px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; box-shadow:0 1px 2px rgba(0,0,0,.04) }
+  .hd { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; border-bottom:2px solid var(--acc); padding-bottom:14px; margin-bottom:16px }
+  h1 { margin:0; font-size:22px } h2 { margin:0 0 4px; font-size:18px; letter-spacing:.5px; color:var(--acc) }
+  .mu { color:var(--mu); font-size:13px } .r { text-align:right }
+  .tw { overflow-x:auto; margin:16px 0 } table { width:100%; border-collapse:collapse; min-width:560px }
+  th, td { padding:9px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top } th { font-size:12px; text-transform:uppercase; color:var(--mu); letter-spacing:.4px }
+  td.r, th.r { text-align:right; white-space:nowrap } .tot td { border:0; padding:4px 10px } .grand td { font-size:18px; font-weight:700; border-top:2px solid var(--line); padding-top:10px }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px } button, .btn { font:inherit; font-weight:600; border-radius:10px; padding:11px 18px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; text-decoration:none }
+  button.pri { background:var(--good); border-color:var(--good); color:#fff } button:disabled { opacity:.6; cursor:default }
+  textarea { width:100%; min-height:90px; font:inherit; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); margin-top:10px }
+  .note { padding:12px 14px; border-radius:10px; margin-top:16px; font-weight:500 } .note.ok { background:color-mix(in srgb, var(--good) 14%, transparent) } .note.w { background:color-mix(in srgb, var(--warn) 16%, transparent) }
+  .center { text-align:center; padding:80px 16px } pre { white-space:pre-wrap; font:inherit; margin:0 }
+  @media print { body { background:#fff; color:#000 } .actions, #resp { display:none } .card { border:0; box-shadow:none; padding:0 } }
+</style>
+<script type="module" src="quote.js"></script>
+</head>
+<body>
+<div class="wrap" id="app"><div class="center mu">Loading quotation…</div></div>
+<noscript><div class="center">Please enable JavaScript to view this quotation.</div></noscript>
+</body>
+</html>

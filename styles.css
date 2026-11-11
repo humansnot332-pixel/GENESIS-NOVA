@@ -419,3 +419,15 @@ fieldset[disabled] .input { opacity: .7; }
 .dropzone:hover, .dropzone.on { border-color: var(--accent); background: var(--accent-soft); }
 .kpi[data-f] { cursor: pointer; }
 .kpi .btn { max-width: 100%; }
+
+/* ---------- business suite ---------- */
+.qtrack { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); border: 1px dashed var(--line); font-size: 13px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.margin { margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 13px; border: 1px solid var(--line) }
+.margin.good { background: var(--good-soft) }
+.margin.warn { background: var(--warn-soft) }
+.margin.bad { background: var(--bad-soft) }
+.lp-row { padding: 7px 0; border-bottom: 1px solid var(--line); flex-wrap: nowrap; gap: 8px; font-size: 13.5px }
+.lp-row:last-child { border-bottom: 0 }
+.lp-row[data-lpr], .lp-row[data-lpt] { cursor: pointer }
+.tbl.att td { padding-top: 6px; padding-bottom: 6px }
+.dupg .card-h h3 { font-size: 14px }

@@ -118,7 +118,12 @@ const P = {
   play: "M5 3l14 9-14 9z", refresh: "M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15",
   calendar: "M3 4h18v18H3zM16 2v4M8 2v4M3 10h18", copy: "M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
   print: "M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z",
-  next: "M5 12h14M12 5l7 7-7 7", trash: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
+  next: "M5 12h14M12 5l7 7-7 7",
+  rupee: "M6 3h12M6 8h12M6 13l8.5 8M6 13h3a5 5 0 0 0 0-10",
+  tool: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z",
+  tag: "M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L2 12V2h10l8.6 8.6a2 2 0 0 1 0 2.8zM7 7h.01",
+  clock: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
+  merge: "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9", trash: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
 };
 export const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${P[n] || ""}"/></svg>`;
 
@@ -284,7 +289,7 @@ export function tplContext({ lead, rfq } = {}) {
     today: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
   };
 }
-export const TPL_VARS = ["company", "contact_name", "city", "product", "rfq_no", "qty_text", "my_name", "my_designation", "my_email", "my_phone", "our_website", "today"];
+export const TPL_VARS = ["company", "contact_name", "city", "product", "rfq_no", "qty_text", "my_name", "my_designation", "my_email", "my_phone", "our_website", "today", "quote_link", "quote_no", "due_date", "invoice_no", "amount_due"];
 export function fillTemplate(text, ctx) {
   return String(text || "").replace(/\{\{\s*([a-z_]+)\s*(?:\|([^}]*))?\}\}/gi, (_, k, fb) => {
     const v = ctx[k.toLowerCase()];
