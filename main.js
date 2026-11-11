@@ -13,7 +13,8 @@ import {
   requestAccess, startOutlookAutoSync,
 } from "./comms.js";
 import { CONFIG } from "./config.js";
-import { SCRIPTS, PRODUCTS } from "./data.js";
+import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
+import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -37,7 +38,10 @@ function toggleTheme() {
 // ---------------------------------------------------------------------
 //  Auth screens
 // ---------------------------------------------------------------------
+let loginMode = "login";
+const langSwitch = () => `<div class="langsw" role="group" aria-label="Language"><button type="button" class="${isEn() ? "" : "on"}" data-act="lang" data-v="hinglish">Hinglish</button><button type="button" class="${isEn() ? "on" : ""}" data-act="lang" data-v="en">English</button></div>`;
 function renderLogin(mode = "login", msg = "") {
+  loginMode = mode;
   stopApp();
   root.innerHTML = `
   <div class="auth">
@@ -50,7 +54,7 @@ function renderLogin(mode = "login", msg = "") {
       </div>
       <small style="opacity:.6">© ${new Date().getFullYear()} ${h(CONFIG.COMPANY)}</small>
     </div>
-    <div class="auth-form">
+    <div class="auth-form" style="position:relative"><div style="position:absolute;top:16px;right:16px">${langSwitch()}</div>
       ${mode === "login" ? `
       <form id="loginF" autocomplete="on">
         <div class="logo">G</div>
@@ -81,7 +85,7 @@ function renderLogin(mode = "login", msg = "") {
   $("#loginF")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const k = "crm_lock", lock = JSON.parse(sessionStorage.getItem(k) || '{"n":0,"t":0}');
-    if (Date.now() < lock.t) return err(`Bahut galat attempts. ${Math.ceil((lock.t - Date.now()) / 1000)} sec ruko.`);
+    if (Date.now() < lock.t) return err(L(`Bahut galat attempts. ${Math.ceil((lock.t - Date.now()) / 1000)} sec ruko.`, `Too many wrong attempts. Wait ${Math.ceil((lock.t - Date.now()) / 1000)} seconds.`));
     const b = e.submitter; b.disabled = true;
     const { error } = await sb.auth.signInWithPassword({ email: $("#em").value.trim(), password: $("#pw").value });
     b.disabled = false;
@@ -134,11 +138,15 @@ async function start() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
   S.session = session;
-  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, last_seen")
+  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen")
     .eq("id", session.user.id).single();
   if (error || !me) return renderLogin("login", "Profile load nahi hua: " + (error?.message || ""));
   if (!me.active) return renderPending();
   S.me = me;
+  // language: an explicit choice on this device wins (and is saved); otherwise follow the profile
+  let chosen = null; try { chosen = localStorage.getItem("crm_lang"); } catch { /* ignore */ }
+  if (chosen && chosen !== me.lang) { me.lang = getLang(); sb.from("profiles").update({ lang: me.lang }).eq("id", me.id).then(() => {}, () => {}); }
+  else if (!chosen && me.lang && me.lang !== getLang()) setLang(me.lang);
   if (started) return;
   started = true;
   try { await loadTeam(); } catch (e) { fail(e); }
@@ -224,6 +232,7 @@ function renderShell() {
         <h1 id="title"></h1><div class="sp"></div>
         <button class="search-btn" data-act="palette">${ic("search")}<span>Search leads…</span><kbd>Ctrl K</kbd></button>
         <button class="btn ghost icon bell" id="bellBtn" data-act="bell" aria-label="Notifications">🔔<span class="badge bad" id="bellBadge" hidden></span></button>
+        ${langSwitch()}
         <button class="btn ghost icon" id="themeBtn" data-act="theme" aria-label="Toggle theme">${ic(isDark() ? "sun" : "moon")}</button>
       </header>
       <div id="banner"></div>
@@ -254,7 +263,7 @@ async function loadAnnouncement() {
   if (!el) return;
   let dismissed = ""; try { dismissed = localStorage.getItem("crm_ann") || ""; } catch { /* ignore */ }
   if (!a || dismissed === a.created_at || Date.now() - new Date(a.created_at).getTime() > 3 * 864e5) { el.innerHTML = ""; return; }
-  el.innerHTML = `<div class="banner">📢 <div><b>${h(a.created_by ? userName(a.created_by) : "System")}:</b> ${h(a.body)}</div><button class="btn ghost sm right" data-act="dismissAnn" data-v="${h(a.created_at)}">Dismiss</button></div>`;
+  el.innerHTML = `<div class="banner">📢 <div><b>${h(a.created_by ? userName(a.created_by) : "System")}:</b> <span data-raw>${h(a.body)}</span></div><button class="btn ghost sm right" data-act="dismissAnn" data-v="${h(a.created_at)}">Dismiss</button></div>`;
 }
 
 // ---------------------------------------------------------------------
@@ -270,7 +279,7 @@ function route() {
   if (navItem?.[3] && !navItem[3]()) { location.hash = "#/dashboard"; return; }
   $$(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === S.route));
   $("#title").textContent = TITLES[S.route] || "";
-  document.title = (TITLES[S.route] || "CRM") + " · " + CONFIG.COMPANY;
+  document.title = tr(TITLES[S.route] || "CRM") + " · " + CONFIG.COMPANY;
   $("#side")?.classList.remove("open");
   const page = $("#page");
   page.innerHTML = `<div class="empty">Loading…</div>`;
@@ -340,6 +349,15 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (document.querySelector("[data-modal]")) closeModal(); else closeDrawer(); }
 });
 ACT.theme = toggleTheme;
+ACT.lang = (t) => {
+  const v = t.dataset.v; if (v === getLang()) return;
+  setLang(v);
+  if (!S.me) return renderLogin(loginMode === "newpw" ? "newpw" : loginMode);
+  S.me.lang = v;
+  sb.from("profiles").update({ lang: v }).eq("id", S.me.id).then(() => {}, () => {});
+  closeModal(); closeDrawer(); renderShell(); route(); loadAnnouncement();
+  toast(v === "en" ? "Language: English" : "Language: Hinglish");
+};
 ACT.menu = () => $("#side").classList.toggle("open");
 ACT.logout = async () => { if (await confirmBox("Logout karna hai?", "Logout")) sb.auth.signOut(); };
 ACT.dismissAnn = (t) => { try { localStorage.setItem("crm_ann", t.dataset.v); } catch { /* ignore */ } $("#banner").innerHTML = ""; };
@@ -408,13 +426,13 @@ VIEWS.dashboard = async (el) => {
   const bs = s.by_status || {};
 
   el.innerHTML = `
-  <div class="row" style="margin-bottom:16px"><div><h2 style="margin:0;font-size:20px">Namaste, ${h(S.me.full_name.split(" ")[0])} 👋</h2><div class="mu">${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div></div>
+  <div class="row" style="margin-bottom:16px"><div><h2 style="margin:0;font-size:20px">${L("Namaste", "Hello")}, ${h(S.me.full_name.split(" ")[0])} 👋</h2><div class="mu">${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div></div>
     <div class="right row">${isMgr() ? `<button class="btn" data-act="announce">📢 Announcement</button>` : ""}<a class="btn primary" href="#/today">${ic("phone")} Calling shuru karo</a></div></div>
   <div class="kpis">
     <div class="card kpi" data-act="go" data-go="today"><div class="l">Meri calls aaj</div><div class="v">${num(mine)}<span class="mu" style="font-size:15px;font-weight:500"> / ${target}</span></div><div class="meter"><i style="width:${Math.min(100, (mine / Math.max(1, target)) * 100)}%"></i></div></div>
     ${isMgr() ? `<div class="card kpi"><div class="l">Team calls aaj</div><div class="v">${num(s.team_calls_today)}</div><div class="s">${S.team.filter(online).length} log online</div></div>` : ""}
     <div class="card kpi" data-act="go" data-go="tasks"><div class="l">Follow-ups (24 ghante)</div><div class="v">${num(s.followups_due)}</div><div class="s" style="color:${s.overdue ? "var(--bad)" : ""}">${num(s.overdue)} overdue</div></div>
-    <div class="card kpi" data-act="go" data-go="rfqs"><div class="l">Open RFQs</div><div class="v">${num(s.rfqs_open)}</div><div class="s">${num(s.rfqs_new)} naye</div></div>
+    <div class="card kpi" data-act="go" data-go="rfqs"><div class="l">Open RFQs</div><div class="v">${num(s.rfqs_open)}</div><div class="s">${num(s.rfqs_new)} ${L("naye", "new")}</div></div>
     <div class="card kpi" data-act="go" data-go="leads"><div class="l">${isMgr() ? "Total leads" : "Mere active leads"}</div><div class="v">${num(isMgr() ? s.leads_total : s.my_leads)}</div><div class="s">${num(s.pool_free)} free pool mein · +${num(s.leads_new_week)} is hafte</div></div>
     <div class="card kpi" data-act="go" data-go="inbox"><div class="l">Unread replies</div><div class="v">${num(s.replies_unread)}</div><div class="s">${num(s.emails_today)} emails aaj bheje</div></div>
     ${s.requests_pending ? `<div class="card kpi" data-act="go" data-go="requests" style="border-color:var(--warn)"><div class="l">🙋 Lock requests</div><div class="v">${num(s.requests_pending)}</div><div class="s">Koi aapka lead maang raha hai</div></div>` : ""}
@@ -505,7 +523,7 @@ async function openLead(id, opt = {}) {
   ]);
   if (error) return fail(error);
   closeDrawer();
-  const sc = SCRIPTS[l.category] || SCRIPTS["IT Hardware"];
+  const SC = isEn() ? SCRIPTS_EN : SCRIPTS, sc = SC[l.category] || SC["IT Hardware"];
   const name = S.me.full_name.split(" ")[0];
   const lk = lockOf(l), canEdit = canWork(l), see = canEdit;     // only the holder (or a manager) sees full contact
   const { data: mails } = await sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20);
@@ -520,7 +538,7 @@ async function openLead(id, opt = {}) {
         <button class="btn ghost icon" data-dclose aria-label="Close">${ic("x")}</button></div>
       <div class="row" style="margin-top:8px">${statusBadge(l.status)}<span class="badge">${h(l.category)}</span><span class="badge ${l.score >= 70 ? "good" : ""}">Score ${l.score}</span><span class="badge">${h(SOURCES[l.source] || l.source)}</span>${followBadge(l.next_follow_up)}</div>
       ${lk.mine ? `<div class="lockbar mine">🔒 <div><b>Aap is lead pe kaam kar rahe ho</b><small>Lock ${lk.until && new Date(lk.until).getFullYear() > 9000 ? "permanent (won)" : "till " + h(dt(lk.until))} · har call / email pe apne aap badhta hai</small></div><button class="btn sm" data-lk="release">🔓 Release</button></div>`
-      : lk.other ? `<div class="lockbar other">🔒 <div><b>${h(lk.holder)} is lead pe kaam kar raha/rahi hai</b><small>Locked ${h(ago(l.locked_at))} · till ${h(dt(lk.until))}. Aap dekh sakte ho, par call / email / edit sirf ${h(lk.holder)} karega.</small></div>
+      : lk.other ? `<div class="lockbar other">🔒 <div><b>${h(lk.holder)} is lead pe kaam kar raha/rahi hai</b><small>${L(`Locked ${h(ago(l.locked_at))} · till ${h(dt(lk.until))}. Aap dekh sakte ho, par call / email / edit sirf ${h(lk.holder)} karega.`, `Locked ${h(ago(l.locked_at))} · until ${h(dt(lk.until))}. You can view it, but only ${h(lk.holder)} can call / email / edit.`)}</small></div>
           ${isMgr() ? `<button class="btn sm" data-lk="force">Force release</button>` : `<button class="btn sm primary" data-lk="request">🙋 Request access</button>`}</div>`
       : `<div class="lockbar free">🔓 <div><b>Free lead</b><small>Jo pehle lock karega, wahi kaam karega. Lock karte hi number dikhega.</small></div><button class="btn sm primary" data-lk="claim">🔒 Lock karke shuru karo</button></div>`}
       <div class="contact">
@@ -543,7 +561,7 @@ async function openLead(id, opt = {}) {
       </div>` : ""}
 
       <details class="card sec" ${l.call_count ? "" : "open"}><summary>🎯 Call script — ${h(l.category)}</summary><div class="card-b"><div class="script">
-        <p><b>Intro:</b> Namaste, main ${h(name)} bol raha/rahi hoon ${h(CONFIG.COMPANY)} se. ${h(sc.open)}</p>
+        <p><b>Intro:</b> ${L(`Namaste, main ${h(name)} bol raha/rahi hoon ${h(CONFIG.COMPANY)} se.`, `Hello, this is ${h(name)} from ${h(CONFIG.COMPANY)}.`)} ${h(sc.open)}</p>
         <p><b>Poocho:</b> ${h(sc.ask)}</p><p><b>Value:</b> ${h(sc.value)}</p><p><b>Close:</b> ${h(sc.close)}</p></div></div></details>
 
       <div class="card sec"><div class="card-h"><h3>Details</h3><span class="sp"></span>${canEdit ? `<button class="btn sm" data-edit>Edit</button>` : ""}</div><div class="card-b" id="ldet">
@@ -640,7 +658,7 @@ async function openLead(id, opt = {}) {
     else if (st) upd.next_follow_up = null;
     if (value) upd.deal_value = value;
     if (Object.keys(upd).length) { const { error: e2 } = await sb.from("leads").update(upd).eq("id", id).select("id"); if (e2) throw e2; }
-    toast("✔ " + lab + (hrs ? " · follow-up " + (hrs < 24 ? hrs + " ghante" : Math.round(hrs / 24) + " din") + " baad" : ""));
+    toast("✔ " + lab + (hrs ? L(" · follow-up " + (hrs < 24 ? hrs + " ghante" : Math.round(hrs / 24) + " din") + " baad", " · follow-up in " + (hrs < 24 ? hrs + " hours" : Math.round(hrs / 24) + " days")) : ""));
     after();
     if (opt.queue) return nextInQueue(id);
     reopen();
@@ -951,7 +969,7 @@ VIEWS.rfqs = async (el) => {
         return `<tr data-act="rfq" data-id="${r.id}"><td class="mono">${h(r.rfq_no)}<div class="sub">${h(ago(r.created_at))}</div></td>
         <td><div class="co">${h(r.company)}</div><div class="sub">${h([r.contact, r.city].filter(Boolean).join(" · "))}</div></td>
         <td>${h(r.product || "")}${r.qty ? ` <span class="sub">× ${h(r.qty)}</span>` : ""}<div class="sub" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(r.details || "")}</div></td>
-        <td>${dd === null ? "—" : open ? `<span class="badge ${dd < 0 ? "bad" : dd <= 2 ? "warn" : ""}">${dd < 0 ? "Overdue " + -dd + "d" : dd === 0 ? "Aaj" : dd + " din"}</span>` : h(dOnly(r.due_date))}</td>
+        <td>${dd === null ? "—" : open ? `<span class="badge ${dd < 0 ? "bad" : dd <= 2 ? "warn" : ""}">${dd < 0 ? "Overdue " + -dd + "d" : dd === 0 ? L("Aaj", "Today") : dd + L(" din", " days")}</span>` : h(dOnly(r.due_date))}</td>
         <td>${rfqBadge(r.status)}</td><td>${lockBadge(r)}</td>
         <td class="num">${r.quoted_value ? inrShort(r.quoted_value) : ""}</td><td class="sub">${h(SOURCES[r.source] || r.source)}</td></tr>`;
       }).join("")}</tbody></table>`}</div></div>`;
@@ -983,7 +1001,7 @@ function rfqForm(r) {
   const m = modal({
     title: isNew ? "Naya RFQ" : `${r.rfq_no} · ${r.company}`, wide: true,
     body: `${isNew ? "" : lk.mine ? `<div class="lockbar mine" style="margin-top:12px">🔒 <div><b>Ye RFQ aapke paas hai</b><small>Lock till ${h(dt(lk.until))}</small></div><button type="button" class="btn sm" id="rfRel">🔓 Release</button></div>`
-      : lk.other ? `<div class="lockbar other" style="margin-top:12px">🔒 <div><b>${h(lk.holder)} is RFQ pe kaam kar raha/rahi hai</b><small>Aap dekh sakte ho, edit / quote / email sirf ${h(lk.holder)} karega.</small></div>${isMgr() ? `<button type="button" class="btn sm" id="rfRel">Force release</button>` : `<button type="button" class="btn sm primary" id="rfReq">🙋 Request access</button>`}</div>`
+      : lk.other ? `<div class="lockbar other" style="margin-top:12px">🔒 <div><b>${h(lk.holder)} is RFQ pe kaam kar raha/rahi hai</b><small>${L(`Aap dekh sakte ho, edit / quote / email sirf ${h(lk.holder)} karega.`, `You can view it, but only ${h(lk.holder)} can edit / quote / email.`)}</small></div>${isMgr() ? `<button type="button" class="btn sm" id="rfRel">Force release</button>` : `<button type="button" class="btn sm primary" id="rfReq">🙋 Request access</button>`}</div>`
       : `<div class="lockbar free" style="margin-top:12px">🔓 <div><b>Free RFQ</b><small>Lock karo — phir sirf aap is pe kaam karoge.</small></div><button type="button" class="btn sm primary" id="rfClaim">🔒 Lock karo</button></div>`}
     <form id="rf"><fieldset ${work ? "" : "disabled"} style="border:0;padding:0;margin:0"><div class="grid2">
       <div><label class="f">Company *</label><input class="input" name="company" required maxlength="200" value="${h(r.company || "")}"></div>
@@ -1189,7 +1207,7 @@ VIEWS.reports = async (el) => {
   const bs = st?.by_status || {}, src = st?.by_source || {};
   const total = Object.values(bs).reduce((a, b) => a + b, 0), won = bs.won || 0;
   el.innerHTML = `
-    <div class="toolbar"><div class="chips">${[7, 30, 90].map((d) => `<button class="chip ${days === d ? "on" : ""}" data-rd="${d}">${d} din</button>`).join("")}</div><span class="sp" style="flex:1"></span><button class="btn" id="rexp">${ic("download")} Export CSV</button></div>
+    <div class="toolbar"><div class="chips">${[7, 30, 90].map((d) => `<button class="chip ${days === d ? "on" : ""}" data-rd="${d}">${d} ${L("din", "days")}</button>`).join("")}</div><span class="sp" style="flex:1"></span><button class="btn" id="rexp">${ic("download")} Export CSV</button></div>
     <div class="kpis">
       <div class="card kpi"><div class="l">Total calls (${days}d)</div><div class="v">${num(rows.reduce((a, r) => a + r.calls, 0))}</div></div>
       <div class="card kpi"><div class="l">Positive outcomes</div><div class="v">${num(rows.reduce((a, r) => a + r.pos, 0))}</div><div class="s">interested / quote / demo / won</div></div>
@@ -1203,7 +1221,7 @@ VIEWS.reports = async (el) => {
       <div class="stack"><div class="card"><div class="card-h"><h3>Funnel</h3></div><div class="card-b">${hbars(STATUSES.map(([k, l]) => ({ l, v: bs[k] || 0 })))}</div></div>
         <div class="card"><div class="card-h"><h3>Lead sources</h3></div><div class="card-b">${hbars(Object.entries(src).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ l: SOURCES[k] || k, v })))}</div></div></div>
     </div>
-    <div class="card sec"><div class="card-h"><h3>✉️ Email performance (${days} din)</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Emails bheje</th><th class="num">Replies</th><th class="num">Companies jinhone reply kiya</th><th class="num">Reply rate</th></tr></thead><tbody>
+    <div class="card sec"><div class="card-h"><h3>✉️ Email performance (${days} ${L("din", "days")})</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Emails bheje</th><th class="num">Replies</th><th class="num">Companies jinhone reply kiya</th><th class="num">Reply rate</th></tr></thead><tbody>
       ${(em || []).sort((a, b) => b.sent - a.sent).map((r) => `<tr style="cursor:default"><td class="co">${h(userName(r.user_id))}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.replies)}</td><td class="num">${num(r.replied_contacts)}</td><td class="num">${r.sent ? ((r.replied_contacts / r.sent) * 100).toFixed(1) : "0.0"}%</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Is period mein CRM se koi email nahi gaya</td></tr>`}
     </tbody></table></div></div>`;
   $$("[data-rd]", el).forEach((b) => b.onclick = () => { el.dataset.days = b.dataset.rd; VIEWS.reports(el); });
@@ -1385,7 +1403,8 @@ ACT.profile = () => {
       <div><label class="f">Designation</label><input class="input" id="pd" maxlength="80" value="${h(S.me.designation || "")}" placeholder="e.g. Sales Executive"></div>
       <div><label class="f">Phone (signature)</label><input class="input" id="pph" maxlength="40" value="${h(S.me.phone || "")}" placeholder="+91 …"></div>
       <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
-      <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}/din</p>
+      <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option><option value="en" ${isEn() ? "selected" : ""}>English</option></select></div>
+      <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">
       <input class="input" id="pp2" type="password" placeholder="Confirm" autocomplete="new-password">`,
@@ -1393,7 +1412,8 @@ ACT.profile = () => {
   });
   $("#ps", m).onclick = (e) => busy(e.target, async () => {
     const n = $("#pn", m).value.trim(), p1 = $("#pp1", m).value, p2 = $("#pp2", m).value;
-    const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value };
+    const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value, lang: $("#plang", m).value };
+    if (upd.lang !== getLang()) setLang(upd.lang);
     { const { error } = await sb.from("profiles").update(upd).eq("id", S.me.id); if (error) throw error; Object.assign(S.me, upd); }
     if (p1) {
       if (p1 !== p2) return toast("Password match nahi hua", true);

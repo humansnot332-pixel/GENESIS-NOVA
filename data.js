@@ -164,3 +164,35 @@ export const PRODUCTS = {
   }
  ]
 };
+
+// English call scripts (used when the app language is English)
+export const SCRIPTS_EN = {
+  "Design software": {
+    open: "We provide authorised solutions for design software such as Autodesk, Adobe, Trimble, Chaos (V-Ray) and Lumion.",
+    ask: "\"Which version of AutoCAD / Revit / 3ds Max do you use? On how many systems? When is your subscription due for renewal?\"",
+    value: "Genuine licences, good renewal rates, multi-seat discounts and staff training (CADD Masters).",
+    close: "\"I'll send you a quote on WhatsApp / email. Which number should I send it to?\"",
+    wa: "We provide licences for Autodesk (AutoCAD/Revit/3ds Max), Adobe, Trimble, V-Ray and Lumion. Shall I send you a quote for renewal or new licences?",
+  },
+  "Security": {
+    open: "We provide IT infrastructure, firewall and network security solutions.",
+    ask: "\"How is client data (tax, legal, financial files) protected in your office? What firewall / antivirus / backup do you use? How many systems, and which IT vendor manages them?\"",
+    value: "Client data safety, ransomware protection, DPDP Act compliance, Microsoft licensing and AMC support. You can offer a free security audit.",
+    close: "\"I'd like to send you a short IT / security audit or a quote. Which number or email should I use?\"",
+    wa: "We provide firewall, network security and IT infrastructure solutions. Shall I send a short security audit or a quote for your office?",
+  },
+  "IT Hardware": {
+    open: "We provide IT hardware such as laptops, desktops, workstations, servers, storage and printers, plus computer parts (CPU, RAM, SSD, graphics cards), with AMC support.",
+    ask: "\"How many computers / labs do you have and how old are they? When is your next purchase or refresh planned? Which vendor do you buy hardware from today?\"",
+    value: "Branded hardware (Dell, HP, Lenovo) at good bulk rates, with installation, warranty and AMC support. One combined quote for a lab / office refresh.",
+    close: "\"I'd like to send you a quote for laptops / desktops / servers. Which number or email should I use, and how many units do you need?\"",
+    wa: "We supply IT hardware such as laptops, desktops, servers, storage and printers in bulk, with installation and AMC. Shall I send a quote for a new purchase or lab refresh?",
+  },
+  "Networking & CCTV": {
+    open: "We provide networking (switches, Wi-Fi, structured cabling), firewall and CCTV surveillance solutions.",
+    ask: "\"How is the Wi-Fi and network coverage on your campus / office? How many CCTV cameras do you have and how many days of recording? Any expansion or upgrade planned?\"",
+    value: "Managed switches, Wi-Fi access points, IP CCTV with NVR, cabling and installation from a single vendor. You can offer a free site survey.",
+    close: "\"I'd like to send you a site survey or a quote. Which number or email should I use?\"",
+    wa: "We provide networking, Wi-Fi, firewall and CCTV surveillance solutions. Shall I send a free site survey or a quote for your campus / office?",
+  },
+};

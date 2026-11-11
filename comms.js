@@ -8,6 +8,7 @@ import {
   STATUS, OPEN_STATUSES, HOOK, lockOf, canWork, claim, claimFailMsg, tplContext, TPL_VARS, fillTemplate,
   mdToPlain, mdToHtml, mdToWhatsApp, composeUrl, URL_LIMIT, waUrl, openTab, copyRich, loadScript, isMobile, callFn,
 } from "./core.js";
+import { L, isEn, getLang } from "./i18n.js";
 import { CONFIG } from "./config.js";
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -59,8 +60,15 @@ function pickStage({ channel, lead, rfq, reply }) {
   return "new";
 }
 function tplOptions(list, sel) {
-  const g = (shared) => list.filter((t) => t.is_shared === shared).map((t) => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${h(t.name)}</option>`).join("");
-  return `<option value="">— Blank (sirf signature) —</option><optgroup label="Company templates">${g(true)}</optgroup><optgroup label="Mere templates">${g(false)}</optgroup>`;
+  const cur = getLang(), other = cur === "en" ? "hinglish" : "en", nm = { en: "English", hinglish: "Hinglish" };
+  const o = (arr) => arr.map((t) => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${h(t.name)}</option>`).join("");
+  const grp = (label, arr) => (arr.length ? `<optgroup label="${label}">${o(arr)}</optgroup>` : "");
+  const lg = (t) => t.lang || "en";
+  return `<option value="">— Blank (sirf signature) —</option>`
+    + grp(`Company templates · ${nm[cur]}`, list.filter((t) => t.is_shared && lg(t) === cur))
+    + grp(`Mere templates · ${nm[cur]}`, list.filter((t) => !t.is_shared && lg(t) === cur))
+    + grp(`Company templates · ${nm[other]}`, list.filter((t) => t.is_shared && lg(t) === other))
+    + grp(`Mere templates · ${nm[other]}`, list.filter((t) => !t.is_shared && lg(t) === other));
 }
 const signatureBlock = () => `\n\nBest Regards,\n\n${S.me.full_name}\n${S.me.designation || ROLE[S.me.role] || ""}\nGENESIS INFOSERVE PVT. LTD.\n${S.me.email}${S.me.phone ? "\n" + S.me.phone : ""}`;
 
@@ -70,15 +78,19 @@ const signatureBlock = () => `\n\nBest Regards,\n\n${S.me.full_name}\n${S.me.des
 // ---------------------------------------------------------------------
 export async function openComposer(opts) {
   const { channel, lead, rfq, bulk, reply } = opts;
-  const list = (await loadTemplates()).filter((t) => t.channel === channel && (t.use_for === "any" || t.use_for === (rfq ? "rfq" : "lead")));
+  const all = (await loadTemplates()).filter((t) => t.channel === channel && (t.use_for === "any" || t.use_for === (rfq ? "rfq" : "lead")));
+  // current-language templates first (auto-picked), the other language still selectable
+  const list = [...all.filter((t) => (t.lang || "en") === getLang()), ...all.filter((t) => (t.lang || "en") !== getLang())];
   const stage = pickStage({ channel, lead, rfq, reply });
-  const auto = reply ? null : (list.find((t) => t.is_shared && t.stage === stage) || list.find((t) => t.stage === stage) || list[0]);
+  const mine = (t) => (t.lang || "en") === getLang();
+  const auto = reply ? null : (list.find((t) => mine(t) && t.is_shared && t.stage === stage) || list.find((t) => mine(t) && t.stage === stage)
+    || list.find((t) => t.is_shared && t.stage === stage) || list[0]);
   const ctx = tplContext({ lead: bulk ? null : lead, rfq });
-  if (bulk) { ctx.company = "your organization"; ctx.contact_name = ""; }
+  if (bulk) { ctx.company = L("aapki company", "your organization"); ctx.contact_name = ""; }
   const isEmail = channel === "email";
   const lastMail = lead?.last_emailed_at || rfq?.last_emailed_at;
   const warn = [];
-  if (isEmail && lastMail && Date.now() - new Date(lastMail) < 3 * 864e5) warn.push(`Is ${rfq ? "RFQ" : "lead"} ko ${ago(lastMail)} email gaya tha — dobara bhejna hai?`);
+  if (isEmail && lastMail && Date.now() - new Date(lastMail) < 3 * 864e5) warn.push(L(`Is ${rfq ? "RFQ" : "lead"} ko ${ago(lastMail)} email gaya tha — dobara bhejna hai?`, `This ${rfq ? "RFQ" : "lead"} was emailed ${ago(lastMail)} — send again?`));
   let to = "", phones = [];
   if (isEmail) {
     to = reply ? reply.counterpart : bulk ? "" : (opts.to || rfq?.email || lead?.email || "");
@@ -125,7 +137,10 @@ export async function openComposer(opts) {
   const apply = (t) => {
     if (t) { body.value = fillTemplate(t.body, ctx); if (sub) sub.value = fillTemplate(t.subject || "", ctx); }
     else {
-      body.value = isEmail ? `Dear ${ctx.contact_name || "Sir/Madam"},\n\n${reply ? "Thank you for your reply.\n\n" : ""}${signatureBlock()}` : `Namaste ${ctx.contact_name || "Sir/Madam"} 🙏\n\n– ${S.me.full_name}, Genesis Infoserve`;
+      body.value = isEmail
+        ? (isEn() ? `Dear ${ctx.contact_name || "Sir/Madam"},\n\n${reply ? "Thank you for your reply.\n\n" : ""}${signatureBlock()}`
+                  : `Namaste ${ctx.contact_name || "Sir/Madam"},\n\n${reply ? "Aapke reply ke liye dhanyavaad.\n\n" : ""}${signatureBlock()}`)
+        : `${L("Namaste", "Hello")} ${ctx.contact_name || "Sir/Madam"} 🙏\n\n– ${S.me.full_name}, Genesis Infoserve`;
       if (sub) sub.value = reply ? (/^re:/i.test(reply.subject || "") ? reply.subject : "Re: " + (reply.subject || "")) : "";
     }
     body.dataset.dirty = "";
@@ -230,7 +245,7 @@ function saveAsTemplate(channel, subject, body) {
   });
   $("#tGo", m).onclick = (e) => busy(e.target, async () => {
     const name = $("#tN", m).value.trim(); if (!name) return toast("Naam daalo", true);
-    const { error } = await sb.from("message_templates").insert({ channel, name, subject: subject || null, body, is_shared: !!$("#tS", m)?.checked, owner_id: S.me.id });
+    const { error } = await sb.from("message_templates").insert({ channel, name, subject: subject || null, body, is_shared: !!$("#tS", m)?.checked, owner_id: S.me.id, lang: getLang() });
     if (error) throw error; tplAt = 0; closeModal(); toast("Template saved ✔");
   });
 }
@@ -239,15 +254,16 @@ function saveAsTemplate(channel, subject, body) {
 //  TEMPLATES PAGE
 // ---------------------------------------------------------------------
 export async function viewTemplates(el) {
-  const ch = el.dataset.ch || "email";
-  const list = (await loadTemplates(true)).filter((t) => t.channel === ch);
+  const ch = el.dataset.ch || "email", lf = el.dataset.lf || getLang();
+  const list = (await loadTemplates(true)).filter((t) => t.channel === ch && (lf === "all" || (t.lang || "en") === lf));
   const sample = tplContext({ lead: { company: "Sample Technologies Pvt Ltd", contact_name: "Mr. Sharma", city: "Mumbai", products: ["HP Workstations"] }, rfq: null });
   el.innerHTML = `
     <div class="toolbar"><div class="chips"><button class="chip ${ch === "email" ? "on" : ""}" data-ch="email">✉️ Email</button><button class="chip ${ch === "whatsapp" ? "on" : ""}" data-ch="whatsapp">💬 WhatsApp</button></div>
+      <div class="chips">${[["hinglish", "Hinglish"], ["en", "English"], ["all", L("Dono languages", "Both languages")]].map(([k, l]) => `<button class="chip ${lf === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>
       <span class="sp" style="flex:1"></span><button class="btn primary" id="tNew">${ic("plus")} Naya template</button></div>
     <div class="queue">${list.map((t) => `
       <div class="card" style="padding:14px 16px"><div class="row" style="flex-wrap:nowrap">
-        <div style="min-width:0;flex:1"><b>${h(t.name)}</b> ${t.is_shared ? '<span class="badge acc">Company</span>' : '<span class="badge">Mera</span>'} ${t.stage ? `<span class="badge">${h(t.stage)}</span>` : ""}
+        <div style="min-width:0;flex:1"><b>${h(t.name)}</b> ${t.is_shared ? '<span class="badge acc">Company</span>' : '<span class="badge">Mera</span>'} ${t.stage ? `<span class="badge">${h(t.stage)}</span>` : ""} <span class="badge">${(t.lang || "en") === "en" ? "EN" : "Hinglish"}</span>
           ${t.subject ? `<div class="mu" style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Subject: ${h(fillTemplate(t.subject, sample))}</div>` : ""}</div>
         <button class="btn sm" data-tv="${t.id}">👁</button>
         ${(!t.is_shared && t.owner_id === S.me.id) || isMgr() ? `<button class="btn sm" data-te="${t.id}">Edit</button>` : ""}
@@ -255,8 +271,9 @@ export async function viewTemplates(el) {
         ${(!t.is_shared && t.owner_id === S.me.id) || isMgr() ? `<button class="btn sm danger" data-tx="${t.id}" aria-label="Delete">${ic("trash")}</button>` : ""}
       </div></div>`).join("") || '<div class="card empty">Abhi koi template nahi</div>'}</div>`;
   $$("[data-ch]", el).forEach((b) => b.onclick = () => { el.dataset.ch = b.dataset.ch; viewTemplates(el); });
+  $$("[data-lf]", el).forEach((b) => b.onclick = () => { el.dataset.lf = b.dataset.lf; viewTemplates(el); });
   const get = (id) => list.find((t) => t.id === +id);
-  $("#tNew", el).onclick = () => templateEditor({ channel: ch, body: "", subject: "" }, () => viewTemplates(el));
+  $("#tNew", el).onclick = () => templateEditor({ channel: ch, body: "", subject: "", lang: lf === "all" ? getLang() : lf }, () => viewTemplates(el));
   $$("[data-te]", el).forEach((b) => b.onclick = () => templateEditor(get(b.dataset.te), () => viewTemplates(el)));
   $$("[data-td]", el).forEach((b) => b.onclick = () => { const t = get(b.dataset.td); templateEditor({ ...t, id: null, name: t.name + " (copy)", is_shared: false, owner_id: S.me.id }, () => viewTemplates(el)); });
   $$("[data-tv]", el).forEach((b) => b.onclick = () => { const t = get(b.dataset.tv); modal({ title: t.name, wide: true, body: `${t.subject ? `<p><b>Subject:</b> ${h(fillTemplate(t.subject, sample))}</p>` : ""}<div class="script" style="background:var(--surface);border:1px solid var(--line)">${mdToHtml(fillTemplate(t.body, sample))}</div><p class="mu" style="font-size:12px">Preview sample data ke saath.</p>` }); });
@@ -273,6 +290,7 @@ function templateEditor(t, done) {
     body: `<div class="grid3">
       <div><label class="f">Naam *</label><input class="input" id="eN" maxlength="80" value="${h(t.name || "")}"></div>
       <div><label class="f">Kahan use ho</label><select class="input" id="eU">${[["any", "Leads + RFQs"], ["lead", "Sirf leads"], ["rfq", "Sirf RFQs"]].map(([k, l]) => `<option value="${k}" ${k === (t.use_for || "any") ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div><label class="f">Language</label><select class="input" id="eL">${[["hinglish", "Hinglish"], ["en", "English"]].map(([k, l]) => `<option value="${k}" ${k === (t.lang || getLang()) ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Auto-select stage</label><select class="input" id="eS"><option value="">—</option>${[["new", "Naya lead"], ["followup", "Follow-up (reply nahi aaya)"], ["interested", "Interested"], ["quote", "Quote bheja"], ["demo", "Demo / meeting"], ["rfq", "RFQ"]].map(([k, l]) => `<option value="${k}" ${k === t.stage ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
       ${isEmail ? `<label class="f">Subject</label><input class="input" id="eSub" maxlength="300" value="${h(t.subject || "")}">` : ""}
       <div class="row" style="margin:12px 0 4px"><label class="f" style="margin:0">Message</label><span style="flex:1"></span>
@@ -287,7 +305,7 @@ function templateEditor(t, done) {
   $("#eVar", m).onchange = (e) => { if (!e.target.value) return; ta.setRangeText(`{{${e.target.value}}}`, ta.selectionStart, ta.selectionEnd, "end"); e.target.value = ""; ta.focus(); };
   $("#eB", m).onclick = () => { const a = ta.selectionStart, b = ta.selectionEnd; if (a === b) return; ta.setRangeText("**" + ta.value.slice(a, b) + "**", a, b, "select"); };
   $("#eGo", m).onclick = (e) => busy(e.target, async () => {
-    const row = { channel: t.channel, name: $("#eN", m).value.trim(), use_for: $("#eU", m).value, stage: $("#eS", m).value || null,
+    const row = { channel: t.channel, lang: $("#eL", m).value, name: $("#eN", m).value.trim(), use_for: $("#eU", m).value, stage: $("#eS", m).value || null,
       subject: isEmail ? $("#eSub", m).value.trim() || null : null, body: ta.value.trim(), is_shared: isMgr() ? $("#eSh", m).checked : false };
     if (!row.name || !row.body) return toast("Naam aur message zaroori hain", true);
     const res = t.id ? await sb.from("message_templates").update(row).eq("id", t.id) : await sb.from("message_templates").insert({ ...row, owner_id: S.me.id });
@@ -635,8 +653,9 @@ export async function viewRequests(el) {
 export function requestAccess(entity, row) {
   const k = lockOf(row);
   const m = modal({
-    title: `🙋 ${k.holder} se access maango`,
-    body: `<p><b>${h(row.company)}</b> abhi <b>${h(k.holder)}</b> ke paas locked hai (till ${h(dt(k.until))}). Request bhejne pe unhe notification jayega; wo approve karenge toh lock aapke naam ho jayega.</p>
+    title: L(`🙋 ${k.holder} se access maango`, `🙋 Request access from ${k.holder}`),
+    body: `<p>${L(`<b>${h(row.company)}</b> abhi <b>${h(k.holder)}</b> ke paas locked hai (till ${h(dt(k.until))}). Request bhejne pe unhe notification jayega; wo approve karenge toh lock aapke naam ho jayega.`,
+      `<b>${h(row.company)}</b> is currently locked by <b>${h(k.holder)}</b> (until ${h(dt(k.until))}). They'll get a notification; if they approve, the lock moves to you.`)}</p>
       <label class="f">Reason (optional)</label><input class="input" id="raN" maxlength="300" placeholder="e.g. Ye mera purana client hai / unhone mujhe call kiya">`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="raGo">Request bhejo</button>`,
   });

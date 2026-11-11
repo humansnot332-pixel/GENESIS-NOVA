@@ -2,6 +2,8 @@
 //  Genesis CRM — core: Supabase client, state, helpers, UI primitives
 // =====================================================================
 import { CONFIG } from "./config.js";
+import { L, isEn } from "./i18n.js";
+export { L, isEn };
 
 if (!window.supabase) throw new Error("supabase-js failed to load");
 export const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
@@ -57,6 +59,11 @@ export const initials = (s) => String(s || "?").split(/\s+/).filter(Boolean).sli
 export function ago(t) {
   if (!t) return "—";
   const s = (Date.now() - new Date(t).getTime()) / 1000, f = s < 0, a = Math.abs(s);
+  if (isEn()) {
+    const n = a < 3600 ? Math.round(a / 60) : a < 86400 ? Math.round(a / 3600) : Math.round(a / 86400);
+    const u = a < 3600 ? "min" : a < 86400 ? (n === 1 ? "hour" : "hours") : (n === 1 ? "day" : "days");
+    return a < 60 ? "just now" : f ? `in ${n} ${u}` : `${n} ${u} ago`;
+  }
   const v = a < 60 ? "abhi" : a < 3600 ? Math.round(a / 60) + " min" : a < 86400 ? Math.round(a / 3600) + " ghante" : Math.round(a / 86400) + " din";
   return a < 60 ? v : f ? v + " mein" : v + " pehle";
 }
@@ -77,7 +84,7 @@ export function followBadge(t) {
   if (!t) return "";
   const d = new Date(t).getTime() - Date.now();
   if (d < 0) return `<span class="badge bad">Overdue · ${h(ago(t))}</span>`;
-  if (d < 864e5) return `<span class="badge warn">Aaj · ${new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>`;
+  if (d < 864e5) return `<span class="badge warn">${L("Aaj", "Today")} · ${new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>`;
   return `<span class="badge">${h(dt(t))}</span>`;
 }
 export const toLocalInput = (t) => {

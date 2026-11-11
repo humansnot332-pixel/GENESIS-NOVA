@@ -407,3 +407,9 @@ fieldset[disabled] .input { opacity: .7; }
 .modal-b { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .modal-h, .modal-f { flex: none; }
 .modal-f { flex-wrap: wrap; background: var(--surface); }
+
+/* language switch */
+.langsw { display: inline-flex; border: 1px solid var(--line-2); border-radius: 99px; padding: 2px; background: var(--surface); flex: none; }
+.langsw button { border: 0; background: transparent; color: var(--tx-2); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px; cursor: pointer; }
+.langsw button.on { background: var(--accent); color: var(--on-accent); }
+@media (max-width: 900px) { .langsw button { padding: 4px 7px; font-size: 11px; } }
