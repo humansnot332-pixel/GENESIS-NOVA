@@ -498,3 +498,8 @@ fieldset[disabled] .input { opacity: .7; }
 .pname { font-size: 13.5px }
 .pmain .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 .pprice { text-align: right; white-space: nowrap }
+
+/* live delete from another device */
+.rt-gone { animation: rtgone .3s ease forwards; pointer-events: none; }
+@keyframes rtgone { to { opacity: 0; transform: translateX(14px); } }
+@media (prefers-reduced-motion: reduce) { .rt-gone { animation: none; opacity: 0; } }

@@ -355,17 +355,53 @@ function enterAnim(page) {
 }
 
 let softT;
-function softRefresh() {
+// re-draw the open page quickly; if the user is typing / has a popup open, try again shortly
+let softTries = 0;
+function softRefresh(delay = 300) {
   clearTimeout(softT);
   softT = setTimeout(() => {
-    if (document.querySelector("[data-modal], .drawer") || document.activeElement?.matches("input,textarea,select")) return;
+    if (document.querySelector("[data-modal], .drawer") || document.activeElement?.matches("input,textarea,select")) {
+      if (softTries++ < 40) softRefresh(1500);
+      return;
+    }
+    softTries = 0;
     const page = $("#page"); if (page && VIEWS[S.route]) Promise.resolve(VIEWS[S.route](page, true)).catch(() => {});
-  }, 800);
+  }, delay);
 }
 
 // ---------------------------------------------------------------------
 //  Realtime
 // ---------------------------------------------------------------------
+// table -> pages that show it (leads inserts/updates are handled in subscribeRealtime)
+const LIVE = {
+  tasks: ["tasks", "today", "dashboard"], quotations: ["quotes", "dashboard", "daily"], products: ["products"],
+  orders: ["orders"], invoices: ["orders"], payments: ["orders", "daily"], renewals: ["renewals"], tickets: ["support"],
+  message_templates: ["templates"], lock_requests: ["requests"], rfqs: ["rfqs", "dashboard"],
+};
+// a deleted row fades out at once on every screen (then the page re-draws with fresh numbers)
+const GONE = {
+  leads: (id) => `[data-act="lead"][data-id="${id}"]`, quotations: (id) => `[data-act="quote"][data-id="${id}"]`,
+  rfqs: (id) => `[data-act="rfq"][data-id="${id}"]`, invoices: (id) => `[data-iid="${id}"]`, orders: (id) => `[data-oid="${id}"]`,
+  products: (id) => `[data-pid="${id}"]`, renewals: (id) => `[data-rid="${id}"]`, tickets: (id) => `[data-tid="${id}"]`,
+  tasks: (id) => `[data-tdone="${id}"]`,
+};
+function fadeOut(row) { row.classList.add("rt-gone"); setTimeout(() => row.parentNode && row.parentNode.removeChild(row), 320); }
+function onLive(table, routes, p) {
+  if (p.eventType === "DELETE") {
+    const id = p.old?.id; if (id == null) return;
+    const sel = GONE[table]?.(id);
+    if (sel) $$(sel).forEach((n) => {
+      const row = n.tagName === "TR" || n.classList.contains("pitem") ? n : n.closest("tr, .row, .pitem") || n;
+      if (!row.closest(".drawer, [data-modal]")) fadeOut(row);
+    });
+    const d = document.querySelector(".drawer");
+    if (table === "leads" && d && +d.dataset.id === id) { closeDrawer(); toast(L("🗑 Ye lead delete ho gaya", "🗑 This lead was deleted")); }
+    if (table === "quotations" && document.querySelector(`[data-modal] [data-act="delQuote"][data-id="${id}"]`)) { closeModal(); toast(L("🗑 Ye quotation delete ho gayi", "🗑 This quotation was deleted")); }
+    if (table === "leads" && ["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) softRefresh(450);
+  }
+  if (routes.includes(S.route)) softRefresh(450);
+  refreshBadges();
+}
 function subscribeRealtime() {
   channel = sb.channel("crm")
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "rfqs" }, (p) => {
@@ -380,7 +416,7 @@ function subscribeRealtime() {
         if (p.new.owner_id && p.new.owner_id !== S.me.id) toast(`🔒 ${userName(p.new.owner_id)} ne ye lead lock kar liya`);
         openLead(p.new.id, { queue: d.dataset.queue === "1" });
       }
-      if (["leads", "today", "pipeline", "dashboard"].includes(S.route)) softRefresh();
+      if (["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) softRefresh();
       refreshBadges();
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${S.me.id}` }, (p) => {
@@ -392,8 +428,13 @@ function subscribeRealtime() {
       if (["inbox", "dashboard"].includes(S.route)) softRefresh();
       refreshBadges();
     })
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "announcements" }, () => loadAnnouncement())
-    .subscribe();
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "announcements" }, () => loadAnnouncement());
+  // everything else: any add / edit / delete on another device shows up here within a second or two
+  for (const [table, routes] of Object.entries(LIVE)) {
+    channel.on("postgres_changes", { event: "*", schema: "public", table }, (p) => onLive(table, routes, p));
+  }
+  channel.on("postgres_changes", { event: "DELETE", schema: "public", table: "leads" }, (p) => onLive("leads", [], p));
+  channel.subscribe();
 }
 
 // ---------------------------------------------------------------------
