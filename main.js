@@ -272,7 +272,7 @@ function renderShell() {
         <button class="btn ghost icon menu-btn" data-act="menu" aria-label="Menu">${ic("menu")}</button>
         <h1 id="title"></h1><div class="sp"></div>
         <button class="search-btn" data-act="palette">${ic("search")}<span>Search leads…</span><kbd>Ctrl K</kbd></button>
-        <button class="btn ghost icon" data-act="history" title="${L("Undo / Recent changes (Ctrl+Z)", "Undo / Recent changes (Ctrl+Z)")}" aria-label="Undo and recent changes">↶</button>
+        <button class="btn ghost icon" data-act="history" title="${L("Undo / Recent changes (Ctrl+Z)", "Undo / Recent changes (Ctrl+Z)")}" aria-label="Undo and recent changes">${ic("history")}</button>
         <button class="btn ghost icon bell" id="bellBtn" data-act="bell" aria-label="Notifications">🔔<span class="badge bad" id="bellBadge" hidden></span></button>
         <button class="btn sm" id="installBtn" data-act="install" ${installEvt ? "" : "hidden"} title="${L("Phone / PC pe app install karo", "Install as an app on phone / PC")}">📲 ${L("App install", "Install app")}</button>
         ${langSwitch()}
