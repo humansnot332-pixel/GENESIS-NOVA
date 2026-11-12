@@ -323,21 +323,70 @@ details.card[open] > summary { border-bottom: 1px solid var(--line); }
 .hbar .trk i { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
 .hbar .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--tx-2); }
 
-/* ---------- auth screen ---------- */
-.auth { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 1fr; }
-.auth-art {
-  background: linear-gradient(150deg, #0f766e 0%, #134e4a 55%, #0b2f2c 100%); color: #e6fffb;
-  padding: 48px; display: flex; flex-direction: column; justify-content: space-between;
+/* ---------- auth screen (Genesis Nova — always the night look) ---------- */
+.nova-auth {
+  --surface: #0f192c; --surface-2: #14213a; --tx: #e9eef7; --tx-2: #c6d2e3; --mu: #8d9cb4; --line: rgba(148,178,220,.16); --line-2: rgba(148,178,220,.28);
+  --accent: #2dd4bf; --accent-soft: rgba(45,212,191,.14); --bg: #0b1322; --hover: rgba(255,255,255,.05);
+  min-height: 100vh; display: grid; grid-template-columns: 1.25fr 1fr; background: #060a13; color: var(--tx); color-scheme: dark;
 }
-.auth-art h2 { font-size: 34px; line-height: 1.15; margin: 0 0 14px; letter-spacing: -.02em; max-width: 460px; }
-.auth-art p { opacity: .82; max-width: 440px; margin: 0; }
-.auth-art ul { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 10px; opacity: .92; }
-.auth-form { display: grid; place-items: center; padding: 32px 20px; background: var(--surface); }
-.auth-form form { width: min(380px, 100%); }
-.auth-form h1 { font-size: 22px; margin: 18px 0 4px; }
-.auth-form .mu { color: var(--mu); margin: 0 0 18px; }
-.err { color: var(--bad); font-size: 13px; min-height: 18px; margin-top: 8px; }
-@media (max-width: 860px) { .auth { grid-template-columns: 1fr; } .auth-art { display: none; } }
+.auth-art { position: relative; overflow: hidden; min-height: 280px; background: radial-gradient(120% 90% at 20% 10%, #12304a 0%, #0a1424 45%, #060a13 100%); }
+.auth-art canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.auth-art::after { content: ""; position: absolute; inset: -30%; background: conic-gradient(from 200deg at 60% 40%, transparent 0deg, rgba(45,212,191,.12) 60deg, transparent 120deg, rgba(124,196,255,.09) 200deg, transparent 260deg); filter: blur(40px); animation: nvspin 30s linear infinite; pointer-events: none; }
+@keyframes nvspin { to { transform: rotate(360deg); } }
+.auth-brand { position: absolute; left: clamp(20px, 6%, 56px); right: 20px; bottom: clamp(56px, 11%, 96px); z-index: 2; display: grid; gap: 12px; }
+.nlogo { width: 50px; height: 50px; border-radius: 15px; display: grid; place-items: center; background: linear-gradient(145deg, rgba(45,212,191,.22), rgba(15,118,110,.38)); border: 1px solid rgba(45,212,191,.45); box-shadow: 0 0 0 6px rgba(45,212,191,.06), 0 10px 30px rgba(45,212,191,.25); }
+.nlogo svg { width: 28px; height: 28px; }
+.eyebrow { font: 600 11.5px/1 Inter, system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #2dd4bf; }
+.nword { font: 800 clamp(32px, 4.4vw, 56px)/1 "Sora", "Segoe UI", system-ui, sans-serif; letter-spacing: .06em; margin: 0; color: #e9eef7; }
+.nword span { background: linear-gradient(90deg, #2dd4bf, #7cc4ff 55%, #fbbf24); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ntag { font: 500 clamp(16px, 1.7vw, 21px)/1.35 "Sora", system-ui, sans-serif; color: #d7e3f3; margin: 0; animation: nvrise .8s .2s both; }
+.nsub { color: #8d9cb4; font-size: 13.5px; margin: 0; max-width: 46ch; animation: nvrise .8s .35s both; }
+.auth-copy { position: absolute; left: clamp(20px, 6%, 56px); bottom: 20px; z-index: 2; color: rgba(214,226,242,.45); font-size: 12px; }
+.auth-form { position: relative; display: grid; place-items: center; padding: 40px 20px; background: linear-gradient(180deg, #0f192c, #0b1322); }
+.auth-form form { width: min(380px, 100%); animation: nvrise .7s .15s cubic-bezier(.2,.7,.2,1) both; }
+.auth-form h1 { font: 700 27px/1.2 "Sora", system-ui, sans-serif; margin: 0 0 4px; }
+.auth-form .mu { color: var(--mu); margin: 0 0 20px; }
+.auth-form .input { height: 46px; border-radius: 12px; background: #0f192c; border-color: var(--line); transition: border-color .25s, box-shadow .25s, background .25s; }
+.auth-form .input:focus { border-color: #2dd4bf; box-shadow: 0 0 0 4px rgba(45,212,191,.16); background: #122039; }
+.auth-lang { position: absolute; top: 18px; right: 18px; }
+.pwf { position: relative; }
+.pwf .input { padding-right: 44px; }
+.pwf .eye { position: absolute; right: 7px; top: 7px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--mu); cursor: pointer; display: grid; place-items: center; }
+.pwf .eye:hover { color: var(--tx); background: var(--hover); }
+.nova-btn { position: relative; overflow: hidden; width: 100%; height: 48px; margin-top: 6px; border: 0; border-radius: 12px; font: 700 15px "Sora", system-ui, sans-serif; letter-spacing: .02em; color: #fff; background: linear-gradient(135deg, #14b8a6, #0f766e 60%, #115e59); box-shadow: 0 10px 30px rgba(20,184,166,.28); }
+.nova-btn:hover { box-shadow: 0 14px 36px rgba(20,184,166,.42); background: linear-gradient(135deg, #14b8a6, #0f766e 60%, #115e59); }
+.nova-btn::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.28) 50%, transparent 70%); transform: translateX(-100%); animation: nvshine 3.6s 1.5s infinite; }
+@keyframes nvshine { 0% { transform: translateX(-100%); } 35%, 100% { transform: translateX(100%); } }
+.auth-links { text-align: center; margin: 14px 0 0; }
+.auth-links a { color: #7cc4ff; }
+.secure { text-align: center; color: var(--mu); font-size: 12px; margin: 18px 0 0; }
+@keyframes nvrise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@media (max-width: 860px) {
+  .nova-auth { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .auth-art { min-height: 300px; }
+  .auth-brand { bottom: 44px; } .nword { font-size: 34px; } .nsub { display: none; }
+  .auth-form { padding-top: 64px; }
+}
+
+/* ---------- Genesis Nova: sidebar brand + calm in-app motion ---------- */
+.nlogo-s { background: linear-gradient(145deg, #0f766e, #115e59); }
+.nlogo-s svg { width: 19px; height: 19px; }
+.bword { font-family: "Sora", system-ui, sans-serif; letter-spacing: .08em; font-size: 13.5px !important; }
+.nav a { transition: background .2s, color .2s, transform .12s; }
+.nav a:active { transform: scale(.98); }
+.btn { transition: background .15s, border-color .15s, color .15s, box-shadow .2s, transform .1s; }
+.btn:active:not(:disabled) { transform: scale(.97); }
+.kpi, .pitem, .card.pgroup { transition: transform .2s, box-shadow .2s, border-color .2s; }
+.kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.page.enter > *, .page.enter .kpis > *, .page.enter .cols > *, .page.enter .pcat > * { animation: nvrise .45s cubic-bezier(.2,.7,.2,1) both; }
+.page.enter > *:nth-child(2) { animation-delay: .05s; } .page.enter > *:nth-child(3) { animation-delay: .1s; } .page.enter > *:nth-child(4) { animation-delay: .15s; } .page.enter > *:nth-child(n+5) { animation-delay: .2s; }
+.page.enter .kpis > *:nth-child(2) { animation-delay: .06s; } .page.enter .kpis > *:nth-child(3) { animation-delay: .12s; } .page.enter .kpis > *:nth-child(4) { animation-delay: .18s; } .page.enter .kpis > *:nth-child(n+5) { animation-delay: .24s; }
+.tbl tbody tr { transition: background .15s; }
+@media (prefers-reduced-motion: reduce) {
+  .auth-art::after, .nova-btn::after { animation: none; }
+  .page.enter > *, .page.enter .kpis > *, .auth-form form, .ntag, .nsub { animation: none !important; }
+  .kpi:hover { transform: none; }
+}
 
 .mu { color: var(--mu); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

@@ -13,6 +13,7 @@ import {
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
 import { viewImport } from "./import.js";
+import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
   viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct,
   marginHtml, shareQuote, quoteTrackHtml, orderFromQuote,
@@ -22,6 +23,14 @@ import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 
 const $ = (s, r = document) => r.querySelector(s);
+// ---------- brand ----------
+const APP = "Genesis Nova";
+const STAR = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="nvg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5eead4"/><stop offset=".6" stop-color="#7cc4ff"/><stop offset="1" stop-color="#fbbf24"/></linearGradient></defs><path fill="url(#nvg)" d="M16 1.5c1.1 7.4 3.4 11.6 14.5 14.5C19.4 18.9 17.1 23.1 16 30.5 14.9 23.1 12.6 18.9 1.5 16 12.6 13.1 14.9 8.9 16 1.5z"/></svg>`;
+const TAGLINES = ["Smart IT. Smarter sales.", "From first call to final install.", "Every lead. Every device. One place.", "Powering the people who power IT."];
+const FX_NAMES = { network: "Live IT network", circuit: "Circuit board", globe: "Connected globe", server: "Data centre fly-through", radar: "Security radar", laptop: "Exploded laptop", hex: "Hex mesh", fiber: "Fiber optic" };
+const EYE = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+let fx = null;
+const brandCache = () => { try { return JSON.parse(localStorage.getItem("crm_brand") || "{}"); } catch { return {}; } };
 // ---------- PWA: installable app (only on https; never during local tests) ----------
 let installEvt = null;
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -52,45 +61,57 @@ const langSwitch = () => `<div class="langsw" role="group" aria-label="Language"
 function renderLogin(mode = "login", msg = "") {
   loginMode = mode;
   stopApp();
+  const bc = brandCache(), tag = bc.tagline || TAGLINES[0];
   root.innerHTML = `
-  <div class="auth">
+  <div class="auth nova-auth">
     <div class="auth-art">
-      <div class="row"><div class="logo">G</div><b>${h(CONFIG.COMPANY)}</b></div>
-      <div>
-        <h2>Har call, har lead, har RFQ — ek jagah.</h2>
-        <p>Team ke liye secure CRM: auto leads, RFQ tracking, follow-ups aur live reports.</p>
-        <ul><li>✓ Naye leads har Mon / Wed / Fri apne aap</li><li>✓ IndiaMART & website RFQs seedha inbox mein</li><li>✓ Role-based access, audit log</li></ul>
+      <canvas id="authFx" aria-hidden="true"></canvas>
+      <div class="auth-brand">
+        <div class="row" style="gap:12px"><div class="nlogo">${STAR}</div><span class="eyebrow">Genesis Infoserve</span></div>
+        <h1 class="nword">GENESIS <span>NOVA</span></h1>
+        <p class="ntag" id="authTag">${h(tag)}</p>
+        <p class="nsub">${L("Leads, RFQs, quotations, orders aur support — poori Genesis team ka ek workspace.", "Leads, RFQs, quotations, orders and support — one workspace for the whole Genesis team.")}</p>
       </div>
-      <small style="opacity:.6">© ${new Date().getFullYear()} ${h(CONFIG.COMPANY)}</small>
+      <small class="auth-copy">© ${new Date().getFullYear()} Genesis Infoserve Pvt. Ltd.</small>
     </div>
-    <div class="auth-form" style="position:relative"><div style="position:absolute;top:16px;right:16px">${langSwitch()}</div>
+    <div class="auth-form"><div class="auth-lang">${langSwitch()}</div>
       ${mode === "login" ? `
       <form id="loginF" autocomplete="on">
-        <div class="logo">G</div>
-        <h1>Sign in</h1><p class="mu">Apne work email se login karo.</p>
+        <h1>${L("Welcome back", "Welcome back")}</h1><p class="mu">${L("Apne office account se login karo.", "Sign in with your office account.")}</p>
         <label class="f" for="em">Email</label><input class="input" id="em" type="email" autocomplete="username" required maxlength="200">
-        <label class="f" for="pw">Password</label><input class="input" id="pw" type="password" autocomplete="current-password" required maxlength="72">
+        <label class="f" for="pw">Password</label><div class="pwf"><input class="input" id="pw" type="password" autocomplete="current-password" required maxlength="72"><button type="button" class="eye" id="eye" aria-label="Show password">${EYE}</button></div>
         <div class="err" id="err">${h(msg)}</div>
-        <button class="btn primary" style="width:100%;height:40px;margin-top:6px">Sign in</button>
-        <p style="text-align:center;margin-top:14px"><a href="#" id="forgot">Password bhool gaye?</a></p>
+        <button class="btn primary nova-btn"><span>${L("Login karo", "Sign in")}</span></button>
+        <p class="auth-links"><a href="#" id="forgot">${L("Password bhool gaye?", "Forgot password?")}</a></p>
+        <p class="secure">🔒 ${L("Encrypted login · sirf Genesis team ke liye", "Encrypted sign-in · Genesis team only")}</p>
       </form>` : mode === "forgot" ? `
       <form id="forgotF">
-        <div class="logo">G</div><h1>Password reset</h1><p class="mu">Email daalo — reset link bhejenge.</p>
+        <h1>Password reset</h1><p class="mu">Email daalo — reset link bhejenge.</p>
         <label class="f" for="em">Email</label><input class="input" id="em" type="email" required>
         <div class="err" id="err">${h(msg)}</div>
-        <button class="btn primary" style="width:100%;height:40px">Reset link bhejo</button>
+        <button class="btn primary nova-btn"><span>Reset link bhejo</span></button>
         <p style="text-align:center;margin-top:14px"><a href="#" id="back">← Login</a></p>
       </form>` : `
       <form id="newPwF">
-        <div class="logo">G</div><h1>Naya password</h1><p class="mu">Kam se kam 10 characters, letters + number.</p>
+        <h1>Naya password</h1><p class="mu">Kam se kam 10 characters, letters + number.</p>
         <label class="f" for="pw">New password</label><input class="input" id="pw" type="password" autocomplete="new-password" required minlength="10">
         <label class="f" for="pw2">Confirm</label><input class="input" id="pw2" type="password" autocomplete="new-password" required>
         <div class="err" id="err">${h(msg)}</div>
-        <button class="btn primary" style="width:100%;height:40px">Save password</button>
+        <button class="btn primary nova-btn"><span>Save password</span></button>
       </form>`}
     </div>
   </div>`;
   const err = (m) => { $("#err").textContent = m; };
+  fx?.stop(); fx = null;
+  const cv = $("#authFx");
+  if (cv) { try { fx = startLoginFx(cv, bc.login_animation || "network"); } catch { /* old browser: static background */ } }
+  sb.rpc("public_branding").then(({ data }) => {
+    if (!data) return;
+    try { localStorage.setItem("crm_brand", JSON.stringify(data)); } catch { /* ignore */ }
+    if (data.login_animation && data.login_animation !== (bc.login_animation || "network")) fx?.setMode(data.login_animation);
+    const t = $("#authTag"); if (t && data.tagline) t.textContent = data.tagline;
+  }, () => {});
+  $("#eye")?.addEventListener("click", () => { const p = $("#pw"); p.type = p.type === "password" ? "text" : "password"; });
   $("#loginF")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const k = "crm_lock", lock = JSON.parse(sessionStorage.getItem(k) || '{"n":0,"t":0}');
@@ -104,13 +125,14 @@ function renderLogin(mode = "login", msg = "") {
       return err(/invalid/i.test(error.message) ? "Email ya password galat hai" : error.message);
     }
     sessionStorage.removeItem(k);
+    fx?.surge();
   });
   $("#forgot")?.addEventListener("click", (e) => { e.preventDefault(); renderLogin("forgot"); });
   $("#back")?.addEventListener("click", (e) => { e.preventDefault(); renderLogin(); });
   $("#forgotF")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     await sb.auth.resetPasswordForEmail($("#em").value.trim(), { redirectTo: location.origin + location.pathname });
-    err(""); $("#forgotF").innerHTML = `<div class="logo">G</div><h1>Email check karo</h1><p class="mu">Agar ye email registered hai to reset link aa jayega.</p><p><a href="#" id="back">← Login</a></p>`;
+    err(""); $("#forgotF").innerHTML = `<h1>Email check karo</h1><p class="mu">Agar ye email registered hai to reset link aa jayega.</p><p><a href="#" id="back">← Login</a></p>`;
     $("#back").onclick = (ev) => { ev.preventDefault(); renderLogin(); };
   });
   $("#newPwF")?.addEventListener("submit", async (e) => {
@@ -144,6 +166,7 @@ function stopApp() {
 }
 
 async function start() {
+  fx?.stop(); fx = null;
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
   S.session = session;
@@ -230,7 +253,7 @@ function renderShell() {
   root.innerHTML = `
   <div class="app">
     <aside class="side" id="side">
-      <div class="brand"><div class="logo">G</div><div><b>${h(CONFIG.COMPANY)}</b><small>CRM</small></div></div>
+      <div class="brand"><div class="logo nlogo-s">${STAR}</div><div><b class="bword">GENESIS NOVA</b><small>by Genesis Infoserve</small></div></div>
       <nav class="nav" aria-label="Main">
         ${NAV.map((n) => {
           if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
@@ -301,7 +324,7 @@ function route() {
   if (navItem?.[3] && !navItem[3]()) { location.hash = "#/dashboard"; return; }
   $$(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === S.route));
   $("#title").textContent = TITLES[S.route] || "";
-  document.title = tr(TITLES[S.route] || "CRM") + " · " + CONFIG.COMPANY;
+  document.title = tr(TITLES[S.route] || APP) + " · " + APP;
   $("#side")?.classList.remove("open");
   const page = $("#page");
   page.innerHTML = `<div class="empty">Loading…</div>`;
@@ -309,12 +332,27 @@ function route() {
   page.onclick = null;
   refreshBadges();
   Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
+    enterAnim(page);
     if (S.params.id && S.route === "leads") openLead(+S.params.id);
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
     if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
   }).catch(fail);
 }
 addEventListener("hashchange", route);
+// cards fade up in sequence and whole-number KPIs count up — only when a page is opened
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+function enterAnim(page) {
+  if (reduceMotion()) return;
+  page.classList.remove("enter"); void page.offsetWidth; page.classList.add("enter");
+  setTimeout(() => page.classList.remove("enter"), 900);
+  $$(".kpi .v", page).forEach((v) => {
+    const m = v.textContent.trim().match(/^(₹?)([\d,]+)$/); if (!m) return;
+    const to = +m[2].replace(/,/g, ""); if (!to || to > 1e7) return;
+    const t0 = performance.now(), fmt = (n) => m[1] + n.toLocaleString("en-IN");
+    const step = (t) => { const p = Math.min(1, (t - t0) / 700), e = 1 - Math.pow(1 - p, 3); v.textContent = fmt(Math.round(to * e)); if (p < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  });
+}
 
 let softT;
 function softRefresh() {
@@ -1395,6 +1433,27 @@ const CO_FIELDS = [
   ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"],
   ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
 ];
+function brandCard(b, ro) {
+  const cur = b.login_animation || "network", tg = b.tagline || TAGLINES[0], custom = !TAGLINES.includes(tg);
+  return `<div class="card sec" style="max-width:860px"><div class="card-h"><h3>🎬 ${L("Login screen", "Login screen")}</h3></div><div class="card-b">
+    <fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
+      <div><label class="f">${L("Animation", "Animation")}</label><select class="input" id="brA">${FX_MODES.map((k) => `<option value="${k}" ${k === cur ? "selected" : ""}>${h(FX_NAMES[k])}</option>`).join("")}</select></div>
+      <div><label class="f">Tagline</label><select class="input" id="brT">${TAGLINES.map((t) => `<option ${t === tg ? "selected" : ""}>${h(t)}</option>`).join("")}<option value="__c" ${custom ? "selected" : ""}>${L("Apni likho…", "Write your own…")}</option></select>
+        <input class="input" id="brC" maxlength="80" value="${custom ? h(tg) : ""}" ${custom ? "" : "hidden"} style="margin-top:8px" placeholder="${h(L("Apni tagline", "Your tagline"))}"></div></div>
+      ${ro ? "" : `<div class="row" style="margin-top:12px"><button class="btn primary" id="brSave">Save</button><span class="mu" style="font-size:12.5px">${L("Sabke login page pe agli baar se dikhega.", "Everyone sees it on the login page from their next visit.")}</span></div>`}</fieldset></div></div>`;
+}
+function wireBrandCard(el) {
+  $("#brT", el)?.addEventListener("change", (e) => { $("#brC", el).hidden = e.target.value !== "__c"; });
+  $("#brSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const t = $("#brT", el).value === "__c" ? $("#brC", el).value.trim() : $("#brT", el).value;
+    if (!t) return toast(L("Tagline likho", "Write a tagline"), true);
+    const v = { login_animation: $("#brA", el).value, tagline: t.slice(0, 80) };
+    const { error } = await sb.from("settings").upsert({ key: "branding", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    try { localStorage.setItem("crm_brand", JSON.stringify(v)); } catch { /* ignore */ }
+    toast(L("Login screen saved ✔", "Login screen saved ✔"));
+  }));
+}
 const redirectUrl = () => location.origin + location.pathname.replace(/[^/]*$/, "") + "auth-redirect.html";
 function outlookCard(o, ro) {
   const ok = /^[0-9a-f-]{36}$/i.test(o.client_id || ""), cp = (v) => `<button class="btn sm" data-copy="${h(v)}">${ic("copy")} Copy</button>`;
@@ -1428,7 +1487,7 @@ function wireOutlookCard(el, o) {
   }));
 }
 VIEWS.company = async (el) => {
-  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook"]);
+  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding"]);
   const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
   const c = m.company || {}, ro = !isAdmin();
   el.innerHTML = `<div class="card" style="max-width:860px"><div class="card-h"><h3>🏢 ${L("Company details", "Company details")}</h3><span class="sp"></span>${ro ? `<span class="badge">${L("Read-only (Admin edit karega)", "Read-only (Admin edits)")}</span>` : ""}</div>
@@ -1436,9 +1495,11 @@ VIEWS.company = async (el) => {
       ${CO_FIELDS.map(([k, hi, en]) => `<div ${k === "address" ? 'style="grid-column:1/-1"' : ""}><label class="f">${h(L(hi, en))}</label><input class="input" data-co="${k}" value="${h(c[k] || "")}" maxlength="${k === "address" ? 300 : 120}"></div>`).join("")}
       <div><label class="f">${L("Payment terms (din) — invoice due date ke liye", "Payment terms (days) — for invoice due dates")}</label><input class="input" type="number" min="0" max="365" id="coTerms" value="${h(m.payment_terms_days ?? 30)}"></div>
     </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
+    ${brandCard(m.branding || {}, ro)}
     ${outlookCard(m.outlook || {}, ro)}
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
   wireOutlookCard(el, m.outlook || {});
+  wireBrandCard(el, m.branding || {});
   $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
     if (!v.name || !v.state) return toast(L("Company naam aur State zaroori hai", "Company name and State are required"), true);

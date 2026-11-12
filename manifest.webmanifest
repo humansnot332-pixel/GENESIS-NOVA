@@ -1,12 +1,12 @@
 {
-  "name": "Genesis Infoserve CRM",
-  "short_name": "Genesis CRM",
-  "description": "Genesis Infoserve sales CRM — leads, RFQs, quotations, orders and support.",
+  "name": "Genesis Nova",
+  "short_name": "Genesis Nova",
+  "description": "Genesis Nova — Genesis Infoserve sales CRM — leads, RFQs, quotations, orders and support.",
   "start_url": "./#/today",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b1020",
+  "background_color": "#060a13",
   "theme_color": "#0f766e",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
