@@ -388,14 +388,14 @@ const GONE = {
 function fadeOut(row) { row.classList.add("rt-gone"); setTimeout(() => row.parentNode && row.parentNode.removeChild(row), 320); }
 function onLive(table, routes, p) {
   if (p.eventType === "DELETE") {
-    const id = p.old?.id; if (id == null) return;
-    const sel = GONE[table]?.(id);
+    const id = p.old?.id;
+    const sel = id == null ? null : GONE[table]?.(id);
     if (sel) $$(sel).forEach((n) => {
       const row = n.tagName === "TR" || n.classList.contains("pitem") ? n : n.closest("tr, .row, .pitem") || n;
       if (!row.closest(".drawer, [data-modal]")) fadeOut(row);
     });
     const d = document.querySelector(".drawer");
-    if (table === "leads" && d && +d.dataset.id === id) { closeDrawer(); toast(L("🗑 Ye lead delete ho gaya", "🗑 This lead was deleted")); }
+    if (table === "leads" && d && id != null && +d.dataset.id === id) { closeDrawer(); toast(L("🗑 Ye lead delete ho gaya", "🗑 This lead was deleted")); }
     if (table === "quotations" && document.querySelector(`[data-modal] [data-act="delQuote"][data-id="${id}"]`)) { closeModal(); toast(L("🗑 Ye quotation delete ho gayi", "🗑 This quotation was deleted")); }
     if (table === "leads" && ["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) softRefresh(450);
   }
