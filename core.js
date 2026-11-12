@@ -6,8 +6,21 @@ import { L, isEn } from "./i18n.js";
 export { L, isEn };
 
 if (!window.supabase) throw new Error("supabase-js failed to load");
+// every successful delete / bulk change the user makes is announced, so the app can offer "↩ Undo"
+const UNDO_TABLES = /\/rest\/v1\/(leads|rfqs|quotations|products|renewals|orders|invoices|payments|tickets|tasks|message_templates)\?/;
+const UNDO_RPC = /\/rest\/v1\/rpc\/(merge_leads|assign_leads|undo_import)\b/;
+async function crmFetch(input, init = {}) {
+  const res = await fetch(input, init);
+  try {
+    const url = typeof input === "string" ? input : input.url, m = String(init.method || "GET").toUpperCase();
+    if (res.ok && ((m === "DELETE" && UNDO_TABLES.test(url)) || (m === "POST" && UNDO_RPC.test(url))))
+      dispatchEvent(new CustomEvent("crm:undoable", { detail: { kind: m === "DELETE" ? "delete" : (url.match(UNDO_RPC) || [])[1] } }));
+  } catch { /* never break a request */ }
+  return res;
+}
 export const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.sessionStorage },
+  global: { fetch: crmFetch },
 });
 
 // ---------- global state ----------
@@ -134,6 +147,17 @@ export function toast(msg, bad = false) {
   const t = document.createElement("div");
   t.className = "toast" + (bad ? " bad" : ""); t.textContent = msg; w.append(t);
   setTimeout(() => t.remove(), bad ? 5200 : 3200);
+}
+// toast with one action button (e.g. "↩ Undo"); stays a bit longer so it can be clicked
+export function toastAction(msg, label, fn, ms = 8000) {
+  let w = document.querySelector(".toasts");
+  if (!w) { w = document.createElement("div"); w.className = "toasts"; w.setAttribute("role", "status"); document.body.append(w); }
+  const t = document.createElement("div"); t.className = "toast act";
+  const s = document.createElement("span"); s.textContent = msg;
+  const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+  b.onclick = () => { t.remove(); fn(); };
+  t.append(s, b); w.append(t);
+  setTimeout(() => t.remove(), ms);
 }
 export const fail = (e) => { console.error(e); toast(friendly(e), true); };
 export function friendly(e) {

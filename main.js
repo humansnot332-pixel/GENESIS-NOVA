@@ -5,7 +5,7 @@ import {
   sb, S, STATUSES, STATUS, OPEN_STATUSES, CATEGORIES, RFQ_STATUSES, ROLES, ROLE, SOURCES, OUTCOMES, OUTCOME,
   isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, telHref, waHref, isMobile, statusBadge, rfqBadge,
   userName, online, followBadge, toLocalInput, ic, toast, fail, modal, closeModal, confirmBox, formData, busy,
-  toCSV, download, parseCSV, callFn, loadTeam, assignable,
+  toCSV, download, parseCSV, callFn, loadTeam, assignable, toastAction, friendly,
   HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, maskPhone, maskEmail,
 } from "./core.js";
 import {
@@ -272,6 +272,7 @@ function renderShell() {
         <button class="btn ghost icon menu-btn" data-act="menu" aria-label="Menu">${ic("menu")}</button>
         <h1 id="title"></h1><div class="sp"></div>
         <button class="search-btn" data-act="palette">${ic("search")}<span>Search leads…</span><kbd>Ctrl K</kbd></button>
+        <button class="btn ghost icon" data-act="history" title="${L("Undo / Recent changes (Ctrl+Z)", "Undo / Recent changes (Ctrl+Z)")}" aria-label="Undo and recent changes">↶</button>
         <button class="btn ghost icon bell" id="bellBtn" data-act="bell" aria-label="Notifications">🔔<span class="badge bad" id="bellBadge" hidden></span></button>
         <button class="btn sm" id="installBtn" data-act="install" ${installEvt ? "" : "hidden"} title="${L("Phone / PC pe app install karo", "Install as an app on phone / PC")}">📲 ${L("App install", "Install app")}</button>
         ${langSwitch()}
@@ -452,6 +453,67 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if (document.querySelector("[data-modal]")) closeModal(); else closeDrawer(); }
 });
 ACT.theme = toggleTheme;
+
+// ---------------------------------------------------------------------
+//  UNDO / REDO  (server keeps the history; see migration 017)
+// ---------------------------------------------------------------------
+const afterUndo = () => { closeDrawer(); softRefresh(150); refreshBadges(); };
+const undoMsg = (r, verb) => `${verb}: ${r?.summary || ""}${r?.conflicts ? " · " + L(`${r.conflicts} field baad mein badle gaye the, wo nahi chhede`, `${r.conflicts} field(s) changed later were left as they are`) : ""}`;
+async function doUndo(tx) {
+  const { data, error } = tx ? await sb.rpc("undo_tx", { p_tx: tx }) : await sb.rpc("undo_mine");
+  if (error) return toast(friendly(error), true);
+  toastAction("↩ " + undoMsg(data, L("Undo ho gaya", "Undone")), "↪ Redo", () => doRedo(data.tx));
+  afterUndo(); return data;
+}
+async function doRedo(tx) {
+  const { data, error } = tx ? await sb.rpc("redo_tx", { p_tx: tx }) : await sb.rpc("redo_mine");
+  if (error) return toast(friendly(error), true);
+  toastAction("↪ " + undoMsg(data, L("Redo ho gaya", "Redone")), "↩ Undo", () => doUndo(data.tx));
+  afterUndo(); return data;
+}
+// after a delete / merge / bulk assign: offer Undo for a few seconds
+let undoT;
+addEventListener("crm:undoable", (e) => {
+  if (!S.me) return;
+  clearTimeout(undoT);
+  undoT = setTimeout(() => {
+    const k = e.detail?.kind, msg = k === "merge_leads" ? L("🔗 Merge ho gaya", "🔗 Merged") : k === "assign_leads" ? L("👤 Leads assign ho gaye", "👤 Leads assigned") : k === "undo_import" ? L("Import hata diya", "Import removed") : L("🗑 Delete ho gaya", "🗑 Deleted");
+    toastAction(msg, "↩ Undo", () => doUndo());
+  }, 250);
+});
+// Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) — not while typing in a field
+document.addEventListener("keydown", (e) => {
+  if (!S.me || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k !== "z" && k !== "y") return;
+  if (document.activeElement?.matches("input, textarea, select, [contenteditable]")) return;
+  e.preventDefault();
+  if (k === "y" || e.shiftKey) doRedo(); else doUndo();
+});
+ACT.history = () => historyPanel("mine");
+async function historyPanel(scope) {
+  const mgr = isMgr();
+  const m = modal({
+    title: L("↶ Undo · Recent changes", "↶ Undo · Recent changes"), wide: true,
+    body: `<div class="chips" style="margin:8px 0 12px"><button class="chip ${scope === "mine" ? "on" : ""}" data-hs="mine">${L("Mere changes (24 ghante)", "My changes (24 hours)")}</button>
+      ${mgr ? `<button class="chip ${scope === "team" ? "on" : ""}" data-hs="team">${L("Poori team (30 din)", "Whole team (30 days)")}</button><button class="chip ${scope === "bin" ? "on" : ""}" data-hs="bin">🗑 Recycle bin</button>` : ""}</div>
+      <div id="hList"><div class="empty">Loading…</div></div>
+      <p class="mu" style="font-size:12.5px;margin-top:12px">⌨️ <b>Ctrl+Z</b> = ${L("apna aakhri change undo", "undo your last change")} · <b>Ctrl+Y</b> = redo. ${L("Undo kabhi kisi aur ka baad wala change overwrite nahi karta.", "Undo never overwrites a change someone made later.")}</p>`,
+  });
+  $$("[data-hs]", m).forEach((b) => b.onclick = () => historyPanel(b.dataset.hs));
+  const { data, error } = await sb.rpc("recent_changes", { p_scope: scope, p_limit: 60 });
+  const box = $("#hList", m); if (!box) return;
+  if (error) { box.innerHTML = `<div class="empty">${h(friendly(error))}</div>`; return; }
+  if (!data?.length) { box.innerHTML = `<div class="empty"><b>${scope === "bin" ? L("Recycle bin khaali hai", "Recycle bin is empty") : L("Abhi koi change nahi", "No changes yet")}</b></div>`; return; }
+  box.innerHTML = `<div class="hlist">${data.map((r) => `<div class="hrow ${r.undone ? "undone" : ""}">
+      <div class="hmain"><div class="hsum">${h(r.summary || "—")}</div><div class="mu" style="font-size:12px">${h(ago(r.at))}${scope !== "mine" ? " · " + h(userName(r.actor)) : ""}${r.undone ? " · " + L("undo kiya hua", "undone") : ""}</div></div>
+      ${r.can ? `<button class="btn sm ${r.undone ? "" : scope === "bin" ? "primary" : ""}" data-htx="${r.tx}" data-hdo="${r.undone ? "redo" : "undo"}">${r.undone ? "↪ Redo" : scope === "bin" ? "♻️ " + L("Wapas lao", "Restore") : "↩ Undo"}</button>`
+        : `<span class="mu" style="font-size:12px" title="${h(r.why || "")}">🔒</span>`}</div>`).join("")}</div>`;
+  $$("[data-htx]", box).forEach((b) => b.onclick = () => busy(b, async () => {
+    const ok = b.dataset.hdo === "redo" ? await doRedo(+b.dataset.htx) : await doUndo(+b.dataset.htx);
+    if (ok) historyPanel(scope);
+  }));
+}
 ACT.install = async (t) => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; t.hidden = true; };
 ACT.lang = (t) => {
   const v = t.dataset.v; if (v === getLang()) return;

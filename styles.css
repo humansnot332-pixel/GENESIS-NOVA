@@ -503,3 +503,13 @@ fieldset[disabled] .input { opacity: .7; }
 .rt-gone { animation: rtgone .3s ease forwards; pointer-events: none; }
 @keyframes rtgone { to { opacity: 0; transform: translateX(14px); } }
 @media (prefers-reduced-motion: reduce) { .rt-gone { animation: none; opacity: 0; } }
+
+/* undo toast + recent changes */
+.toast.act { display: flex; align-items: center; gap: 14px; }
+.toast.act button { border: 0; border-radius: 8px; padding: 5px 10px; font: 700 13px Inter, system-ui, sans-serif; cursor: pointer; background: var(--accent); color: var(--on-accent); white-space: nowrap; }
+.hlist { display: grid; }
+.hrow { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+.hrow:last-child { border-bottom: 0; }
+.hrow.undone .hsum { text-decoration: line-through; color: var(--mu); }
+.hmain { flex: 1; min-width: 0; }
+.hsum { font-size: 13.5px; overflow-wrap: anywhere; }
