@@ -26,7 +26,7 @@ const $ = (s, r = document) => r.querySelector(s);
 // ---------- brand ----------
 const APP = "Genesis Nova";
 const STAR = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="nvg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5eead4"/><stop offset=".6" stop-color="#7cc4ff"/><stop offset="1" stop-color="#fbbf24"/></linearGradient></defs><path fill="url(#nvg)" d="M16 1.5c1.1 7.4 3.4 11.6 14.5 14.5C19.4 18.9 17.1 23.1 16 30.5 14.9 23.1 12.6 18.9 1.5 16 12.6 13.1 14.9 8.9 16 1.5z"/></svg>`;
-const TAGLINES = ["Smart IT. Smarter sales.", "From first call to final install.", "Every lead. Every device. One place.", "Powering the people who power IT."];
+const TAGLINES = ["From first call to final invoice.", "Smart IT. Smarter sales.", "Every lead. Every device. One place.", "Powering the people who power IT."];
 const FX_NAMES = { network: "Live IT network", circuit: "Circuit board", globe: "Connected globe", server: "Data centre fly-through", radar: "Security radar", laptop: "Exploded laptop", hex: "Hex mesh", fiber: "Fiber optic" };
 const EYE = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
 let fx = null;
@@ -104,11 +104,11 @@ function renderLogin(mode = "login", msg = "") {
   const err = (m) => { $("#err").textContent = m; };
   fx?.stop(); fx = null;
   const cv = $("#authFx");
-  if (cv) { try { fx = startLoginFx(cv, bc.login_animation || "network"); } catch { /* old browser: static background */ } }
+  if (cv) { try { fx = startLoginFx(cv, bc.login_animation || "server"); } catch { /* old browser: static background */ } }
   sb.rpc("public_branding").then(({ data }) => {
     if (!data) return;
     try { localStorage.setItem("crm_brand", JSON.stringify(data)); } catch { /* ignore */ }
-    if (data.login_animation && data.login_animation !== (bc.login_animation || "network")) fx?.setMode(data.login_animation);
+    if (data.login_animation && data.login_animation !== (bc.login_animation || "server")) fx?.setMode(data.login_animation);
     const t = $("#authTag"); if (t && data.tagline) t.textContent = data.tagline;
   }, () => {});
   $("#eye")?.addEventListener("click", () => { const p = $("#pw"); p.type = p.type === "password" ? "text" : "password"; });
@@ -1434,7 +1434,7 @@ const CO_FIELDS = [
   ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
 ];
 function brandCard(b, ro) {
-  const cur = b.login_animation || "network", tg = b.tagline || TAGLINES[0], custom = !TAGLINES.includes(tg);
+  const cur = b.login_animation || "server", tg = b.tagline || TAGLINES[0], custom = !TAGLINES.includes(tg);
   return `<div class="card sec" style="max-width:860px"><div class="card-h"><h3>🎬 ${L("Login screen", "Login screen")}</h3></div><div class="card-b">
     <fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
       <div><label class="f">${L("Animation", "Animation")}</label><select class="input" id="brA">${FX_MODES.map((k) => `<option value="${k}" ${k === cur ? "selected" : ""}>${h(FX_NAMES[k])}</option>`).join("")}</select></div>
