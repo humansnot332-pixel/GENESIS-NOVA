@@ -635,24 +635,53 @@ export async function unreadCounts() {
   ]);
   return { notif: n.count || 0, replies: r.count || 0 };
 }
-export async function toggleNotifications(anchor) {
-  const old = $("#notifPanel"); if (old) { old.remove(); return; }
-  const { data } = await sb.from("notifications").select("*").eq("user_id", S.me.id).order("created_at", { ascending: false }).limit(40);
+// ---- notifications: grouped by day, like a phone (Aaj / Kal / Monday / 12 Nov) ----
+const N_ICON = { assign: "👤", digest: "📊", lock: "🔒", lock_request: "🙋", payment: "💰", quote_reply: "💬", quote_view: "👀",
+  renewal: "🔁", reply: "✉️", rfq: "📥", ticket: "🎫" };
+function nDay(t) {
+  const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 864e5);
+  if (diff <= 0) return L("Aaj", "Today");
+  if (diff === 1) return L("Kal", "Yesterday");
+  if (diff < 7) return isEn() ? day.toLocaleDateString("en-IN", { weekday: "long" }) : ["Ravivaar", "Somvaar", "Mangalvaar", "Budhvaar", "Guruvaar", "Shukravaar", "Shanivaar"][day.getDay()];
+  return day.toLocaleDateString("en-IN", { day: "numeric", month: "short", ...(day.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}) });
+}
+const nTime = (t) => new Date(t).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true });
+export async function toggleNotifications(anchor, filter) {
+  const old = $("#notifPanel"); if (old && !filter) { old.remove(); return; }
+  filter = filter || "all";
+  const { data } = await sb.from("notifications").select("*").eq("user_id", S.me.id).order("created_at", { ascending: false }).limit(80);
   const reqIds = (data || []).filter((n) => n.kind === "lock_request" && n.ref_id).map((n) => n.ref_id);
   const { data: reqs } = reqIds.length ? await sb.from("lock_requests").select("id, status").in("id", reqIds) : { data: [] };
   const pending = new Set((reqs || []).filter((r) => r.status === "pending").map((r) => r.id));
-  const p = document.createElement("div"); p.id = "notifPanel"; p.className = "notif-panel card"; p.setAttribute("role", "dialog");
-  p.innerHTML = `<div class="card-h"><h3>Notifications</h3><span class="sp"></span><button class="btn sm ghost" id="nAll">Sab read</button></div>
-    <div class="notif-list">${(data || []).map((n) => `<div class="notif ${n.is_read ? "" : "unread"}" data-n="${n.id}" data-link="${h(n.link || "")}">
-      <b>${h(n.title)}</b><div class="mu" style="font-size:12.5px">${h(n.body || "")}</div><div class="mu" style="font-size:11.5px">${h(ago(n.created_at))}</div>
-      ${n.kind === "lock_request" && pending.has(n.ref_id) ? `<div class="row" style="margin-top:6px"><button class="btn sm primary" data-rq="${n.ref_id}" data-ok="1">✅ De do</button><button class="btn sm" data-rq="${n.ref_id}" data-ok="0">Mana karo</button></div>` : ""}
-    </div>`).join("") || '<div class="empty">Koi notification nahi</div>'}</div>`;
-  document.body.append(p);
-  const r = anchor.getBoundingClientRect();
-  p.style.top = r.bottom + 8 + "px"; p.style.right = Math.max(8, innerWidth - r.right) + "px";
-  const close = (e) => { if (!p.contains(e.target) && !anchor.contains(e.target)) { p.remove(); document.removeEventListener("click", close, true); } };
-  setTimeout(() => document.addEventListener("click", close, true), 0);
-  $("#nAll", p).onclick = async () => { await sb.from("notifications").update({ is_read: true }).eq("user_id", S.me.id).eq("is_read", false); p.remove(); HOOK.refreshBadges(); };
+  const all = data || [], unread = all.filter((n) => !n.is_read).length;
+  const list = filter === "unread" ? all.filter((n) => !n.is_read) : all;
+  const groups = [];
+  for (const n of list) { const k = nDay(n.created_at); let g = groups[groups.length - 1]; if (!g || g.k !== k) groups.push(g = { k, items: [] }); g.items.push(n); }
+  const item = (n) => `<div class="notif ${n.is_read ? "" : "unread"}" data-n="${n.id}" data-link="${h(n.link || "")}">
+      <span class="n-ic">${N_ICON[n.kind] || "🔔"}</span>
+      <div class="n-body"><div class="n-top"><b>${h(String(n.title || "").replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, ""))}</b><span class="n-time">${h(nTime(n.created_at))}</span></div>
+        ${n.body ? `<div class="n-txt">${h(n.body)}</div>` : ""}
+        ${n.kind === "lock_request" && pending.has(n.ref_id) ? `<div class="row" style="margin-top:6px"><button class="btn sm primary" data-rq="${n.ref_id}" data-ok="1">✅ De do</button><button class="btn sm" data-rq="${n.ref_id}" data-ok="0">Mana karo</button></div>` : ""}
+      </div>${n.is_read ? "" : '<span class="n-dot" aria-label="unread"></span>'}</div>`;
+  const p = old || document.createElement("div"); p.id = "notifPanel"; p.className = "notif-panel card"; p.setAttribute("role", "dialog");
+  p.innerHTML = `<div class="card-h"><h3>Notifications</h3>${unread ? `<span class="n-count">${unread}</span>` : ""}<span class="sp"></span>${unread ? `<button class="btn sm ghost" id="nAll">✓ ${L("Sab read", "Mark all read")}</button>` : ""}</div>
+    <div class="n-tabs"><button class="chip ${filter === "all" ? "on" : ""}" data-nf="all">${L("Sab", "All")}</button><button class="chip ${filter === "unread" ? "on" : ""}" data-nf="unread">${L("Unread", "Unread")}${unread ? ` (${unread})` : ""}</button></div>
+    <div class="notif-list">${groups.map((g) => `<div class="n-group"><div class="n-day"><span>${h(g.k)}</span><span class="n-dc">${g.items.length}</span></div>${g.items.map(item).join("")}</div>`).join("")
+      || `<div class="empty">${filter === "unread" ? L("🎉 Sab padh liya — koi unread nahi", "🎉 All caught up") : L("Koi notification nahi", "No notifications")}</div>`}</div>`;
+  if (!old) {
+    document.body.append(p);
+    const r = anchor.getBoundingClientRect();
+    p.style.top = r.bottom + 8 + "px";
+    if (innerWidth < 560) { p.style.left = "8px"; p.style.right = "8px"; p.style.width = "auto"; }   // phone: full width, never off-screen
+    else p.style.right = Math.max(8, innerWidth - r.right) + "px";
+    const close = (e) => { if (!p.contains(e.target) && !anchor.contains(e.target)) { p.remove(); document.removeEventListener("click", close, true); } };
+    setTimeout(() => document.addEventListener("click", close, true), 0);
+  }
+  $$("[data-nf]", p).forEach((b) => b.onclick = (e) => { e.stopPropagation(); toggleNotifications(anchor, b.dataset.nf); });
+  const nAll = $("#nAll", p);
+  if (nAll) nAll.onclick = async (e) => { e.stopPropagation(); await sb.from("notifications").update({ is_read: true }).eq("user_id", S.me.id).eq("is_read", false); HOOK.refreshBadges(); toggleNotifications(anchor, filter); };
   $$("[data-rq]", p).forEach((b) => b.onclick = (e) => { e.stopPropagation(); decide(+b.dataset.rq, b.dataset.ok === "1").then(() => { p.remove(); }); });
   $$("[data-n]", p).forEach((d) => d.onclick = async () => {
     sb.from("notifications").update({ is_read: true }).eq("id", +d.dataset.n).then(() => HOOK.refreshBadges());

@@ -425,7 +425,21 @@ fieldset[disabled] .input { opacity: .7; }
 .bell .badge { position: absolute; top: -2px; right: -4px; height: 17px; min-width: 17px; padding: 0 4px; font-size: 10.5px; justify-content: center; }
 .notif-panel { position: fixed; z-index: 90; width: min(380px, calc(100vw - 16px)); max-height: 70vh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg); animation: pop2 .15s ease-out; }
 .notif-list { overflow-y: auto; }
-.notif { padding: 11px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.notif { padding: 10px 14px 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; display: flex; gap: 10px; align-items: flex-start; position: relative; }
+.n-group:last-child .notif:last-child { border-bottom: 0; }
+.n-ic { flex: none; width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; font-size: 15px; background: var(--hover); }
+.notif.unread .n-ic { background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.n-body { flex: 1; min-width: 0; }
+.n-top { display: flex; gap: 8px; align-items: baseline; }
+.n-top b { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.n-time { flex: none; font-size: 11.5px; color: var(--mu); white-space: nowrap; }
+.n-txt { font-size: 12.5px; color: var(--mu); margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.n-dot { position: absolute; right: 8px; top: 50%; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); transform: translateY(-50%); }
+.notif.unread .n-body { padding-right: 10px; }
+.n-day { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mu); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+.n-dc { font-weight: 600; background: var(--hover); border-radius: 99px; padding: 1px 7px; letter-spacing: 0; }
+.n-count { margin-left: 8px; background: var(--accent); color: var(--on-accent); border-radius: 99px; font-size: 11.5px; font-weight: 700; padding: 1px 8px; }
+.n-tabs { display: flex; gap: 6px; padding: 0 14px 10px; border-bottom: 1px solid var(--line); }
 .notif:hover { background: var(--hover); }
 .notif.unread { background: var(--accent-soft); }
 .notif.unread:hover { background: color-mix(in srgb, var(--accent-soft) 70%, var(--hover)); }
