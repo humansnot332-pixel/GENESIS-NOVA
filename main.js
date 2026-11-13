@@ -12,7 +12,6 @@ import {
   openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
-import { viewImport } from "./import.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
   viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct,
@@ -297,20 +296,20 @@ function renderShell() {
 
 function updateOnline() { if (S.route === "team" || S.route === "dashboard") softRefresh(); }
 
-async function refreshBadges() {
-  const end = new Date(); end.setHours(23, 59, 59, 999);
+// header badges: ONE server call (badge_counts) instead of seven; plain page changes reuse a result younger than 8 s
+let badgeAt = 0, badgeP = null;
+async function refreshBadges(force = true) {
   if (!S.me) return;
-  const in7 = new Date(Date.now() + 7 * 864e5).toLocaleDateString("en-CA");
-  const [r, d, u, q, tk, rn] = await Promise.all([
-    sb.from("rfqs").select("id", { count: "exact", head: true }).eq("status", "new"),
-    sb.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", S.me.id).lte("next_follow_up", end.toISOString()).in("status", OPEN_STATUSES),
-    unreadCounts().catch(() => ({ notif: 0, replies: 0 })),
-    sb.from("lock_requests").select("id", { count: "exact", head: true }).eq("holder", S.me.id).eq("status", "pending"),
-    sb.from("tickets").select("id", { count: "exact", head: true }).eq("assignee_id", S.me.id).in("status", ["open", "in_progress"]),
-    sb.from("renewals").select("id", { count: "exact", head: true }).eq("status", "active").lte("end_date", in7).or(`owner_id.eq.${S.me.id}${isMgr() ? ",owner_id.is.null" : ""}`),
-  ]);
-  const set = (id, n) => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n || ""; } };
-  set("#rfqBadge", r.count); set("#dueBadge", d.count); set("#inboxBadge", u.replies); set("#bellBadge", u.notif); set("#reqBadge", q.count); set("#tktBadge", tk.count); set("#renBadge", rn.count);
+  if (!force && Date.now() - badgeAt < 8000) return;
+  if (badgeP) return badgeP;
+  badgeP = (async () => {
+    const { data, error } = await sb.rpc("badge_counts");
+    if (error || !data) return;
+    const set = (id, n) => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n || ""; } };
+    set("#rfqBadge", data.rfqs); set("#dueBadge", data.due); set("#inboxBadge", data.replies); set("#bellBadge", data.notif);
+    set("#reqBadge", data.requests); set("#tktBadge", data.tickets); set("#renBadge", data.renewals);
+  })().catch(() => {}).finally(() => { badgeP = null; badgeAt = Date.now(); });
+  return badgeP;
 }
 
 async function loadAnnouncement() {
@@ -343,7 +342,7 @@ function route() {
   page.innerHTML = `<div class="empty">Loading…</div>`;
   old.replaceWith(page);
   closeDrawer();
-  refreshBadges();
+  refreshBadges(false);
   Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
     if (!page.isConnected) return;
     enterAnim(page);
@@ -358,12 +357,12 @@ const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matche
 function enterAnim(page) {
   if (reduceMotion()) return;
   page.classList.remove("enter"); void page.offsetWidth; page.classList.add("enter");
-  setTimeout(() => page.classList.remove("enter"), 900);
+  setTimeout(() => page.classList.remove("enter"), 500);
   $$(".kpi .v", page).forEach((v) => {
     const m = v.textContent.trim().match(/^(₹?)([\d,]+)$/); if (!m) return;
     const to = +m[2].replace(/,/g, ""); if (!to || to > 1e7) return;
     const t0 = performance.now(), fmt = (n) => m[1] + n.toLocaleString("en-IN");
-    const step = (t) => { const p = Math.min(1, (t - t0) / 700), e = 1 - Math.pow(1 - p, 3); v.textContent = fmt(Math.round(to * e)); if (p < 1) requestAnimationFrame(step); };
+    const step = (t) => { const p = Math.min(1, (t - t0) / 450), e = 1 - Math.pow(1 - p, 3); v.textContent = fmt(Math.round(to * e)); if (p < 1) requestAnimationFrame(step); };
     requestAnimationFrame(step);
   });
 }
@@ -544,7 +543,7 @@ ACT.lead = (t) => openLead(+t.dataset.id);
 ACT.bell = (t) => toggleNotifications(t);
 VIEWS.inbox = (el, soft, params) => viewInbox(el, params || { id: location.hash.split("/")[2] });
 VIEWS.templates = (el) => viewTemplates(el);
-VIEWS.import = (el) => viewImport(el);
+VIEWS.import = async (el) => (await import("./import.js")).viewImport(el);
 VIEWS.requests = (el) => viewRequests(el);
 VIEWS.products = (el) => viewProducts(el);
 VIEWS.renewals = (el) => viewRenewals(el);

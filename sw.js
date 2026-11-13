@@ -1,6 +1,6 @@
 // Genesis CRM service worker — makes the app installable and opens the shell offline.
 // Data (Supabase) is never cached: every API call always goes to the network.
-const CACHE = "gnova-v9";
+const CACHE = "gnova-v10";
 const SHELL = ["./", "index.html", "styles.css", "main.js", "core.js", "comms.js", "biz.js", "login-fx.js", "import.js", "i18n.js", "data.js", "config.js",
   "frame-guard.js", "supabase.js", "manifest.webmanifest", "icon-192.png"];
 
@@ -10,13 +10,15 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
-// network-first for our own files (always fresh after a deploy), cache only as offline fallback
+// our own files: answer from cache at once (instant open), fetch a fresh copy in the background.
+// A deploy bumps CACHE above → new worker installs → page reloads itself to the new version.
 self.addEventListener("fetch", (e) => {
   const u = new URL(e.request.url);
   if (e.request.method !== "GET" || u.origin !== location.origin || u.pathname.endsWith("quote.html")) return;
-  // cache: "no-cache" → always ask the server (GitHub Pages otherwise lets the browser reuse a file for 10 min)
-  e.respondWith(fetch(u.href, { cache: "no-cache", credentials: "same-origin" }).then((r) => {
-    if (r.ok && r.type === "basic") { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
-    return r;
-  }).catch(() => caches.match(e.request).then((r) => r || caches.match("index.html"))));
+  e.respondWith(caches.open(CACHE).then(async (c) => {
+    const cached = await c.match(e.request);
+    const net = fetch(u.href, { cache: "no-cache", credentials: "same-origin" }).then((r) => { if (r.ok && r.type === "basic") c.put(e.request, r.clone()); return r; }).catch(() => null);
+    if (cached) { e.waitUntil(net); return cached; }
+    return (await net) || caches.match("index.html");
+  }));
 });
