@@ -1627,9 +1627,10 @@ VIEWS.company = async (el) => {
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 VIEWS.automation = async (el) => {
-  const [{ data: s }, { data: runs }] = await Promise.all([
+  const [{ data: s }, { data: runs }, { data: lq }] = await Promise.all([
     sb.from("settings").select("value").eq("key", "ingest").single(),
     sb.from("ingest_runs").select("*").order("started_at", { ascending: false }).limit(20),
+    sb.rpc("lead_quality"),
   ]);
   const c = s?.value || {}, ro = !isAdmin();
   const nextRun = (() => { for (let i = 0; i < 8; i++) { const d = new Date(); d.setDate(d.getDate() + i); d.setHours(9, 0, 0, 0); if (d > new Date() && (c.days || []).includes(d.getDay())) return d; } return null; })();
@@ -1653,6 +1654,13 @@ VIEWS.automation = async (el) => {
       ${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="aSave">Save settings</button></div>`}
     </fieldset></div></div>
     <div class="stack">
+      ${lq ? `<div class="card"><div class="card-h"><h3>✔ ${L("Lead quality check", "Lead quality check")}</h3></div><div class="card-b">
+        <p class="mu" style="margin-top:0">${L("Auto-lead CRM mein tabhi aata hai jab usmein <b>phone + email + website + address</b> chaaron ho. Kuch kam ho to system company ki website (aur Contact page) khol ke dhoondhta hai; phir bhi na mile to reject.", "An automatic lead enters the CRM only with <b>phone + email + website + address</b>. If something is missing the system opens the company website (and its Contact page) to find it; otherwise it is rejected.")}</p>
+        <div class="lq"><div><b>${num(lq.added_7d)}</b><span>${L("poore leads add (7 din)", "complete leads added (7 days)")}</span></div><div><b>${num(lq.from_site_7d)}</b><span>${L("website se details mili", "completed from website")}</span></div>
+          <div><b>${num(lq.rejected_7d)}</b><span>${L("adhure reject", "incomplete, rejected")}</span></div><div><b>${num(lq.waiting)}</b><span>${L("check ho rahe hain", "being checked")}</span></div></div>
+        ${lq.recent_rejected?.length ? `<details style="margin-top:10px"><summary class="mu" style="cursor:pointer">${L("Haal ke reject (kyun)", "Recent rejections (why)")}</summary>
+          <div style="margin-top:6px">${lq.recent_rejected.map((x) => `<div class="mu" style="font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)"><b style="color:var(--tx)">${h(x.company)}</b>${x.city ? " · " + h(x.city) : ""} — ${h(x.reason || "")}</div>`).join("")}</div></details>` : ""}
+      </div></div>` : ""}
       <div class="card"><div class="card-h"><h3>Abhi chalao</h3></div><div class="card-b"><p class="mu" style="margin-top:0">Schedule ka wait kiye bina abhi naye leads/RFQs lao.</p><button class="btn primary" data-act="runIngest">${ic("play")} Run now</button> <button class="btn" data-act="distribute">⚡ Pool distribute</button></div></div>
       <div class="card"><div class="card-h"><h3>Run history</h3><span class="sp"></span><button class="btn sm ghost" data-act="go" data-go="automation">${ic("refresh")}</button></div><div class="card-b" style="padding:4px 16px">
         ${(runs || []).map((r) => `<details style="padding:8px 0;border-bottom:1px solid var(--line)"><summary class="row" style="cursor:pointer;flex-wrap:nowrap"><span class="badge ${r.status === "ok" ? "good" : r.status === "running" ? "info" : "bad"}">${h(r.status)}</span><span style="flex:1">${h(dt(r.started_at))}</span><span class="mono">+${r.leads_added}L +${r.rfqs_added}R</span></summary><div class="mu" style="font-size:12px;margin-top:6px">${h(r.trigger)} · ${r.assigned} assigned</div><pre class="log">${h((r.log || []).join("\n"))}</pre></details>`).join("") || '<div class="empty">Abhi tak koi run nahi</div>'}
