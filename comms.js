@@ -262,7 +262,7 @@ export async function viewTemplates(el) {
       <div class="chips">${[["hinglish", "Hinglish"], ["en", "English"], ["all", L("Dono languages", "Both languages")]].map(([k, l]) => `<button class="chip ${lf === k ? "on" : ""}" data-lf="${k}">${l}</button>`).join("")}</div>
       <span class="sp" style="flex:1"></span><button class="btn primary" id="tNew">${ic("plus")} Naya template</button></div>
     <div class="queue">${list.map((t) => `
-      <div class="card" style="padding:14px 16px"><div class="row" style="flex-wrap:nowrap">
+      <div class="card" style="padding:14px 16px;min-width:0"><div class="row tpl-row" style="flex-wrap:nowrap">
         <div style="min-width:0;flex:1"><b>${h(t.name)}</b> ${t.is_shared ? '<span class="badge acc">Company</span>' : '<span class="badge">Mera</span>'} ${t.stage ? `<span class="badge">${h(t.stage)}</span>` : ""} <span class="badge">${(t.lang || "en") === "en" ? "EN" : "Hinglish"}</span>
           ${t.subject ? `<div class="mu" style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Subject: ${h(fillTemplate(t.subject, sample))}</div>` : ""}</div>
         <button class="btn sm" data-tv="${t.id}">👁</button>

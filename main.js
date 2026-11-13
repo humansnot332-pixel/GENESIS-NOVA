@@ -327,12 +327,15 @@ function route() {
   $("#title").textContent = TITLES[S.route] || "";
   document.title = tr(TITLES[S.route] || APP) + " · " + APP;
   $("#side")?.classList.remove("open");
-  const page = $("#page");
+  // every page gets a fresh container: a slow page that finishes late writes into its own
+  // (now detached) box and can never overwrite the page the user has moved on to
+  const old = $("#page"), page = old.cloneNode(false);
   page.innerHTML = `<div class="empty">Loading…</div>`;
+  old.replaceWith(page);
   closeDrawer();
-  page.onclick = null;
   refreshBadges();
   Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
+    if (!page.isConnected) return;
     enterAnim(page);
     if (S.params.id && S.route === "leads") openLead(+S.params.id);
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
@@ -688,18 +691,23 @@ ACT.callNext = (b) => busy(b, async () => {
 // ---------------------------------------------------------------------
 function closeDrawer() { $$(".drawer, .scrim:not(.m)").forEach((n) => n.remove()); }
 
+let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawers stacking on double-click / double route)
 async function openLead(id, opt = {}) {
+  const seq = ++leadSeq;
   const [{ data: l, error }, { data: acts }, { data: tasks }] = await Promise.all([
     sb.from("leads").select("*").eq("id", id).single(),
     sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
     sb.from("tasks").select("*").eq("lead_id", id).eq("done", false).order("due_at"),
   ]);
+  if (error?.code === "PGRST116") return toast(L("Ye lead nahi mila — shayad delete ho gaya hai ya aapke access mein nahi hai", "Lead not found — it may have been deleted or is outside your access"), true);
   if (error) return fail(error);
-  closeDrawer();
+  if (seq !== leadSeq) return;
   const SC = isEn() ? SCRIPTS_EN : SCRIPTS, sc = SC[l.category] || SC["IT Hardware"];
   const name = S.me.full_name.split(" ")[0];
   const lk = lockOf(l), canEdit = canWork(l), see = canEdit;     // only the holder (or a manager) sees full contact
   const { data: mails } = await sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20);
+  if (seq !== leadSeq) return;
+  closeDrawer();
   const scrim = document.createElement("div"); scrim.className = "scrim"; scrim.onclick = closeDrawer;
   const d = document.createElement("aside"); d.className = "drawer"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", l.company);
   d.dataset.id = l.id; d.dataset.queue = opt.queue ? "1" : "";
@@ -973,6 +981,7 @@ async function drawLeads(el) {
   const { data, count, error } = await leadQuery("id, company, contact_name, phone, email, city, area, category, status, score, owner_id, lock_until, next_follow_up, last_contacted, deal_value, source, created_at, email_count, reply_count", true)
     .order(LF.sort, { ascending: LF.asc, nullsFirst: false }).order("id", { ascending: false }).range(LF.page * PAGE, LF.page * PAGE + PAGE - 1);
   if (error) return fail(error);
+  if (!$("#ltb", el)) return;   // user already moved to another page while this was loading
   const th = (k, l, cls = "") => `<th class="${cls}" data-sort="${k}" aria-sort="${LF.sort === k ? (LF.asc ? "ascending" : "descending") : "none"}">${l}${LF.sort === k ? (LF.asc ? " ↑" : " ↓") : ""}</th>`;
   $("#ltb", el).innerHTML = !data.length ? `<div class="empty"><b>Koi lead nahi mila</b>Filters badal ke dekho</div>` : `
     <table class="tbl"><thead><tr><th style="width:34px"><input type="checkbox" id="lall" aria-label="Select all"></th>

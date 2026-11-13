@@ -527,3 +527,6 @@ fieldset[disabled] .input { opacity: .7; }
 .hrow.undone .hsum { text-decoration: line-through; color: var(--mu); }
 .hmain { flex: 1; min-width: 0; }
 .hsum { font-size: 13.5px; overflow-wrap: anywhere; }
+
+/* templates list: buttons drop below the name on phones */
+@media (max-width: 560px) { .tpl-row { flex-wrap: wrap !important; } .tpl-row > div:first-child { flex-basis: 100% !important; } }
