@@ -33,7 +33,17 @@ let fx = null;
 const brandCache = () => { try { return JSON.parse(localStorage.getItem("crm_brand") || "{}"); } catch { return {}; } };
 // ---------- PWA: installable app (only on https; never during local tests) ----------
 let installEvt = null;
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  const hadSW = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
+  // a new version was deployed → load it (now if the user is idle, else on the next page change)
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadSW) return;
+    const busyNow = () => document.querySelector("[data-modal], .drawer") || document.activeElement?.matches("input, textarea, select");
+    if (!busyNow()) location.reload();
+    else addEventListener("hashchange", () => location.reload(), { once: true });
+  });
+}
 addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; const b = document.getElementById("installBtn"); if (b) b.hidden = false; });
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const root = $("#root");
