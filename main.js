@@ -925,7 +925,11 @@ function leadForm(l = {}, done) {
       <div><label class="f">Pincode</label><input class="input" name="pincode" maxlength="12" value="${h(l.pincode || "")}"></div>
     </div>
     <label class="f">Products interest</label><div class="chips">${prods.map((p) => `<label class="chip ${(l.products || []).includes(p) ? "on" : ""}"><input type="checkbox" class="sr" name="products" data-multi="1" value="${h(p)}" ${(l.products || []).includes(p) ? "checked" : ""}>${h(p)}</label>`).join("")}</div>
-    <label class="f">Notes</label><textarea class="input" name="notes" maxlength="5000">${h(l.notes || "")}</textarea></form>`,
+    <label class="f">Notes</label><textarea class="input" name="notes" maxlength="5000">${h(l.notes || "")}</textarea>
+    ${isNew && isMgr() ? `<label class="f">${L("Ye lead kisko?", "Who gets this lead?")}</label><select class="input" name="give_to">
+      <option value="pool">🔓 ${L("Free pool mein daalo (koi bhi telecaller le sakta hai)", "Free pool (any telecaller can take it)")}</option>
+      <option value="me">🔒 ${L("Mere paas rakho", "Keep it with me")}</option>
+      ${assignable().filter((u) => u.id !== S.me.id).map((u) => `<option value="${u.id}">👤 ${h(u.full_name)} ${L("ko assign karo", "")}</option>`).join("")}</select>` : ""}</form>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="lsave">Save</button>`,
   });
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
@@ -937,10 +941,19 @@ function leadForm(l = {}, done) {
     f.tags = f.tags ? f.tags.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10) : [];
     f.deal_value = f.deal_value ? Number(f.deal_value) : null;
     let res;
-    if (isNew) res = await sb.from("leads").insert({ ...f, source: "manual", owner_id: S.me.id, created_by: S.me.id }).select("id").single();
-    else res = await sb.from("leads").update(f).eq("id", l.id).select("id").single();
+    const give = f.give_to; delete f.give_to;
+    if (isNew) {
+      // telecaller: always their own. manager/admin: pool (default), self, or a chosen person
+      const mine = !isMgr() || give === "me";
+      res = await sb.from("leads").insert({ ...f, source: "manual", created_by: S.me.id, owner_id: mine ? S.me.id : null,
+        ...(mine && isMgr() ? { locked_at: new Date().toISOString(), lock_until: new Date(Date.now() + 3 * 864e5).toISOString() } : {}) }).select("id").single();
+      if (!res.error && give && give !== "pool" && give !== "me") {
+        const { error } = await sb.rpc("assign_leads", { ids: [res.data.id], owner: give });
+        if (error) toast(L("Lead bana, par assign nahi hua: ", "Lead saved, but not assigned: ") + friendly(error), true);
+      }
+    } else res = await sb.from("leads").update(f).eq("id", l.id).select("id").single();
     if (res.error) throw res.error;
-    closeModal(); toast(isNew ? "Lead add ho gaya ✔" : "Saved ✔"); softRefresh();
+    closeModal(); toast(isNew ? (give === "pool" ? L("Lead pool mein add ho gaya ✔", "Lead added to the pool ✔") : "Lead add ho gaya ✔") : "Saved ✔"); softRefresh();
     if (isNew) openLead(res.data.id); else done?.();
   });
 }
