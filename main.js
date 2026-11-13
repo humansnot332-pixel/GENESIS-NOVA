@@ -938,7 +938,7 @@ function leadForm(l = {}, done) {
 // ---------------------------------------------------------------------
 //  LEADS table
 // ---------------------------------------------------------------------
-const LF = { q: "", status: "", category: "", owner: "", source: "", page: 0, sort: "created_at", asc: false, sel: new Set() };
+const LF = { q: "", status: "", category: "", owner: "", source: "", city: "", page: 0, sort: "created_at", asc: false, sel: new Set() };
 const PAGE = 50;
 function leadQuery(sel, count) {
   let q = sb.from("leads").select(sel, count ? { count: "exact" } : undefined);
@@ -950,6 +950,7 @@ function leadQuery(sel, count) {
   if (LF.status === "open") q = q.in("status", OPEN_STATUSES); else if (LF.status) q = q.eq("status", LF.status);
   if (LF.category) q = q.eq("category", LF.category);
   if (LF.source) q = q.eq("source", LF.source);
+  if (LF.city) q = q.ilike("city", LF.city.replace(/[%_\\]/g, ""));
   if (LF.owner === "none") q = q.is("owner_id", null);
   else if (LF.owner === "me") q = q.eq("owner_id", S.me.id);
   else if (LF.owner === "others") q = q.not("owner_id", "is", null).neq("owner_id", S.me.id);
@@ -963,6 +964,7 @@ VIEWS.leads = async (el, soft) => {
       <input class="input grow" id="lq" placeholder="Search company, contact, phone, city…" value="${h(LF.q)}" aria-label="Search">
       <select class="input" id="lst" aria-label="Status"><option value="">All status</option><option value="open" ${LF.status === "open" ? "selected" : ""}>Open (active)</option>${STATUSES.map(([k, l]) => `<option value="${k}" ${LF.status === k ? "selected" : ""}>${l}</option>`).join("")}</select>
       <select class="input" id="lcat" aria-label="Category"><option value="">All categories</option>${CATEGORIES.map((c) => `<option ${LF.category === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+      <select class="input" id="lcity" aria-label="City"><option value="">${L("Sab cities", "All cities")}</option>${LF.city ? `<option selected value="${h(LF.city)}">${h(LF.city)}</option>` : ""}</select>
       <select class="input" id="lsrc" aria-label="Source"><option value="">All sources</option>${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${LF.source === k ? "selected" : ""}>${v}</option>`).join("")}</select>
       <select class="input" id="lown" aria-label="Lock"><option value="">Sab leads</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>🔒 Mere (locked by me)</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>🔓 Free pool</option><option value="others" ${LF.owner === "others" ? "selected" : ""}>🔒 Doosron ke paas</option>${isMgr() ? assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>👤 ${h(u.full_name)}</option>`).join("") : ""}</select>
       ${isMgr() ? `<button class="btn" data-act="exportLeads">${ic("download")} Export</button>` : ""}
@@ -973,7 +975,13 @@ VIEWS.leads = async (el, soft) => {
     <div id="lbulk"></div>`;
     let t;
     $("#lq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { LF.q = e.target.value; LF.page = 0; drawLeads(el); }, 300); };
-    [["#lst", "status"], ["#lcat", "category"], ["#lsrc", "source"], ["#lown", "owner"]].forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); drawLeads(el); }; });
+    [["#lst", "status"], ["#lcat", "category"], ["#lcity", "city"], ["#lsrc", "source"], ["#lown", "owner"]].forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); drawLeads(el); }; });
+    // City list (with lead counts) — filled after the page shows
+    sb.rpc("lead_cities").then(({ data }) => {
+      const x = $("#lcity", el); if (!x || !data) return;
+      x.innerHTML = `<option value="">${L("Sab cities", "All cities")}</option>` + data.map((c) =>
+        `<option value="${h(c.city)}" ${LF.city.toLowerCase() === c.city.toLowerCase() ? "selected" : ""}>${h(c.city)} (${num(c.n)})</option>`).join("");
+    }, () => {});
   }
   await drawLeads(el);
 };
