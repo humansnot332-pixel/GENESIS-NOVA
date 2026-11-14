@@ -313,12 +313,12 @@ async function refreshBadges(force = true) {
 }
 
 async function loadAnnouncement() {
-  const { data } = await sb.from("announcements").select("body, created_at, created_by").order("created_at", { ascending: false }).limit(1);
+  const { data } = await sb.from("announcements").select("id, body, created_at, created_by").order("created_at", { ascending: false }).limit(1);
   const a = data?.[0], el = $("#banner");
   if (!el) return;
   let dismissed = ""; try { dismissed = localStorage.getItem("crm_ann") || ""; } catch { /* ignore */ }
   if (!a || dismissed === a.created_at || Date.now() - new Date(a.created_at).getTime() > 3 * 864e5) { el.innerHTML = ""; return; }
-  el.innerHTML = `<div class="banner">📢 <div><b>${h(a.created_by ? userName(a.created_by) : "System")}:</b> <span data-raw>${h(a.body)}</span></div><button class="btn ghost sm right" data-act="dismissAnn" data-v="${h(a.created_at)}">Dismiss</button></div>`;
+  el.innerHTML = `<div class="banner">📢 <div><b>${h(a.created_by ? userName(a.created_by) : "System")}:</b> <span data-raw>${h(a.body)}</span></div><span class="right row" style="gap:6px;flex-wrap:nowrap">${isMgr() ? `<button class="btn ghost sm" data-act="delAnn" data-id="${a.id}" title="${h(L("Sab ke liye hatao", "Remove for everyone"))}">${ic("trash")} ${L("Delete", "Delete")}</button>` : ""}<button class="btn ghost sm" data-act="dismissAnn" data-v="${h(a.created_at)}" title="${h(L("Sirf mere liye chhupao", "Hide just for me"))}">Dismiss</button></span></div>`;
 }
 
 // ---------------------------------------------------------------------
@@ -441,7 +441,7 @@ function subscribeRealtime() {
       if (["inbox", "dashboard"].includes(S.route)) softRefresh();
       refreshBadges();
     })
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "announcements" }, () => loadAnnouncement());
+    .on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => loadAnnouncement());
   // everything else: any add / edit / delete on another device shows up here within a second or two
   for (const [table, routes] of Object.entries(LIVE)) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, (p) => onLive(table, routes, p));
@@ -551,6 +551,14 @@ ACT.lang = (t) => {
 };
 ACT.menu = () => $("#side").classList.toggle("open");
 ACT.logout = async () => { if (await confirmBox("Logout karna hai?", "Logout")) sb.auth.signOut(); };
+async function deleteAnnouncement(id) {
+  if (!(await confirmBox(L("Ye announcement sab ke liye delete karna hai?", "Delete this announcement for everyone?"), "Delete"))) return false;
+  const { data, error } = await sb.from("announcements").delete().eq("id", id).select("id");
+  if (error) { fail(error); return false; }
+  if (!data?.length) { toast(L("Delete nahi hua — sirf Manager / Admin kar sakte hain", "Not deleted — only Managers / Admins can"), true); return false; }
+  toast(L("🗑 Announcement delete ho gaya", "🗑 Announcement deleted")); loadAnnouncement(); return true;
+}
+ACT.delAnn = (t) => deleteAnnouncement(+t.dataset.id);
 ACT.dismissAnn = (t) => { try { localStorage.setItem("crm_ann", t.dataset.v); } catch { /* ignore */ } $("#banner").innerHTML = ""; };
 ACT.lead = (t) => openLead(+t.dataset.id);
 ACT.bell = (t) => toggleNotifications(t);
@@ -655,7 +663,19 @@ VIEWS.dashboard = async (el) => {
   </div>`;
 };
 ACT.announce = () => {
-  const m = modal({ title: "📢 Sab ko announcement", body: `<label class="f">Message (500 chars)</label><textarea class="input" id="annT" maxlength="500"></textarea>`, foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="annS">Send</button>` });
+  const m = modal({ title: "📢 Sab ko announcement", body: `<label class="f">Message (500 chars)</label><textarea class="input" id="annT" maxlength="500"></textarea>
+    <div class="sec-t" style="margin-top:16px">${L("Pichhle announcements", "Recent announcements")}</div><div id="annList"><div class="empty">Loading…</div></div>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="annS">Send</button>` });
+  const drawList = async () => {
+    const box = $("#annList", m); if (!box) return;
+    const { data } = await sb.from("announcements").select("id, body, created_at, created_by").order("created_at", { ascending: false }).limit(20);
+    if (!$("#annList", m)) return;
+    box.innerHTML = !data?.length ? `<div class="empty">${L("Koi announcement nahi", "No announcements")}</div>` : `<div class="hlist">${data.map((a) => `<div class="hrow">
+        <div class="hmain"><div class="hdet" style="color:var(--tx)">${h(a.body)}</div><div class="hmeta">${h(a.created_by ? userName(a.created_by) : "System")} · ${h(ago(a.created_at))}</div></div>
+        <button class="btn sm ghost icon" data-anndel="${a.id}" title="${h(L("Delete", "Delete"))}" aria-label="Delete announcement">${ic("trash")}</button></div>`).join("")}</div>`;
+    $$("[data-anndel]", box).forEach((b) => b.onclick = async () => { if (await deleteAnnouncement(+b.dataset.anndel)) drawList(); });
+  };
+  drawList();
   m.querySelector("#annS").onclick = (e) => busy(e.target, async () => {
     const body = $("#annT").value.trim(); if (!body) return;
     const { error } = await sb.from("announcements").insert({ body, created_by: S.me.id, expires_at: new Date(Date.now() + 3 * 864e5).toISOString() });
