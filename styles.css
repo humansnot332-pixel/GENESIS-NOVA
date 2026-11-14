@@ -550,3 +550,6 @@ fieldset[disabled] .input { opacity: .7; }
 .hdet { font-size: 13px; color: var(--tx-2); margin-top: 2px; overflow-wrap: anywhere; }
 .hmeta { font-size: 11.5px; color: var(--mu); margin-top: 3px; }
 .hrow.undone .hdet { text-decoration: line-through; }
+
+/* lead drawer re-drawn in place (after a call / status change): no animation */
+.drawer.still, .scrim.still { animation: none; }

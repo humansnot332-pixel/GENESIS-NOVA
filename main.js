@@ -419,7 +419,10 @@ const GONE = {
   tasks: (id) => `[data-tdone="${id}"]`,
 };
 function fadeOut(row) { row.classList.add("rt-gone"); setTimeout(() => row.parentNode && row.parentNode.removeChild(row), 320); }
+// a change I just made in this tab comes back over realtime ~1 s later — don't redraw a second time
+const myEcho = () => Date.now() - (window.__crmWriteAt || 0) < 2500;
 function onLive(table, routes, p) {
+  if (p.eventType !== "DELETE" && myEcho()) { refreshBadges(); return; }
   if (p.eventType === "DELETE") {
     const id = p.old?.id;
     const sel = id == null ? null : GONE[table]?.(id);
@@ -443,6 +446,7 @@ function subscribeRealtime() {
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, (p) => {
       const d = document.querySelector(".drawer");
+      if (myEcho()) { refreshBadges(); return; }     // my own change coming back: already on screen
       // someone else took / released the lead that is open on my screen → refresh it
       if (p.eventType === "UPDATE" && d && +d.dataset.id === p.new.id && p.old && "owner_id" in p.old && p.old.owner_id !== p.new.owner_id
           && !document.activeElement?.matches(".drawer input, .drawer textarea") && !document.querySelector("[data-modal]")) {
@@ -769,9 +773,12 @@ async function openLead(id, opt = {}) {
   const lk = lockOf(l), canEdit = canWork(l), see = canEdit;     // only the holder (or a manager) sees full contact
   const { data: mails } = await sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20);
   if (seq !== leadSeq) return;
+  // same lead already open (after a call / status change)? swap the content in place — no flicker, keep scroll
+  const prevD = document.querySelector(".drawer"), same = prevD && +prevD.dataset.id === l.id;
+  const keepTop = same ? prevD.querySelector(".drawer-b")?.scrollTop || 0 : 0;
   closeDrawer();
-  const scrim = document.createElement("div"); scrim.className = "scrim"; scrim.onclick = closeDrawer;
-  const d = document.createElement("aside"); d.className = "drawer"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", l.company);
+  const scrim = document.createElement("div"); scrim.className = "scrim" + (same ? " still" : ""); scrim.onclick = closeDrawer;
+  const d = document.createElement("aside"); d.className = "drawer" + (same ? " still" : ""); d.setAttribute("role", "dialog"); d.setAttribute("aria-label", l.company);
   d.dataset.id = l.id; d.dataset.queue = opt.queue ? "1" : "";
   const actIc = { call: "📞", note: "📝", email: "✉️", whatsapp: "💬", meeting: "🤝", status: "🔁", assign: "👤", system: "⚙️" };
   d.innerHTML = `
@@ -847,6 +854,7 @@ async function openLead(id, opt = {}) {
       </div></div>
     </div>`;
   document.body.append(scrim, d);
+  if (keepTop) { const b = d.querySelector(".drawer-b"); if (b) b.scrollTop = keepTop; }
   const reopen = () => openLead(id, opt);
   leadPanel($("#lpanel", d), l, reopen).catch(() => {});
   const after = () => { softRefresh(); refreshBadges(); };
@@ -1210,11 +1218,24 @@ VIEWS.pipeline = async (el) => {
       e.preventDefault(); col.classList.remove("drop");
       const st = col.dataset.col, l = data.find((x) => x.id === dragId); if (!l || l.status === st) return;
       if (!canWork(l)) return toast("Ye lead aapke paas locked nahi hai", true);
-      const { data: upd, error: e1 } = await sb.from("leads").update({ status: st }).eq("id", dragId).select("id");
+      const from = PCOLS.indexOf(l.status), to = PCOLS.indexOf(st), patch = { status: st };
+      // someone else's lead (manager view) → make sure
+      if (l.owner_id && l.owner_id !== S.me.id && !(await confirmBox(L(`"${l.company}" ${userName(l.owner_id)} ka lead hai. Status ${STATUS[l.status].l} → ${STATUS[st].l} karna hai?`, `"${l.company}" belongs to ${userName(l.owner_id)}. Change ${STATUS[l.status].l} → ${STATUS[st].l}?`), L("Haan, badlo", "Yes, change")))) return;
+      // closing a deal: confirm + deal value
+      if (st === "won") {
+        const v = prompt(L(`🎉 "${l.company}" — deal pakki? Deal value (₹) daalo (optional):`, `🎉 "${l.company}" — deal won? Enter the deal value (₹) (optional):`), l.deal_value || "");
+        if (v === null) return;
+        const n = Number(String(v).replace(/[^\d.]/g, "")); if (n) patch.deal_value = n;
+      } else if (l.status === "won") {
+        if (!isMgr()) return toast(L("Won deal ko wapas sirf Manager le ja sakta hai", "Only a Manager can move a won deal back"), true);
+        if (!(await confirmBox(L(`"${l.company}" Won tha — wapas ${STATUS[st].l} karna hai?`, `"${l.company}" was Won — move it back to ${STATUS[st].l}?`), L("Haan", "Yes")))) return;
+      } else if (to - from > 2 && !(await confirmBox(L(`${STATUS[l.status].l} se seedha ${STATUS[st].l}? (${to - from - 1} steps chhod rahe ho)`, `Jump from ${STATUS[l.status].l} straight to ${STATUS[st].l}? (skipping ${to - from - 1} steps)`), L("Haan, badlo", "Yes, move")))) return;
+      const { data: upd, error: e1 } = await sb.from("leads").update(patch).eq("id", dragId).select("id");
       if (e1) return fail(e1);
       if (!upd?.length) { toast("Lock badal gaya — status update nahi hua", true); return VIEWS.pipeline(el); }
-      sb.from("activities").insert({ lead_id: dragId, kind: "status", body: `Status → ${STATUS[st].l}` }).then(() => {});
-      toast(`${l.company} → ${STATUS[st].l}`); VIEWS.pipeline(el);
+      sb.from("activities").insert({ lead_id: dragId, kind: "status", body: `Status → ${STATUS[st].l} (pipeline)${patch.deal_value ? " · " + inr(patch.deal_value) : ""}` }).then(() => {});
+      toastAction(`${l.company} → ${STATUS[st].l}`, "↩ Undo", () => doUndo().then(() => VIEWS.pipeline(el)));
+      VIEWS.pipeline(el);
     });
   });
 };

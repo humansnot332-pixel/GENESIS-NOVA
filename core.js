@@ -13,6 +13,7 @@ async function crmFetch(input, init = {}) {
   const res = await fetch(input, init);
   try {
     const url = typeof input === "string" ? input : input.url, m = String(init.method || "GET").toUpperCase();
+    if (m !== "GET" && m !== "HEAD" && /\/rest\/v1\//.test(url)) window.__crmWriteAt = Date.now();
     if (res.ok && ((m === "DELETE" && UNDO_TABLES.test(url)) || (m === "POST" && UNDO_RPC.test(url))))
       dispatchEvent(new CustomEvent("crm:undoable", { detail: { kind: m === "DELETE" ? "delete" : (url.match(UNDO_RPC) || [])[1] } }));
   } catch { /* never break a request */ }
