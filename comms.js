@@ -356,7 +356,7 @@ export async function viewInbox(el, params = {}) {
   el.innerHTML = `
   <div class="card" style="padding:12px 16px;margin-bottom:14px"><div class="row">
     <b>📬 Reply sync</b>
-    ${(() => { const stale = msOk && ms.last_sync && Date.now() - new Date(ms.last_sync) > 25 * 60e3;
+    ${(() => { const stale = msOk && ms.last_sync && Date.now() - new Date(ms.last_sync) > 15 * 60e3;
       return `<span class="badge ${msOk ? (stale ? "warn" : "good") : ""}" ${stale ? `title="${h(L("Apps Script mein purana code ho sakta hai — Gmail setup kholke naya code paste karo", "Apps Script may have an old code — open Gmail setup and paste a new code"))}"` : ""}>Gmail: ${msOk ? (stale ? "⚠️ " + L("sync ruka hua", "sync stopped") : "connected") + (ms.last_sync ? " · " + h(ago(ms.last_sync)) : " · " + L("pehli sync baaki", "waiting for first sync")) : "setup nahi"}</span>`; })()}
     ${olReady ? `<span class="badge ${outlookConnected() ? "good" : ""}">Outlook: ${outlookConnected() ? "connected" : "connect nahi"}</span>` : ""}
     <span class="sp" style="flex:1"></span>
@@ -486,7 +486,7 @@ const TOKEN = "${token}";   // personal — kisi ke saath share mat karo
 
 function setup() {                       // ▶ ek baar ye function Run karo
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger("syncReplies").timeBased().everyMinutes(10).create();
+  ScriptApp.newTrigger("syncReplies").timeBased().everyMinutes(5).create();
   syncReplies();
 }
 
@@ -538,13 +538,13 @@ export async function gmailSetup(done) {
   const { data: ms } = await sb.rpc("mail_status");
   const m = modal({
     title: "🔗 Gmail replies connect karo", wide: true,
-    body: `<p>Ye aapke <b>apne Gmail</b> mein ek chhota script lagata hai jo har 10 minute mein check karta hai ki jin companies ko aapne CRM se mail kiya, unka reply aaya ya nahi — aur sirf wahi replies yahan dikhata hai. Koi aur email CRM mein nahi aata.</p>
+    body: `<p>Ye aapke <b>apne Gmail</b> mein ek chhota script lagata hai jo har 5 minute mein check karta hai ki jin companies ko aapne CRM se mail kiya, unka reply aaya ya nahi — aur sirf wahi replies yahan dikhata hai. Koi aur email CRM mein nahi aata.</p>
       <ol style="padding-left:18px;line-height:1.7">
         <li>Neeche <b>Code banao</b> dabao aur code copy karo.</li>
         <li><a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener noreferrer">script.google.com → New project</a> kholo (usi Gmail account se jisse mail bhejte ho).</li>
         <li>Editor mein <b>Ctrl + A</b> dabao → <b>Delete</b> (pehle se likha <code>function myFunction() { }</code> poora hatana zaroori hai, warna <i>"Unexpected token"</i> error aata hai) → phir ye code paste karo → 💾 Save.</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
-        <li>Bas! 10 minute mein pehli sync ho jayegi. Status yahan Inbox mein dikhega.</li>
+        <li>Bas! Setup Run karte hi pehli sync ho jaati hai, phir har 5 minute mein. Status yahan Inbox mein dikhega.</li>
         <li class="mu">${L("Band karna ho: yahan <b>Disconnect</b> dabao (ya Apps Script mein <b>removeSetup</b> Run karo).", "To stop: press <b>Disconnect</b> here (or Run <b>removeSetup</b> in Apps Script).")}</li>
       </ol>
       <div id="gsCode"></div>
