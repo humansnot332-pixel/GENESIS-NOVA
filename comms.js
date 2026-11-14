@@ -511,7 +511,7 @@ export function gmailSetup() {
       <ol style="padding-left:18px;line-height:1.7">
         <li>Neeche <b>Code banao</b> dabao aur code copy karo.</li>
         <li><a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener noreferrer">script.google.com → New project</a> kholo (usi Gmail account se jisse mail bhejte ho).</li>
-        <li>Wahan ka sara code hata ke ye code paste karo → 💾 Save.</li>
+        <li>Editor mein <b>Ctrl + A</b> dabao → <b>Delete</b> (pehle se likha <code>function myFunction() { }</code> poora hatana zaroori hai, warna <i>"Unexpected token"</i> error aata hai) → phir ye code paste karo → 💾 Save.</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
         <li>Bas! 10 minute mein pehli sync ho jayegi. Status yahan Inbox mein dikhega.</li>
       </ol>
