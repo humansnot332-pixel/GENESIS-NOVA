@@ -66,7 +66,7 @@ function toggleTheme() {
 //  Auth screens
 // ---------------------------------------------------------------------
 let loginMode = "login";
-const langSwitch = () => `<div class="langsw" role="group" aria-label="Language"><button type="button" class="${isEn() ? "" : "on"}" data-act="lang" data-v="hinglish">Hinglish</button><button type="button" class="${isEn() ? "on" : ""}" data-act="lang" data-v="en">English</button></div>`;
+const langSwitch = () => `<div class="langsw" role="group" aria-label="Language"><button type="button" class="${isEn() ? "on" : ""}" data-act="lang" data-v="en">English</button><button type="button" class="${isEn() ? "" : "on"}" data-act="lang" data-v="hinglish">Hinglish</button></div>`;
 function renderLogin(mode = "login", msg = "") {
   loginMode = mode;
   stopApp();
@@ -1910,7 +1910,7 @@ ACT.profile = () => {
       <div><label class="f">Designation</label><input class="input" id="pd" maxlength="80" value="${h(S.me.designation || "")}" placeholder="e.g. Sales Executive"></div>
       <div><label class="f">Phone (signature)</label><input class="input" id="pph" maxlength="40" value="${h(S.me.phone || "")}" placeholder="+91 …"></div>
       <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
-      <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option><option value="en" ${isEn() ? "selected" : ""}>English</option></select></div>
+      <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="en" ${isEn() ? "selected" : ""}>English</option><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option></select></div>
       <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">

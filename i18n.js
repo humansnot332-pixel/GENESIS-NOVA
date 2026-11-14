@@ -5,8 +5,8 @@
 //  (MutationObserver), so pages, toasts, modals, notifications and
 //  server messages all switch together. User data is never touched.
 // =====================================================================
-let LANG = "hinglish";
-try { LANG = localStorage.getItem("crm_lang") === "en" ? "en" : "hinglish"; } catch { /* storage blocked */ }
+let LANG = "en";   // English by default; Hinglish only when the person picked it
+try { LANG = localStorage.getItem("crm_lang") === "hinglish" ? "hinglish" : "en"; } catch { /* storage blocked */ }
 export const getLang = () => LANG;
 export const isEn = () => LANG === "en";
 /** pick text by language inline: L("Hinglish", "English") */
