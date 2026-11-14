@@ -1,6 +1,6 @@
 // Genesis CRM service worker — makes the app installable and opens the shell offline.
 // Data (Supabase) is never cached: every API call always goes to the network.
-const CACHE = "gnova-v18";
+const CACHE = "gnova-v19";
 const SHELL = ["./", "index.html", "styles.css", "main.js", "core.js", "comms.js", "biz.js", "login-fx.js", "import.js", "i18n.js", "data.js", "config.js",
   "frame-guard.js", "supabase.js", "manifest.webmanifest", "icon-192.png"];
 

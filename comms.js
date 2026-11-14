@@ -356,10 +356,11 @@ export async function viewInbox(el, params = {}) {
   el.innerHTML = `
   <div class="card" style="padding:12px 16px;margin-bottom:14px"><div class="row">
     <b>📬 Reply sync</b>
-    <span class="badge ${msOk ? "good" : ""}">Gmail: ${msOk ? "connected" + (ms.last_sync ? " · " + h(ago(ms.last_sync)) : "") : "setup nahi"}</span>
+    ${(() => { const stale = msOk && ms.last_sync && Date.now() - new Date(ms.last_sync) > 25 * 60e3;
+      return `<span class="badge ${msOk ? (stale ? "warn" : "good") : ""}" ${stale ? `title="${h(L("Apps Script mein purana code ho sakta hai — Gmail setup kholke naya code paste karo", "Apps Script may have an old code — open Gmail setup and paste a new code"))}"` : ""}>Gmail: ${msOk ? (stale ? "⚠️ " + L("sync ruka hua", "sync stopped") : "connected") + (ms.last_sync ? " · " + h(ago(ms.last_sync)) : " · " + L("pehli sync baaki", "waiting for first sync")) : "setup nahi"}</span>`; })()}
     ${olReady ? `<span class="badge ${outlookConnected() ? "good" : ""}">Outlook: ${outlookConnected() ? "connected" : "connect nahi"}</span>` : ""}
     <span class="sp" style="flex:1"></span>
-    <button class="btn sm" id="ibGmail">${msOk ? "Gmail setup dobara" : "🔗 Gmail connect"}</button>
+    <button class="btn sm" id="ibGmail">${msOk ? L("⚙️ Gmail setup", "⚙️ Gmail setup") : "🔗 Gmail connect"}</button>
     ${olReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
   </div></div>
   <div class="toolbar">
@@ -387,7 +388,7 @@ export async function viewInbox(el, params = {}) {
   $$("[data-ibm]", el).forEach((b) => b.onclick = () => { IB.team = b.dataset.ibm === "1"; viewInbox(el); });
   $("#ibF", el)?.addEventListener("change", (e) => { IB.f = e.target.value; viewInbox(el); });
   let t; $("#ibQ", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { IB.q = e.target.value; viewInbox(el).then(() => { const i = $("#ibQ", el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 350); };
-  $("#ibGmail", el).onclick = gmailSetup;
+  $("#ibGmail", el).onclick = () => gmailSetup(() => viewInbox(el));
   $("#ibOutlook", el)?.addEventListener("click", (e) => busy(e.target, async () => { await outlookConnect(); viewInbox(el); }));
   $("#ibOutHelp", el)?.addEventListener("click", outlookHelp);
   $$("[data-ib]", el).forEach((d) => d.onclick = () => { $$(".ib-item", el).forEach((x) => x.classList.remove("on")); d.classList.add("on"); d.classList.remove("unread"); history.replaceState(null, "", "#/inbox/" + d.dataset.ib); readMail(+d.dataset.ib, $("#ibRead", el), () => viewInbox(el, { id: d.dataset.ib })); });
@@ -470,12 +471,22 @@ function setup() {                       // ▶ ek baar ye function Run karo
   syncReplies();
 }
 
+function removeSetup() {                 // ▶ sync band karna ho to ye Run karo
+  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  PropertiesService.getUserProperties().deleteAllProperties();
+}
+
 function call_(action, payload) {
   var res = UrlFetchApp.fetch(CRM_URL + "?action=" + action, {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
-  if (res.getResponseCode() !== 200) throw new Error("CRM " + res.getResponseCode() + ": " + res.getContentText());
+  var code = res.getResponseCode();
+  if (code === 401 || code === 403) {      // token band ho gaya (Disconnect / naya code) → ye script khud ruk jaata hai
+    removeSetup();
+    throw new Error("CRM ne is code ko band kar diya hai. Naya code CRM se copy karke yahan paste karo, phir setup Run karo.");
+  }
+  if (code !== 200) throw new Error("CRM " + code + ": " + res.getContentText());
   return JSON.parse(res.getContentText());
 }
 
@@ -504,7 +515,8 @@ function syncReplies() {
 }
 `;
 }
-export function gmailSetup() {
+export async function gmailSetup(done) {
+  const { data: ms } = await sb.rpc("mail_status");
   const m = modal({
     title: "🔗 Gmail replies connect karo", wide: true,
     body: `<p>Ye aapke <b>apne Gmail</b> mein ek chhota script lagata hai jo har 10 minute mein check karta hai ki jin companies ko aapne CRM se mail kiya, unka reply aaya ya nahi — aur sirf wahi replies yahan dikhata hai. Koi aur email CRM mein nahi aata.</p>
@@ -514,18 +526,31 @@ export function gmailSetup() {
         <li>Editor mein <b>Ctrl + A</b> dabao → <b>Delete</b> (pehle se likha <code>function myFunction() { }</code> poora hatana zaroori hai, warna <i>"Unexpected token"</i> error aata hai) → phir ye code paste karo → 💾 Save.</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
         <li>Bas! 10 minute mein pehli sync ho jayegi. Status yahan Inbox mein dikhega.</li>
+        <li class="mu">${L("Band karna ho: yahan <b>Disconnect</b> dabao (ya Apps Script mein <b>removeSetup</b> Run karo).", "To stop: press <b>Disconnect</b> here (or Run <b>removeSetup</b> in Apps Script).")}</li>
       </ol>
       <div id="gsCode"></div>
-      <p class="mu" style="font-size:12.5px">🔒 Code mein aapka personal token hai. Naya code banane se purana token band ho jata hai.</p>`,
-    foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="gsGo">Code banao</button>`,
+      <p class="mu" style="font-size:12.5px">🔒 Code mein aapka personal token hai. Naya code banane se purana token band ho jata hai.</p>
+      ${ms?.connected ? `<div class="banner" style="margin-top:10px">✅ <div><b>${L("Gmail abhi connected hai", "Gmail is connected")}</b> · ${L("last sync", "last sync")}: ${h(ms.last_sync ? ago(ms.last_sync) : L("abhi tak nahi", "not yet"))}<br>
+        <small>${L("Naya code tabhi banao jab Apps Script mein code badalna ho — warna chal raha sync band ho jayega.", "Only make a new code if you'll replace it in Apps Script — otherwise the running sync stops.")}</small></div></div>` : ""}`,
+    foot: `${ms?.connected ? `<button class="btn danger" id="gsOff">${ic("trash")} ${L("Disconnect", "Disconnect")}</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Close</button><button class="btn primary" id="gsGo">${ms?.connected ? L("Naya code banao", "Make a new code") : L("Code banao", "Make code")}</button>`,
   });
-  $("#gsGo", m).onclick = (e) => busy(e.target, async () => {
+  $("#gsOff", m)?.addEventListener("click", async () => {
+    if (!(await confirmBox(L("Gmail reply sync band karna hai? Apps Script apne aap ruk jayega (agli baar chalte hi). Purane replies CRM mein rahenge.", "Turn off Gmail reply sync? The Apps Script stops itself on its next run. Replies already in the CRM stay."), "Disconnect"))) return;
+    const { error } = await sb.rpc("disconnect_mail"); if (error) return fail(error);
+    closeModal(); toast(L("🔌 Gmail disconnect ho gaya", "🔌 Gmail disconnected")); done?.();
+  });
+  $("#gsGo", m).onclick = async (e) => {
+    if (ms?.connected && !e.target.dataset.made && !(await confirmBox(L("Naya code banate hi Apps Script mein chal raha purana code band ho jayega. Naya code wahan paste karke setup dobara Run karna padega. Aage badhein?", "A new code stops the old one running in Apps Script. You'll need to paste the new code there and Run setup again. Continue?"), L("Haan, naya code", "Yes, new code")))) return;
+    busy(e.target, async () => {
     const { data: token, error } = await sb.rpc("rotate_mail_token"); if (error) throw error;
+    e.target.dataset.made = "1";
     const code = appsScript(token);
     $("#gsCode", m).innerHTML = `<div class="row" style="margin-bottom:6px"><b>Apps Script code</b><span style="flex:1"></span><button class="btn sm primary" id="gsCopy">${ic("copy")} Copy code</button></div><pre class="log" style="max-height:260px">${h(code)}</pre>`;
     $("#gsCopy", m).onclick = async () => { try { await navigator.clipboard.writeText(code); toast("Code copied ✔"); } catch { toast("Copy nahi hua — select karke copy karo", true); } };
     e.target.textContent = "Naya code banao";
-  });
+    done?.();
+    });
+  };
 }
 
 // ---------------------------------------------------------------------
