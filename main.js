@@ -1628,6 +1628,30 @@ function wireOutlookCard(el, o) {
     S.settings.outlook = v; toast(L("Outlook setup saved ✔ — ab test button dabao", "Outlook setup saved ✔ — now press the test button")); VIEWS.company(el); startOutlookAutoSync();
   }));
 }
+// ---- backups (Admin): list, download, back up now ----
+async function wireBackupCard(el) {
+  const box = $("#bkList", el); if (!box) return;
+  const { data, error } = await sb.storage.from("backups").list("", { limit: 60, sortBy: { column: "name", order: "desc" } });
+  if (!$("#bkList", el)) return;
+  const files = (data || []).filter((f) => /\.json\.gz$/.test(f.name));
+  box.innerHTML = error ? `<div class="empty">${h(friendly(error))}</div>` : !files.length ? `<div class="empty">${L("Abhi koi backup nahi — upar \"Abhi backup lo\" dabao", "No backups yet — press \"Back up now\"")}</div>`
+    : `<div class="hlist">${files.slice(0, 15).map((f) => { const [d, t, k] = f.name.replace(".json.gz", "").split("_");
+        return `<div class="hrow"><div class="hmain"><div class="hsum">📦 ${h(new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }))} · ${h(t.slice(0, 2) + ":" + t.slice(2))}
+          ${k === "manual" ? `<span class="badge">${L("haath se", "manual")}</span>` : `<span class="badge good">auto</span>`}</div><div class="mu" style="font-size:12px">${h(((f.metadata?.size || 0) / 1024).toFixed(0))} KB</div></div>
+          <button class="btn sm" data-bk="${h(f.name)}">${ic("download")} Download</button></div>`; }).join("")}</div>
+      ${files.length > 15 ? `<p class="mu" style="font-size:12px">+${files.length - 15} ${L("purane backup bhi rakhe hain", "older backups kept")}</p>` : ""}`;
+  $$("[data-bk]", box).forEach((b) => b.onclick = () => busy(b, async () => {
+    const { data: u, error: e } = await sb.storage.from("backups").createSignedUrl(b.dataset.bk, 120, { download: b.dataset.bk });
+    if (e) throw e;
+    const a = document.createElement("a"); a.href = u.signedUrl; a.rel = "noopener"; document.body.append(a); a.click(); a.remove();
+  }));
+  const now = $("#bkNow", el);
+  if (now) now.onclick = () => busy(now, async () => {
+    const r = await callFn("backup", {});
+    toast(L(`💾 Backup ho gaya: ${num(r.rows)} records · ${r.kb} KB`, `💾 Backed up: ${num(r.rows)} records · ${r.kb} KB`));
+    wireBackupCard(el);
+  });
+}
 VIEWS.company = async (el) => {
   const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding"]);
   const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
@@ -1639,9 +1663,14 @@ VIEWS.company = async (el) => {
     </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
     ${brandCard(m.branding || {}, ro)}
     ${outlookCard(m.outlook || {}, ro)}
+    ${isAdmin() ? `<div class="card" style="max-width:860px" id="bkCard"><div class="card-h"><h3>💾 ${L("Backup", "Backup")}</h3><span class="sp"></span>
+      <button class="btn sm primary" id="bkNow">${L("Abhi backup lo", "Back up now")}</button></div>
+      <div class="card-b"><p class="mu" style="margin-top:0">${L("Har raat 3 baje poore CRM ka apne aap backup hota hai (private, sirf Admin download kar sakta hai). 30 din ke roz ke backup + har mahine ki 1 tarikh wala 1 saal tak rakha jaata hai. Hafte mein ek baar latest backup download karke company laptop / OneDrive pe bhi rakh lo.", "The whole CRM is backed up automatically every night at 3 AM (private, only Admins can download). Daily backups are kept for 30 days, the 1st-of-month one for a year. Once a week, download the latest one and keep a copy on a company laptop / OneDrive too.")}</p>
+      <div id="bkList"><div class="empty">Loading…</div></div></div></div>` : ""}
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
   wireOutlookCard(el, m.outlook || {});
   wireBrandCard(el, m.branding || {});
+  if (isAdmin()) wireBackupCard(el);
   $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
     if (!v.name || !v.state) return toast(L("Company naam aur State zaroori hai", "Company name and State are required"), true);
