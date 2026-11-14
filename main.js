@@ -1643,13 +1643,27 @@ async function wireBackupCard(el) {
         return `<div class="hrow"><div class="hmain"><div class="hsum">📦 ${h(new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }))} · ${h(t.slice(0, 2) + ":" + t.slice(2))}
           ${k === "manual" ? `<span class="badge">${L("haath se", "manual")}</span>` : `<span class="badge good">auto</span>`}</div><div class="mu" style="font-size:12px">${[g.x ? "Excel " + kb(g.x) : "", g.j ? "JSON " + kb(g.j) : ""].filter(Boolean).join(" · ")}</div></div>
           ${g.x ? `<button class="btn sm primary" data-bk="${h(g.x.name)}">${ic("download")} Excel</button>` : ""}
-          ${g.j ? `<button class="btn sm" data-bk="${h(g.j.name)}" title="${h(L("Poora data (restore ke liye)", "Full data (for restore)"))}">${ic("download")} JSON</button>` : ""}</div>`; }).join("")}</div>
+          ${g.j ? `<button class="btn sm" data-bk="${h(g.j.name)}" title="${h(L("Poora data (restore ke liye)", "Full data (for restore)"))}">${ic("download")} JSON</button>` : ""}
+          <button class="btn sm ghost icon" data-bkdel="${h(base)}" data-bkf="${h([g.x?.name, g.j?.name].filter(Boolean).join("|"))}" title="${h(L("Ye backup delete karo", "Delete this backup"))}" aria-label="Delete backup">${ic("trash")}</button></div>`; }).join("")}</div>
       ${files.length > 15 ? `<p class="mu" style="font-size:12px">+${files.length - 15} ${L("purane backup bhi rakhe hain", "older backups kept")}</p>` : ""}`;
   $$("[data-bk]", box).forEach((b) => b.onclick = () => busy(b, async () => {
     const { data: u, error: e } = await sb.storage.from("backups").createSignedUrl(b.dataset.bk, 120, { download: b.dataset.bk });
     if (e) throw e;
     const a = document.createElement("a"); a.href = u.signedUrl; a.rel = "noopener"; document.body.append(a); a.click(); a.remove();
   }));
+  $$("[data-bkdel]", box).forEach((b) => b.onclick = async () => {
+    const [d, t] = b.dataset.bkdel.split("_");
+    const label = new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) + " " + t.slice(0, 2) + ":" + t.slice(2);
+    const last = files.length <= 1;
+    if (!(await confirmBox(L(`${label} wala backup (Excel + JSON) hamesha ke liye delete karna hai? Ye wapas nahi aayega.${last ? " ⚠️ Ye aakhri backup hai!" : ""}`,
+      `Permanently delete the ${label} backup (Excel + JSON)? This cannot be undone.${last ? " ⚠️ This is the only backup!" : ""}`), "Delete"))) return;
+    busy(b, async () => {
+      const { data: gone, error: e } = await sb.storage.from("backups").remove(b.dataset.bkf.split("|"));
+      if (e) throw e;
+      if (!gone?.length) throw new Error(L("Delete nahi hua — permission nahi hai", "Not deleted — no permission"));
+      toast(L("🗑 Backup delete ho gaya", "🗑 Backup deleted")); wireBackupCard(el);
+    });
+  });
   const now = $("#bkNow", el);
   if (now) now.onclick = () => busy(now, async () => {
     const r = await callFn("backup", {});
