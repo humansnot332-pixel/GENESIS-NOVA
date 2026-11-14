@@ -1633,12 +1633,17 @@ async function wireBackupCard(el) {
   const box = $("#bkList", el); if (!box) return;
   const { data, error } = await sb.storage.from("backups").list("", { limit: 60, sortBy: { column: "name", order: "desc" } });
   if (!$("#bkList", el)) return;
-  const files = (data || []).filter((f) => /\.json\.gz$/.test(f.name));
+  // one row per backup: Excel (sheet per section) + full JSON copy
+  const all = data || [], byBase = new Map();
+  for (const f of all) { const m = f.name.match(/^(.+)\.(json\.gz|xlsx)$/); if (!m) continue; const g = byBase.get(m[1]) || {}; g[m[2] === "xlsx" ? "x" : "j"] = f; byBase.set(m[1], g); }
+  const files = [...byBase.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  const kb = (f) => f ? ((f.metadata?.size || 0) / 1024).toFixed(0) + " KB" : "";
   box.innerHTML = error ? `<div class="empty">${h(friendly(error))}</div>` : !files.length ? `<div class="empty">${L("Abhi koi backup nahi — upar \"Abhi backup lo\" dabao", "No backups yet — press \"Back up now\"")}</div>`
-    : `<div class="hlist">${files.slice(0, 15).map((f) => { const [d, t, k] = f.name.replace(".json.gz", "").split("_");
+    : `<div class="hlist">${files.slice(0, 15).map(([base, g]) => { const [d, t, k] = base.split("_");
         return `<div class="hrow"><div class="hmain"><div class="hsum">📦 ${h(new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }))} · ${h(t.slice(0, 2) + ":" + t.slice(2))}
-          ${k === "manual" ? `<span class="badge">${L("haath se", "manual")}</span>` : `<span class="badge good">auto</span>`}</div><div class="mu" style="font-size:12px">${h(((f.metadata?.size || 0) / 1024).toFixed(0))} KB</div></div>
-          <button class="btn sm" data-bk="${h(f.name)}">${ic("download")} Download</button></div>`; }).join("")}</div>
+          ${k === "manual" ? `<span class="badge">${L("haath se", "manual")}</span>` : `<span class="badge good">auto</span>`}</div><div class="mu" style="font-size:12px">${[g.x ? "Excel " + kb(g.x) : "", g.j ? "JSON " + kb(g.j) : ""].filter(Boolean).join(" · ")}</div></div>
+          ${g.x ? `<button class="btn sm primary" data-bk="${h(g.x.name)}">${ic("download")} Excel</button>` : ""}
+          ${g.j ? `<button class="btn sm" data-bk="${h(g.j.name)}" title="${h(L("Poora data (restore ke liye)", "Full data (for restore)"))}">${ic("download")} JSON</button>` : ""}</div>`; }).join("")}</div>
       ${files.length > 15 ? `<p class="mu" style="font-size:12px">+${files.length - 15} ${L("purane backup bhi rakhe hain", "older backups kept")}</p>` : ""}`;
   $$("[data-bk]", box).forEach((b) => b.onclick = () => busy(b, async () => {
     const { data: u, error: e } = await sb.storage.from("backups").createSignedUrl(b.dataset.bk, 120, { download: b.dataset.bk });
@@ -1648,7 +1653,7 @@ async function wireBackupCard(el) {
   const now = $("#bkNow", el);
   if (now) now.onclick = () => busy(now, async () => {
     const r = await callFn("backup", {});
-    toast(L(`💾 Backup ho gaya: ${num(r.rows)} records · ${r.kb} KB`, `💾 Backed up: ${num(r.rows)} records · ${r.kb} KB`));
+    toast(L(`💾 Backup ho gaya: ${num(r.rows)} records · Excel ${r.sheets || ""} sheets`, `💾 Backed up: ${num(r.rows)} records · Excel ${r.sheets || ""} sheets`));
     wireBackupCard(el);
   });
 }
@@ -1665,7 +1670,7 @@ VIEWS.company = async (el) => {
     ${outlookCard(m.outlook || {}, ro)}
     ${isAdmin() ? `<div class="card" style="max-width:860px" id="bkCard"><div class="card-h"><h3>💾 ${L("Backup", "Backup")}</h3><span class="sp"></span>
       <button class="btn sm primary" id="bkNow">${L("Abhi backup lo", "Back up now")}</button></div>
-      <div class="card-b"><p class="mu" style="margin-top:0">${L("Har raat 3 baje poore CRM ka apne aap backup hota hai (private, sirf Admin download kar sakta hai). 30 din ke roz ke backup + har mahine ki 1 tarikh wala 1 saal tak rakha jaata hai. Hafte mein ek baar latest backup download karke company laptop / OneDrive pe bhi rakh lo.", "The whole CRM is backed up automatically every night at 3 AM (private, only Admins can download). Daily backups are kept for 30 days, the 1st-of-month one for a year. Once a week, download the latest one and keep a copy on a company laptop / OneDrive too.")}</p>
+      <div class="card-b"><p class="mu" style="margin-top:0">${L("Har raat 3 baje poore CRM ka apne aap backup hota hai — <b>Excel</b> (har section ki alag sheet) + <b>JSON</b> (restore ke liye). Private, sirf Admin download kar sakta hai. 30 din ke roz ke backup + har mahine ki 1 tarikh wala 1 saal tak rakha jaata hai. Hafte mein ek baar latest backup download karke company laptop / OneDrive pe bhi rakh lo.", "The whole CRM is backed up automatically every night at 3 AM — <b>Excel</b> (one sheet per section) + <b>JSON</b> (for restore). Private, only Admins can download. Daily backups are kept for 30 days, the 1st-of-month one for a year. Once a week, download the latest one and keep a copy on a company laptop / OneDrive too.")}</p>
       <div id="bkList"><div class="empty">Loading…</div></div></div></div>` : ""}
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
   wireOutlookCard(el, m.outlook || {});
