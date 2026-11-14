@@ -7,7 +7,7 @@ export { L, isEn };
 
 if (!window.supabase) throw new Error("supabase-js failed to load");
 // every successful delete / bulk change the user makes is announced, so the app can offer "↩ Undo"
-const UNDO_TABLES = /\/rest\/v1\/(leads|rfqs|quotations|products|renewals|orders|invoices|payments|tickets|tasks|message_templates)\?/;
+const UNDO_TABLES = /\/rest\/v1\/(leads|rfqs|quotations|products|renewals|orders|invoices|payments|tickets|tasks|message_templates|email_messages|announcements)\?/;
 const UNDO_RPC = /\/rest\/v1\/rpc\/(merge_leads|assign_leads|undo_import)\b/;
 async function crmFetch(input, init = {}) {
   const res = await fetch(input, init);

@@ -373,7 +373,7 @@ export async function viewInbox(el, params = {}) {
       <div class="ib-item ${r.is_read ? "" : "unread"} ${String(r.id) === String(params.id) ? "on" : ""}" data-ib="${r.id}">
         <div class="row" style="flex-wrap:nowrap;gap:6px">${r.is_read ? "" : '<span class="dot on" style="background:var(--accent);box-shadow:none"></span>'}<b class="ib-co">${h(r.leads?.company || r.counterpart_name || r.counterpart)}</b><span class="mu" style="font-size:12px;margin-left:auto;white-space:nowrap">${h(ago(r.created_at))}</span></div>
         <div class="ib-sub">${h(r.subject || "(no subject)")}</div>
-        <div class="ib-snip">${h(r.snippet || "")}</div>
+        <div class="ib-snip">${h(onlyReply(r.snippet || ""))}</div>
         <div class="row" style="gap:6px;margin-top:4px">${intentBadge(r.intent)}${team ? `<span class="mu" style="font-size:12px">${h(userName(r.user_id))}</span>` : ""}</div>
       </div>`).join("") || `<div class="empty"><b>Abhi koi reply nahi</b>${msOk || outlookConnected() ? "Jin companies ko CRM se mail kiya hai, unke reply yahan aayenge." : "Pehle upar se Gmail / Outlook connect karo."}</div>`}</div>
     <div class="card ib-read" id="ibRead"><div class="empty">← Koi reply select karo</div></div></div>`
@@ -394,7 +394,7 @@ export async function viewInbox(el, params = {}) {
   $$("[data-ib]", el).forEach((d) => d.onclick = () => { $$(".ib-item", el).forEach((x) => x.classList.remove("on")); d.classList.add("on"); d.classList.remove("unread"); history.replaceState(null, "", "#/inbox/" + d.dataset.ib); readMail(+d.dataset.ib, $("#ibRead", el), () => viewInbox(el, { id: d.dataset.ib })); });
   $$("[data-fu]", el).forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await followupFor(+b.dataset.fu); });
   $$("tr[data-lid]", el).forEach((tr) => tr.onclick = () => tr.dataset.lid && HOOK.openLead(+tr.dataset.lid));
-  if (params.id && IB.tab === "replies") readMail(+params.id, $("#ibRead", el), () => viewInbox(el, params));
+  if (params.id && IB.tab === "replies" && rows.some((r) => String(r.id) === String(params.id))) readMail(+params.id, $("#ibRead", el), () => viewInbox(el, params));
 }
 
 async function followupFor(leadId) {
@@ -404,6 +404,17 @@ async function followupFor(leadId) {
   openComposer({ channel: "email", lead: { ...lead, reply_count: 0, email_count: Math.max(1, lead.email_count) } });
 }
 
+// show only the new reply: cut the quoted earlier mail ("On … wrote:", "-----Original Message-----", Outlook "From:/Sent:", "> …" lines)
+export function onlyReply(t) {
+  t = String(t || "").replace(/\r\n/g, "\n");
+  const cut = [/(^|\n)[ \t]*On [\s\S]{5,300}?wrote:[ \t]*(\n|$)/i, /(^|\n)[ \t]*-{2,}\s*Original Message\s*-{2,}/i, /(^|\n)_{5,}[ \t]*\n\s*From:/i,
+    /(^|\n)From: .+\n(Sent|Date): .+/i, /(^|\n)>/,
+    /\s+On (Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*, \d/i, /\s+On \d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4}/i];   // same, squeezed onto one line
+  let end = t.length;
+  for (const re of cut) { const m = t.match(re); if (m && m.index > 0 && m.index < end) end = m.index; }
+  const out = t.slice(0, end).replace(/\n{3,}/g, "\n\n").trim();
+  return out || t.trim();
+}
 async function readMail(id, pane, refresh) {
   pane.innerHTML = `<div class="empty">Loading…</div>`;
   const { data: r, error } = await sb.from("email_messages").select("*, leads(id, company, status, owner_id, lock_until, contact_name, email, phone, products, next_follow_up, email_count, reply_count, last_emailed_at, alt_phones, category, city, area), rfqs(id, rfq_no, company, product, qty, contact, email, phone, city, owner_id, lock_until, last_emailed_at)").eq("id", id).single();
@@ -416,7 +427,7 @@ async function readMail(id, pane, refresh) {
       <div class="mu" style="font-size:13px"><b style="color:var(--tx)">${h(r.counterpart_name || "")}</b> &lt;${h(r.counterpart)}&gt; · ${h(dt(r.created_at))}${!mine ? " · " + h(userName(r.user_id)) + " ko" : ""}</div>
       <div class="row" style="margin-top:6px;gap:6px">${intentBadge(r.intent)}${lead ? `<a href="#" data-ol="${lead.id}" class="badge info">📋 ${h(lead.company)} · ${h(STATUS[lead.status]?.l || lead.status)}</a>` : ""}${r.rfqs ? `<span class="badge">${h(r.rfqs.rfq_no)}</span>` : ""}</div></div>
       ${r.thread_url ? `<a class="btn sm" href="${h(r.thread_url)}" target="_blank" rel="noopener noreferrer">${r.provider === "outlook" ? "Outlook" : "Gmail"} mein kholo ↗</a>` : ""}</div></div>
-    <div class="ib-body">${h(r.body || r.snippet || "").replace(/\n/g, "<br>")}</div>
+    <div class="ib-body">${h(onlyReply(r.body || r.snippet || "")).replace(/\n/g, "<br>")}</div>
     ${mine ? `<div class="ib-actions">
       <button class="btn primary" data-a="reply">${ic("mail")} Reply</button>
       ${lead ? `<button class="btn" data-a="wa">${ic("wa")} WhatsApp</button>` : ""}
@@ -424,6 +435,7 @@ async function readMail(id, pane, refresh) {
       <span style="flex:1"></span>
       <select class="input" data-a="intent" style="width:auto;height:30px" aria-label="Tag">${Object.entries(INTENT).map(([k, [l]]) => `<option value="${k}" ${k === (r.intent || "other") ? "selected" : ""}>${l}</option>`).join("")}</select>
       <button class="btn ghost" data-a="unread">Unread</button><button class="btn ghost" data-a="arch">${r.archived ? "Unarchive" : "Archive"}</button>
+      <button class="btn ghost danger" data-a="del" title="${h(L("CRM se hatao (Gmail mein rahega)", "Remove from the CRM (stays in Gmail)"))}">${ic("trash")} ${L("Delete", "Delete")}</button>
     </div>` : ""}`;
   pane.querySelector("[data-ol]")?.addEventListener("click", (e) => { e.preventDefault(); HOOK.openLead(lead.id); });
   const act = async (a) => {
@@ -434,6 +446,13 @@ async function readMail(id, pane, refresh) {
     }
     if (a === "unread") { await sb.from("email_messages").update({ is_read: false }).eq("id", id); HOOK.refreshBadges(); return refresh(); }
     if (a === "arch") { await sb.from("email_messages").update({ archived: !r.archived }).eq("id", id); toast(r.archived ? "Inbox mein wapas" : "Archived"); return refresh(); }
+    if (a === "del") {
+      if (!(await confirmBox(L("Ye mail CRM se delete karna hai? (Gmail / Outlook mein ye mail waise hi rahega, aur dobara sync nahi hoga.)", "Delete this mail from the CRM? (It stays in Gmail / Outlook and won't sync back.)"), "Delete"))) return;
+      const { data: gone, error: de } = await sb.from("email_messages").delete().eq("id", id).select("id");
+      if (de) return fail(de);
+      if (!gone?.length) return toast(L("Delete nahi hua — sirf apni mail delete kar sakte ho", "Not deleted — you can only delete your own mail"), true);
+      history.replaceState(null, "", "#/inbox"); HOOK.refreshBadges(); return refresh();
+    }
     if (!lead || !(await ensureWork("lead", lead))) return;
     if (a === "wa") return openComposer({ channel: "whatsapp", lead });
     if (a === "int" || a === "no") {
