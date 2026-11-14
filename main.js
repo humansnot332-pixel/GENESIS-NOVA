@@ -470,7 +470,7 @@ ACT.theme = toggleTheme;
 //  UNDO / REDO  (server keeps the history; see migration 017)
 // ---------------------------------------------------------------------
 const afterUndo = () => { closeDrawer(); softRefresh(150); refreshBadges(); };
-const undoMsg = (r, verb) => `${verb}: ${r?.summary || ""}${r?.conflicts ? " · " + L(`${r.conflicts} field baad mein badle gaye the, wo nahi chhede`, `${r.conflicts} field(s) changed later were left as they are`) : ""}`;
+const undoMsg = (r, verb) => `${verb}: ${String(r?.summary || "").split("\n")[0]}${r?.conflicts ? " · " + L(`${r.conflicts} field baad mein badle gaye the, wo nahi chhede`, `${r.conflicts} field(s) changed later were left as they are`) : ""}`;
 async function doUndo(tx) {
   const { data, error } = tx ? await sb.rpc("undo_tx", { p_tx: tx }) : await sb.rpc("undo_mine");
   if (error) return toast(friendly(error), true);
@@ -517,10 +517,23 @@ async function historyPanel(scope) {
   const box = $("#hList", m); if (!box) return;
   if (error) { box.innerHTML = `<div class="empty">${h(friendly(error))}</div>`; return; }
   if (!data?.length) { box.innerHTML = `<div class="empty"><b>${scope === "bin" ? L("Recycle bin khaali hai", "Recycle bin is empty") : L("Abhi koi change nahi", "No changes yet")}</b></div>`; return; }
-  box.innerHTML = `<div class="hlist">${data.map((r) => `<div class="hrow ${r.undone ? "undone" : ""}">
-      <div class="hmain"><div class="hsum">${h(r.summary || "—")}</div><div class="mu" style="font-size:12px">${h(ago(r.at))}${scope !== "mine" ? " · " + h(userName(r.actor)) : ""}${r.undone ? " · " + L("undo kiya hua", "undone") : ""}</div></div>
+  // grouped by day (Aaj / Kal / weekday / date); title in bold, details below in plain words
+  const dayOf = (t) => {
+    const d = new Date(t), t0 = new Date(); t0.setHours(0, 0, 0, 0); const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
+    const diff = Math.round((t0 - d0) / 864e5);
+    return diff <= 0 ? L("Aaj", "Today") : diff === 1 ? L("Kal", "Yesterday") : d0.toLocaleDateString("en-IN", diff < 7 ? { weekday: "long" } : { day: "numeric", month: "short" });
+  };
+  const time = (t) => new Date(t).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit", hour12: true });
+  let lastDay = "";
+  box.innerHTML = `<div class="hlist">${data.map((r) => {
+    const [title, det] = String(r.summary || "—").split("\n"), dd = dayOf(r.at);
+    const head = dd !== lastDay ? `<div class="hday">${h(dd)}</div>` : ""; lastDay = dd;
+    return `${head}<div class="hrow ${r.undone ? "undone" : ""}">
+      <div class="hmain"><div class="hsum">${h(title)}</div>${det ? `<div class="hdet">${h(det)}</div>` : ""}
+        <div class="hmeta">${h(time(r.at))} · ${h(ago(r.at))}${scope !== "mine" ? " · " + h(r.actor ? userName(r.actor) : L("System", "System")) : ""}${r.undone ? ` · <span class="badge">${L("undo kiya hua", "undone")}</span>` : ""}</div></div>
       ${r.can ? `<button class="btn sm ${r.undone ? "" : scope === "bin" ? "primary" : ""}" data-htx="${r.tx}" data-hdo="${r.undone ? "redo" : "undo"}">${r.undone ? "↪ Redo" : scope === "bin" ? "♻️ " + L("Wapas lao", "Restore") : "↩ Undo"}</button>`
-        : `<span class="mu" style="font-size:12px" title="${h(r.why || "")}">🔒</span>`}</div>`).join("")}</div>`;
+        : `<span class="mu" style="font-size:12px" title="${h(r.why || "")}">🔒</span>`}</div>`;
+  }).join("")}</div>`;
   $$("[data-htx]", box).forEach((b) => b.onclick = () => busy(b, async () => {
     const ok = b.dataset.hdo === "redo" ? await doRedo(+b.dataset.htx) : await doUndo(+b.dataset.htx);
     if (ok) historyPanel(scope);
