@@ -1663,10 +1663,15 @@ ACT.toggleUser = async (t) => {
   if (u.active && !(await confirmBox(`${u.full_name} ko disable karna hai? Login turant band ho jayega.`, "Disable"))) return;
   busy(t, async () => { await callFn("admin-users", { action: "set_active", user_id: u.id, active: !u.active }); toast(u.active ? "Disabled" : "Enabled"); VIEWS.team($("#page")); });
 };
-ACT.distribute = (b) => busy(b, async () => {
-  const { data, error } = await sb.rpc("auto_distribute", { max_per_user: 250 }); if (error) throw error;
-  toast(`⚡ ${data} leads distribute hue`); softRefresh();
-});
+ACT.distribute = async (b) => {
+  if (!(await confirmBox(L("Free pool ke leads team mein baant dein? (Galti ho to turant ↩ Undo kar sakte ho)", "Share the free-pool leads across the team? (You can ↩ Undo right after)"), L("Haan, baanto", "Yes, distribute")))) return;
+  busy(b, async () => {
+    const { data, error } = await sb.rpc("auto_distribute", { max_per_user: 250 }); if (error) throw error;
+    softRefresh(); refreshBadges();
+    if (!data) return toast(L("Pool mein baantne layak koi lead nahi", "No pool leads to distribute"));
+    toastAction(L(`⚡ ${data} leads team mein baant diye`, `⚡ ${data} leads distributed`), "↩ Undo", () => doUndo(), 12000);
+  });
+};
 
 // ---------------------------------------------------------------------
 //  AUTOMATION (admin edits, manager views + runs)
