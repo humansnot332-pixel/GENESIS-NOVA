@@ -89,10 +89,11 @@ function catalogueHtml(rows, mgr) {
       <div class="plist">${list.map((p) => `<div class="pitem ${p.active ? "" : "off"}" ${mgr ? `data-pid="${p.id}"` : ""}>${brandBadge(p.brand)}
         <div class="pmain"><div class="pname">${h(p.brand && p.brand !== "Genesis" && !p.name.toLowerCase().startsWith(p.brand.toLowerCase()) ? p.brand + " " : "")}<b>${h(p.name)}</b></div>
           <div class="sub">${h([p.model, p.notes].filter(Boolean).join(" · "))}</div></div>
-        <div class="pprice">${p.sell_price != null ? `<b>${inr(p.sell_price)}</b><div class="sub">${h(p.unit || "")}</div>` : `<span class="mu" style="font-size:12px">${mgr ? L("Price daalo", "Add price") : L("Price on request", "Price on request")}</span>`}</div></div>`).join("")}</div></div>`;
+        ${mgr ? `<button class="btn ghost icon sm pdel" data-pdx="${p.id}" title="${h(L("Delete", "Delete"))}" aria-label="Delete ${h(prodLabel(p))}">${ic("trash")}</button>` : ""}<div class="pprice">${p.sell_price != null ? `<b>${inr(p.sell_price)}</b><div class="sub">${h(p.unit || "")}</div>` : `<span class="mu" style="font-size:12px">${mgr ? L("Price daalo", "Add price") : L("Price on request", "Price on request")}</span>`}</div></div>`).join("")}</div></div>`;
   }).join("")}</div>`;
 }
 
+const PSEL = new Set();   // products ticked in the table view
 export async function viewProducts(el) {
   await loadProducts(true);
   const mgr = isMgr(), q = (el.dataset.pq || "").toLowerCase(), view = el.dataset.pv || "cat";
@@ -100,12 +101,13 @@ export async function viewProducts(el) {
   el.innerHTML = `<div class="toolbar"><input class="input" id="pq" placeholder="${h(L("Product / brand / service search…", "Search product / brand / service…"))}" value="${h(el.dataset.pq || "")}" style="max-width:320px">
     <div class="chips"><button class="chip ${view === "cat" ? "on" : ""}" data-pv="cat">▦ ${L("Catalogue", "Catalogue")}</button><button class="chip ${view === "tbl" ? "on" : ""}" data-pv="tbl">☰ ${L("Price list", "Price list")}</button></div>
     <span class="mu">${num(rows.length)} ${L("products", "products")}</span><span class="sp" style="flex:1"></span>
+    ${mgr && view === "tbl" ? `<button class="btn danger" id="pbulk" ${PSEL.size ? "" : "hidden"}>${ic("trash")} ${L("Selected delete", "Delete selected")} <span id="pbn">(${PSEL.size})</span></button>` : ""}
     ${mgr ? `<button class="btn" id="pimp">${ic("upload")} CSV import</button><button class="btn" id="pexp">${ic("download")} Export</button><button class="btn primary" id="padd">${ic("plus")} ${L("Product add karo", "Add product")}</button>` : ""}</div>
-  ${view === "cat" ? catalogueHtml(rows, mgr) : `<div class="card"><div class="tbl-wrap">${!rows.length ? empty("Abhi koi product nahi — Manager products add kar sakte hain", "No products yet — managers can add them") : `<table class="tbl"><thead><tr><th>Product</th><th>Category</th><th>HSN</th><th class="num">GST</th><th class="num">${L("Selling price", "Selling price")}</th>
-    ${mgr ? `<th class="num">🔒 Cost</th><th class="num">🔒 Margin</th><th>🔒 ${L("Best vendor", "Best vendor")}</th>` : ""}</tr></thead><tbody>
+  ${view === "cat" ? catalogueHtml(rows, mgr) : `<div class="card"><div class="tbl-wrap">${!rows.length ? empty("Abhi koi product nahi — Manager products add kar sakte hain", "No products yet — managers can add them") : `<table class="tbl"><thead><tr>${mgr ? `<th style="width:34px"><input type="checkbox" id="pall" aria-label="Select all"></th>` : ""}<th>Product</th><th>Category</th><th>HSN</th><th class="num">GST</th><th class="num">${L("Selling price", "Selling price")}</th>
+    ${mgr ? `<th class="num">🔒 Cost</th><th class="num">🔒 Margin</th><th>🔒 ${L("Best vendor", "Best vendor")}</th><th style="width:44px"></th>` : ""}</tr></thead><tbody>
     ${rows.map((p) => { const c = costOf(p), b = COSTS?.get(p.id), mg = c != null && p.sell_price ? ((p.sell_price - c) / p.sell_price) * 100 : null;
-      return `<tr data-pid="${p.id}" ${mgr ? "" : 'style="cursor:default"'}><td><div class="co">${h(prodLabel(p))}</div>${p.active ? "" : `<span class="badge bad">${L("Band", "Inactive")}</span>`}${p.notes ? `<div class="sub">${h(p.notes)}</div>` : ""}</td><td>${h(p.category || "—")}</td><td class="mono">${h(p.hsn || "")}</td><td class="num">${h(p.gst_rate)}%</td><td class="num">${p.sell_price != null ? inr(p.sell_price) : "—"}</td>
-      ${mgr ? `<td class="num">${c != null ? inr(c) : "—"}</td><td class="num">${mg != null ? `<span class="badge ${mg < 5 ? "bad" : mg < 10 ? "warn" : "good"}">${mg.toFixed(1)}%</span>` : "—"}</td><td class="sub">${b?.best_vendor ? `${h(b.best_vendor)} · ${inr(b.best_price)} · ${h(ago(b.best_at))}` : "—"}</td>` : ""}</tr>`; }).join("")}
+      return `<tr data-pid="${p.id}" ${mgr ? "" : 'style="cursor:default"'}>${mgr ? `<td class="pchk"><input type="checkbox" data-psel="${p.id}" aria-label="Select" ${PSEL.has(p.id) ? "checked" : ""}></td>` : ""}<td><div class="co">${h(prodLabel(p))}</div>${p.active ? "" : `<span class="badge bad">${L("Band", "Inactive")}</span>`}${p.notes ? `<div class="sub">${h(p.notes)}</div>` : ""}</td><td>${h(p.category || "—")}</td><td class="mono">${h(p.hsn || "")}</td><td class="num">${h(p.gst_rate)}%</td><td class="num">${p.sell_price != null ? inr(p.sell_price) : "—"}</td>
+      ${mgr ? `<td class="num">${c != null ? inr(c) : "—"}</td><td class="num">${mg != null ? `<span class="badge ${mg < 5 ? "bad" : mg < 10 ? "warn" : "good"}">${mg.toFixed(1)}%</span>` : "—"}</td><td class="sub">${b?.best_vendor ? `${h(b.best_vendor)} · ${inr(b.best_price)} · ${h(ago(b.best_at))}` : "—"}</td><td><button class="btn ghost icon sm pdel" data-pdx="${p.id}" title="Delete" aria-label="Delete ${h(prodLabel(p))}">${ic("trash")}</button></td>` : ""}</tr>`; }).join("")}
     </tbody></table>`}</div></div>`}
   ${mgr ? `<p class="mu" style="font-size:12.5px">🔒 ${h(L("Cost, margin aur vendor prices sirf Admin/Manager ko dikhte hain. Sales team ko sirf selling price.", "Cost, margin and vendor prices are visible to Admin/Manager only. The sales team sees only the selling price."))}</p>` : ""}`;
   const pq = $("#pq", el); let t;
@@ -115,6 +117,29 @@ export async function viewProducts(el) {
   $("#padd", el).onclick = () => productForm({}, () => viewProducts(el));
   $$("[data-padd]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); productForm({ category: b.dataset.padd, brand: b.dataset.brand || "" }, () => viewProducts(el)); });
   $$("[data-pid]", el).forEach((r) => r.onclick = () => productForm(PROD.find((p) => p.id === +r.dataset.pid), () => viewProducts(el)));
+  // remove one (🗑 on the row / card) — the Undo toast comes up automatically
+  $$("[data-pdx]", el).forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    const p = PROD.find((x) => x.id === +b.dataset.pdx); if (!p) return;
+    if (!(await confirmBox(L(`"${prodLabel(p)}" delete karna hai? (Undo se wapas la sakte ho)`, `Delete "${prodLabel(p)}"? (you can Undo)`), "Delete"))) return;
+    const { error } = await sb.from("products").delete().eq("id", p.id); if (error) return fail(error);
+    PSEL.delete(p.id); PROD = null; viewProducts(el);
+  });
+  // tick many (table view) → remove together
+  const syncBulk = () => { const bb = $("#pbulk", el); if (bb) { bb.hidden = !PSEL.size; $("#pbn", el).textContent = `(${PSEL.size})`; } };
+  $$(".pchk", el).forEach((td) => td.onclick = (e) => e.stopPropagation());
+  $$("[data-psel]", el).forEach((c) => c.onchange = () => { if (c.checked) PSEL.add(+c.dataset.psel); else PSEL.delete(+c.dataset.psel); syncBulk(); });
+  const pall = $("#pall", el);
+  if (pall) {
+    pall.checked = rows.length > 0 && rows.every((p) => PSEL.has(p.id));
+    pall.onchange = () => { rows.forEach((p) => { if (pall.checked) PSEL.add(p.id); else PSEL.delete(p.id); }); $$("[data-psel]", el).forEach((c) => { c.checked = pall.checked; }); syncBulk(); };
+  }
+  $("#pbulk", el)?.addEventListener("click", async () => {
+    const ids = [...PSEL]; if (!ids.length) return;
+    if (!(await confirmBox(L(`${ids.length} products delete karne hain? (Undo se wapas la sakte ho)`, `Delete ${ids.length} products? (you can Undo)`), "Delete"))) return;
+    const { error } = await sb.from("products").delete().in("id", ids); if (error) return fail(error);
+    PSEL.clear(); PROD = null; viewProducts(el);
+  });
   $("#pexp", el).onclick = () => download("products.csv", toCSV(PROD.map((p) => ({ ...p, cost_price: COSTS?.get(p.id)?.cost_price })), [["brand", "brand"], ["name", "name"], ["model", "model"], ["category", "category"], ["hsn", "hsn"], ["gst_rate", "gst_rate"], ["unit", "unit"], ["cost_price", "cost_price"], ["sell_price", "sell_price"]]));
   $("#pimp", el).onclick = () => importProducts(() => viewProducts(el));
 }

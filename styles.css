@@ -536,3 +536,10 @@ fieldset[disabled] .input { opacity: .7; }
 .lq > div { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
 .lq b { font-size: 20px; }
 .lq span { font-size: 12px; color: var(--mu); }
+
+/* products: delete buttons */
+.pitem .pdel { opacity: 0; transition: opacity .15s; color: var(--mu); }
+.pitem:hover .pdel, .pitem .pdel:focus-visible { opacity: 1; }
+.pdel:hover { color: #dc2626; }
+@media (hover: none) { .pitem .pdel { opacity: .7; } }
+.pchk { width: 34px; }
