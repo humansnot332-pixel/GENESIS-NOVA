@@ -253,7 +253,7 @@ export async function callFn(name, body) {
 
 // ---------- team cache ----------
 export async function loadTeam() {
-  const { data, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, last_seen, created_at").order("full_name");
+  const { data, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, last_seen, created_at, pages").order("full_name");
   if (error) throw error;
   S.team = data || [];
   S.teamById = new Map(S.team.map((u) => [u.id, u]));

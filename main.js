@@ -179,7 +179,7 @@ async function start() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
   S.session = session;
-  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen")
+  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages")
     .eq("id", session.user.id).single();
   if (error || !me) return renderLogin("login", "Profile load nahi hua: " + (error?.message || ""));
   if (!me.active) return renderPending();
@@ -258,6 +258,22 @@ const NAV = [
 ];
 const TITLES = Object.fromEntries(NAV.filter((n) => n.length >= 3 && typeof n[1] === "string").map((n) => [n[0], n[1]]));
 
+// ---- page access: which menu pages a person can open ----
+// pages any role can be given (the Admin section stays tied to the role)
+const PAGEABLE = NAV.filter((n) => n.length >= 3 && typeof n[1] === "string" && !n[3]).map((n) => n[0]);
+// default when an Admin hasn't picked pages for someone (profiles.pages is null)
+const ROLE_PAGES = {
+  telecaller: ["dashboard", "today", "leads", "tasks", "quotes", "templates", "requests", "inbox"],
+  presales: ["dashboard", "today", "leads", "rfqs", "inbox", "tasks", "quotes", "support", "products", "templates", "requests"],
+  sales: ["dashboard", "today", "leads", "pipeline", "rfqs", "inbox", "tasks", "quotes", "orders", "renewals", "support", "products", "templates", "requests", "reports"],
+};
+const rolePages = (role) => (["admin", "manager"].includes(role) ? PAGEABLE : ROLE_PAGES[role] || PAGEABLE);
+function canSee(r) {
+  if (!PAGEABLE.includes(r) || isAdmin()) return true;
+  return (S.me?.pages || rolePages(S.me?.role)).includes(r);
+}
+const firstPage = () => PAGEABLE.find(canSee) || "dashboard";
+
 function renderShell() {
   root.innerHTML = `
   <div class="app">
@@ -267,6 +283,7 @@ function renderShell() {
         ${NAV.map((n) => {
           if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
           if (n[3] && !n[3]()) return "";
+          if (!canSee(n[0])) return "";
           return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}${n[0] === "support" ? '<span class="badge warn" id="tktBadge" hidden></span>' : ""}${n[0] === "renewals" ? '<span class="badge bad" id="renBadge" hidden></span>' : ""}</a>`;
         }).join("")}
       </nav>
@@ -291,6 +308,8 @@ function renderShell() {
       <main class="page" id="page" tabindex="-1"></main>
     </div>
   </div>`;
+  // hide menu headings left with no pages under them (page access)
+  $$(".nav .nav-h").forEach((hd) => { const nx = hd.nextElementSibling; if (!nx || nx.classList.contains("nav-h")) hd.hidden = true; });
   refreshBadges();
 }
 
@@ -331,7 +350,8 @@ function route() {
   S.route = VIEWS[r] ? r : "dashboard";
   S.params = { id: rest[0] };
   const navItem = NAV.find((n) => n[0] === S.route);
-  if (navItem?.[3] && !navItem[3]()) { location.hash = "#/dashboard"; return; }
+  if (navItem?.[3] && !navItem[3]()) { location.hash = "#/" + firstPage(); return; }
+  if (!canSee(S.route)) { if (S.route !== firstPage() && Date.now() - (route.warned || 0) > 2000 && (route.warned = Date.now())) toast(L("Ye page aapke liye band hai — Admin se access maango", "You don't have access to this page — ask your Admin"), true); location.hash = "#/" + firstPage(); return; }
   $$(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === S.route));
   $("#title").textContent = TITLES[S.route] || "";
   document.title = tr(TITLES[S.route] || APP) + " · " + APP;
@@ -1520,9 +1540,9 @@ VIEWS.team = async (el) => {
   const cnt = {}; (loads || []).forEach((l) => { cnt[l.owner_id] = (cnt[l.owner_id] || 0) + 1; });
   el.innerHTML = `<div class="toolbar"><span class="mu">${S.team.filter((u) => u.active).length} active users · ${S.team.filter(online).length} online</span><span class="sp" style="flex:1"></span>
     <button class="btn" data-act="distribute">⚡ Pool auto-distribute</button><button class="btn primary" data-act="addUser">${ic("plus")} User</button></div>
-  <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th>Role</th><th>Categories</th><th class="num">Target</th><th class="num">Open leads</th><th>Last seen</th><th>Status</th><th></th></tr></thead><tbody>
+  <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th>Role</th><th>${L("Pages", "Pages")}</th><th>Categories</th><th class="num">Target</th><th class="num">Open leads</th><th>Last seen</th><th>Status</th><th></th></tr></thead><tbody>
   ${S.team.map((u) => `<tr style="cursor:default"><td><div class="row" style="flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><div><div class="co">${h(u.full_name)}</div><div class="sub">${h(u.email)}</div></div></div></td>
-    <td>${h(ROLE[u.role])}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
+    <td>${h(ROLE[u.role])}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
     <td class="sub">${h(ago(u.last_seen))}</td><td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge bad">Disabled</span>'}</td>
     <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm" data-act="pwUser" data-id="${u.id}">Password</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>
@@ -1530,6 +1550,29 @@ VIEWS.team = async (el) => {
 };
 const catChecks = (sel = []) => `<div class="chips">${CATEGORIES.map((c) => `<label class="chip ${sel.includes(c) ? "on" : ""}"><input type="checkbox" class="sr" name="categories" data-multi="1" value="${h(c)}" ${sel.includes(c) ? "checked" : ""}>${h(c)}</label>`).join("")}</div><div class="mu" style="font-size:12px;margin-top:4px">Kuch select nahi = saari categories</div>`;
 const pwOk = (p) => p && p.length >= 10 && /[a-z]/i.test(p) && /\d/.test(p);
+// page access picker (Team → add / edit user)
+function pageAccessHtml(role, pages) {
+  const sel = pages || rolePages(role);
+  return `<div id="paBox" ${role === "admin" ? "hidden" : ""}><label class="f">${L("Kaun se pages dikhenge", "Pages this person can open")}</label>
+    <div class="row" style="gap:6px;margin-bottom:6px"><button type="button" class="btn sm" data-pa="def">${L("Role ke hisaab se", "Role default")}</button>
+      <button type="button" class="btn sm" data-pa="calling">📞 ${L("Sirf calling (3 pages)", "Calling only (3 pages)")}</button><button type="button" class="btn sm" data-pa="all">${L("Sab", "All")}</button><button type="button" class="btn sm ghost" data-pa="none">${L("Koi nahi", "None")}</button></div>
+    <div class="chips">${PAGEABLE.map((r) => `<label class="chip ${sel.includes(r) ? "on" : ""}"><input type="checkbox" class="sr" name="pages" data-multi="1" value="${r}" ${sel.includes(r) ? "checked" : ""}>${h(TITLES[r])}</label>`).join("")}</div>
+    <div class="mu" style="font-size:12px;margin-top:4px">${L("Data ke rules role se hi chalte hain (jaise cost price sirf Manager ko). Ye sirf menu mein dikhne wale pages tay karta hai.", "Data rules still follow the role (e.g. cost price only for Managers). This only decides which menu pages show.")}</div></div>
+    <div id="paAdmin" class="mu" style="font-size:12.5px;margin-top:10px" ${role === "admin" ? "" : "hidden"}>${L("Admin ko hamesha saare pages dikhte hain.", "Admins always see every page.")}</div>`;
+}
+function wirePageAccess(m) {
+  const set = (list) => $$("[name=pages]", m).forEach((c) => { c.checked = list.includes(c.value); c.parentElement.classList.toggle("on", c.checked); });
+  const role = () => $("[name=role]", m)?.value;
+  $$("[data-pa]", m).forEach((b) => b.onclick = () => set(b.dataset.pa === "def" ? rolePages(role()) : b.dataset.pa === "calling" ? ["today", "leads", "tasks"] : b.dataset.pa === "all" ? PAGEABLE : []));
+  $("[name=role]", m)?.addEventListener("change", () => { const a = role() === "admin"; $("#paBox", m).hidden = a; $("#paAdmin", m).hidden = !a; set(rolePages(role())); });
+}
+// what to store: null when it equals the role default (so later default changes still apply)
+function pagesToSave(m, role) {
+  if (role === "admin") return null;
+  const list = $$("[name=pages]", m).filter((c) => c.checked).map((c) => c.value);
+  const def = rolePages(role);
+  return list.length === def.length && list.every((x) => def.includes(x)) ? null : list;
+}
 function genPw() { const a = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const r = crypto.getRandomValues(new Uint32Array(12)); return [...r].map((x) => a[x % a.length]).join("") + "7"; }
 ACT.addUser = () => {
   const pw = genPw();
@@ -1540,17 +1583,22 @@ ACT.addUser = () => {
       <div><label class="f">Role</label><select class="input" name="role">${ROLES.map(([k, l]) => `<option value="${k}" ${k === "telecaller" ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Daily call target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="40"></div></div>
       <label class="f">Categories</label>${catChecks()}
+      ${pageAccessHtml("telecaller", null)}
       <label class="f">Temporary password</label><div class="row" style="flex-wrap:nowrap"><input class="input mono" name="password" value="${h(pw)}" minlength="10"><button type="button" class="btn icon" id="cpw" aria-label="Copy">${ic("copy")}</button></div>
       <div class="mu" style="font-size:12px;margin-top:4px">User ko ye password do; wo login ke baad Profile se badal sakta hai.</div></form>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="us">Create user</button>`,
   });
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
   $("#cpw", m).onclick = () => { navigator.clipboard?.writeText($("[name=password]", m).value); toast("Copied"); };
+  wirePageAccess(m);
   $("#us", m).onclick = (e) => busy(e.target, async () => {
     const f = formData($("#uf", m)); f.categories ||= [];
     if (!f.full_name || !f.email) return toast("Naam aur email daalo", true);
     if (!pwOk(f.password)) return toast("Password 10+ chars, letters + number", true);
+    const pages = pagesToSave(m, f.role); delete f.pages;
+    if (pages && !pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
     await callFn("admin-users", { action: "create", ...f });
+    if (pages) { const { error: pe } = await sb.from("profiles").update({ pages }).eq("email", f.email.trim().toLowerCase()); if (pe) toast(L("User bana, par page access save nahi hua: ", "User created, but page access not saved: ") + friendly(pe), true); }
     closeModal(); toast("User ban gaya ✔ — email + password share karo"); VIEWS.team($("#page"));
   });
 };
@@ -1561,16 +1609,20 @@ ACT.editUser = (t) => {
       <div><label class="f">Naam</label><input class="input" name="full_name" maxlength="80" value="${h(u.full_name)}"></div>
       <div><label class="f">Role</label><select class="input" name="role" ${u.id === S.me.id ? "disabled" : ""}>${ROLES.map(([k, l]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Daily target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="${u.daily_target}"></div></div>
-      <label class="f">Categories</label>${catChecks(u.categories || [])}</form>`,
+      <label class="f">Categories</label>${catChecks(u.categories || [])}
+      ${pageAccessHtml(u.role, u.pages)}</form>`,
     foot: `${u.id !== S.me.id ? `<button class="btn danger" id="udel">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="es">Save</button>`,
   });
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
   $("#es", m).onclick = (e) => busy(e.target, async () => {
     const f = formData($("#ef", m)); f.categories ||= []; f.daily_target = +f.daily_target || 0;
+    f.pages = pagesToSave(m, f.role || u.role);
+    if (f.pages && !f.pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
     if (u.id === S.me.id) delete f.role;
     const { error } = await sb.from("profiles").update(f).eq("id", u.id); if (error) throw error;
     closeModal(); toast("Saved ✔"); VIEWS.team($("#page"));
   });
+  wirePageAccess(m);
   $("#udel", m)?.addEventListener("click", async () => {
     if (!(await confirmBox(`${u.full_name} ko permanently delete? Uske saare leads pool mein chale jayenge. (Disable karna behtar hai)`, "Delete"))) return;
     try { await callFn("admin-users", { action: "delete", user_id: u.id }); toast("Deleted"); VIEWS.team($("#page")); } catch (e) { fail(e); }
