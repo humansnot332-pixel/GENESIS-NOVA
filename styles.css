@@ -569,3 +569,6 @@ fieldset[disabled] .input { opacity: .7; }
 .lockbar small.lastdrop { display: block; margin-top: 3px; color: var(--warn); }
 details.stg > summary { list-style: none; cursor: pointer; flex-wrap: nowrap; }
 details.stg > summary::-webkit-details-marker { display: none; }
+
+/* a page shown from memory while fresh data loads: visible at once, not clickable for that split second */
+.page.stale { pointer-events: none; }

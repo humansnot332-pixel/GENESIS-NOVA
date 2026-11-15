@@ -744,14 +744,37 @@ export async function decide(reqId, approve) {
 const REL_REASONS = [["Number band / galat", "Number off / wrong"], ["Interested nahi", "Not interested"], ["Baad mein call karo", "Call back later"],
   ["Kahin aur se le liya", "Bought elsewhere"], ["Mera area / product nahi", "Not my area / product"]];
 const coolDays = () => S.settings?.locks?.cooldown_days ?? 7;
-export function askRelease({ force = false, holder = "" } = {}) {
+const freeChances = () => S.settings?.locks?.free_chances ?? 2;
+const DROPS = ["release", "expire", "stale", "claim"];
+// how many chances this person has already used on one lead / RFQ (from its lock history)
+export function dropsUsed(hist, uid = S.me?.id) {
+  const since = Date.now() - coolDays() * 864e5;
+  return (hist || []).filter((x) => x.from_user === uid && x.to_user !== uid && DROPS.includes(x.why) && !x.pardoned && new Date(x.at).getTime() > since).length;
+}
+const chanceNote = (used) => {
+  if (coolDays() <= 0) return "";
+  const left = freeChances() - used;            // chances left BEFORE this release
+  if (left > 1) return L(` Aap ise wapas le sakte ho — is lead pe abhi <b>${left} chance</b> baaki hain.`, ` You can take it back — <b>${left} chances</b> left on this lead.`);
+  if (left === 1) return L(` Aap ise wapas le sakte ho — ye <b>aakhri chance</b> hai.`, ` You can take it back — this is your <b>last chance</b>.`);
+  return L(` <b style="color:var(--bad)">⚠️ Chances khatam: ab chhoda to ${coolDays()} din tak aap ise dobara lock nahi kar paoge</b> (Admin reset kar sakta hai).`,
+           ` <b style="color:var(--bad)">⚠️ No chances left: release now and you can't re-lock it for ${coolDays()} days</b> (an Admin can reset this).`);
+};
+// toast after a release: chances left / ban
+export function releasedMsg(d) {
+  if (!d?.ok) return L("Release nahi hua", "Couldn't release");
+  if (d.banned_until) return L(`🔓 Release ho gaya · chances khatam — ${dt(d.banned_until)} tak aap ise dobara lock nahi kar sakte (Admin reset kar sakta hai)`, `🔓 Released · no chances left — you can't re-lock it until ${dt(d.banned_until)} (an Admin can reset this)`);
+  if (d.drops != null && d.chances != null && (d.days ?? 7) > 0) { const left = d.chances - d.drops;
+    return left > 0 ? L(`🔓 Release ho gaya · galti hui? wapas le sakte ho (${left} chance baaki)`, `🔓 Released · mistake? you can take it back (${left} chance${left > 1 ? "s" : ""} left)`)
+                    : L("🔓 Release ho gaya · wapas le sakte ho, par agli baar chhoda to ban lagega", "🔓 Released · you can take it back, but the next release starts a ban"); }
+  return L("🔓 Release ho gaya — ab pool mein hai", "🔓 Released — it's in the pool now");
+}
+export function askRelease({ force = false, holder = "", used = 0 } = {}) {
   return new Promise((res) => {
     let done = false; const fin = (v) => { if (!done) { done = true; res(v); } };
     const m = modal({
       title: force ? L(`${holder} ka lock hatao`, `Remove ${holder}'s lock`) : L("🔓 Release — kyun chhod rahe ho?", "🔓 Release — why are you dropping it?"),
       body: `<p class="mu" style="margin-top:0">${force ? L("Unhe notification jayega. Wajah likho (optional):", "They'll be notified. Reason (optional):")
-        : L(`Agle bande ko dikhega kyun chhoda. Ek wajah chuno ya likho.${coolDays() > 0 ? ` <b>Chhodne ke baad ${coolDays()} din tak aap ise dobara lock nahi kar paoge.</b>` : ""}`,
-            `The next person will see why. Pick or type a reason.${coolDays() > 0 ? ` <b>You can't re-lock it for ${coolDays()} days after this.</b>` : ""}`)}</p>
+        : L("Agle bande ko dikhega kyun chhoda. Ek wajah chuno ya likho.", "The next person will see why. Pick or type a reason.") + chanceNote(used)}</p>
         <div class="row" style="gap:6px;margin:8px 0 10px">${REL_REASONS.map((r) => `<button type="button" class="chip" data-rr="${h(r[0])}">${h(isEn() ? r[1] : r[0])}</button>`).join("")}</div>
         <input class="input" id="rrT" maxlength="300" placeholder="${h(L("Ya apni wajah likho…", "Or type your own reason…"))}">`,
       foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="rrGo">🔓 Release</button>`,
@@ -813,13 +836,17 @@ const goLead = (id) => { location.hash = "#/leads/" + id; };
 export async function viewRequests(el) {
   const now = Date.now(), soon = new Date(now + 864e5).toISOString();
   const lk = S.settings?.locks || {}, max = lk.max_active_per_user ?? 150;
-  const [{ data, error }, { data: mine }, { data: dropped }] = await Promise.all([
+  const [{ data, error }, { data: mine }, { data: droppedRaw }] = await Promise.all([
     sb.from("lock_requests").select("*").order("created_at", { ascending: false }).limit(200),
     sb.from("leads").select("id, company, city, lock_until, next_follow_up, status, last_contacted").eq("owner_id", S.me.id).gt("lock_until", new Date(now).toISOString()).in("status", OPEN_STATUSES).order("lock_until").limit(1000),
-    sb.from("lock_history").select("entity, entity_id, why, reason, at").eq("from_user", S.me.id).in("why", ["release", "expire", "stale"]).gt("at", new Date(now - coolDays() * 864e5).toISOString()).order("at", { ascending: false }).limit(30),
+    sb.from("lock_history").select("entity, entity_id, why, reason, at, to_user").eq("from_user", S.me.id).eq("pardoned", false).in("why", DROPS).gt("at", new Date(now - coolDays() * 864e5).toISOString()).order("at", { ascending: false }).limit(200),
   ]);
   if (error) throw error;
-  const leadIds = data.filter((r) => r.entity === "lead").map((r) => r.entity_id).concat((dropped || []).filter((d) => d.entity === "lead").map((d) => d.entity_id));
+  // one row per lead I dropped: chances used, banned or not
+  const dmap = new Map();
+  (droppedRaw || []).filter((d) => d.to_user !== S.me.id).forEach((d) => { const k = d.entity + ":" + d.entity_id, g = dmap.get(k); if (g) g.n++; else dmap.set(k, { ...d, n: 1 }); });
+  const dropped = [...dmap.values()].map((d) => ({ ...d, banned: coolDays() > 0 && d.n > freeChances() })).sort((a, b) => b.banned - a.banned).slice(0, 40);
+  const leadIds = data.filter((r) => r.entity === "lead").map((r) => r.entity_id).concat(dropped.filter((d) => d.entity === "lead").map((d) => d.entity_id));
   const rfqIds = data.filter((r) => r.entity === "rfq").map((r) => r.entity_id);
   const [{ data: ls }, { data: rs }] = await Promise.all([
     leadIds.length ? sb.from("leads").select("id, company").in("id", [...new Set(leadIds)]) : { data: [] },
@@ -847,15 +874,18 @@ export async function viewRequests(el) {
     <div class="row" style="padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap;cursor:pointer" data-go-lead="${l.id}">
       <div style="flex:1;min-width:0"><b>${h(l.company)}</b><div class="mu" style="font-size:12.5px">${h(l.city || "")} · ${L("lock khatam", "lock ends")} ${h(dt(l.lock_until))} · ${L("last call", "last call")} ${h(ago(l.last_contacted))}</div></div>
       <button class="btn sm primary">📞 ${L("Kholo", "Open")}</button></div>`).join("")}</div>` : ""}
-  ${(dropped || []).length ? `<details class="card sec" style="margin-top:18px"><summary>🚫 ${L(`Ye ${coolDays()} din tak aap dobara lock nahi kar sakte`, `You can't re-lock these for ${coolDays()} days`)} (${dropped.length})</summary><div class="card-b" style="padding:4px 16px">${dropped.map((d) => `
-    <div class="row" style="padding:7px 0;border-bottom:1px solid var(--line)"><span style="flex:1">${h(d.entity === "lead" ? lname(d.entity_id) || "#" + d.entity_id : "RFQ #" + d.entity_id)}</span>
-      <span class="mu" style="font-size:12px">${h(d.why === "expire" ? L("lock khatam", "expired") : d.why === "stale" ? L("manager ne hataya", "removed by manager") : L("aapne chhoda", "you released"))}${d.reason ? ` — “${h(d.reason)}”` : ""} · ${L("phir se", "again from")} ${h(dt(new Date(new Date(d.at).getTime() + coolDays() * 864e5)))}</span></div>`).join("")}</div></details>` : ""}`;
+  ${dropped.length ? `<details class="card sec" style="margin-top:18px" ${dropped.some((d) => d.banned) ? "open" : ""}><summary>🎟️ ${L("Chhode hue leads — chances", "Leads I dropped — chances")} (${dropped.length})${dropped.some((d) => d.banned) ? ` · <span style="color:var(--bad)">${dropped.filter((d) => d.banned).length} ${L("ban", "banned")}</span>` : ""}</summary><div class="card-b" style="padding:4px 16px">
+    <div class="mu" style="font-size:12.5px;padding:8px 0">${L(`Har lead pe ${freeChances()} chance: itni baar chhod ke wapas le sakte ho. Uske baad chhoda to ${coolDays()} din ka ban. Galti se hua? Admin se bolo — wo reset kar sakta hai.`, `${freeChances()} chances per lead: you can drop and re-take it that many times. One more drop starts a ${coolDays()}-day ban. A mistake? Ask your Admin to reset it.`)}</div>${dropped.map((d) => `
+    <div class="row" style="padding:7px 0;border-top:1px solid var(--line)"><span style="flex:1">${d.entity === "lead" ? `<a href="#/leads/${d.entity_id}">${h(lname(d.entity_id) || "#" + d.entity_id)}</a>` : "RFQ #" + d.entity_id}</span>
+      ${d.banned ? `<span class="badge bad">🚫 ${L("Ban", "Banned")} · ${h(dt(new Date(new Date(d.at).getTime() + coolDays() * 864e5)))} ${L("tak", "")}</span>` : `<span class="badge ${d.n >= freeChances() ? "warn" : ""}">🎟️ ${Math.min(d.n, freeChances())}/${freeChances()} ${L("chance use hue", "chances used")}</span>`}
+      <span class="mu" style="font-size:12px">${h(d.why === "expire" ? L("lock khatam", "expired") : d.why === "stale" ? L("manager ne hataya", "removed by manager") : L("aapne chhoda", "you released"))}${d.reason ? ` — “${h(d.reason)}”` : ""}</span></div>`).join("")}</div></details>` : ""}`;
 
   el.innerHTML = myCard
     + sec("🙋 Mujhse maange gaye", data.filter((r) => r.holder === S.me.id && r.status === "pending"), true)
     + sec("📤 Maine maange", data.filter((r) => r.requester === S.me.id), false)
     + (isMgr() ? sec("👥 Team ke pending requests", data.filter((r) => r.status === "pending" && r.holder !== S.me.id && r.requester !== S.me.id), true)
-      + `<div class="sec-t" style="margin-top:24px">🧹 ${L("Stale locks — lock liya par kaam nahi", "Stale locks — locked but no work")}</div><div id="staleBox" class="card"><div class="empty" style="padding:16px">…</div></div>
+      + `<div class="sec-t" style="margin-top:24px">🎟️ ${L("Team ke bans & chances", "Team bans & chances")}</div><div id="banBox" class="card"><div class="empty" style="padding:16px">…</div></div>
+         <div class="sec-t" style="margin-top:24px">🧹 ${L("Stale locks — lock liya par kaam nahi", "Stale locks — locked but no work")}</div><div id="staleBox" class="card"><div class="empty" style="padding:16px">…</div></div>
          <div class="row" style="margin-top:18px;gap:8px"><button class="btn" id="hoBtn">🔁 ${L("Handover (chhuti / resign)", "Handover (leave / exit)")}</button>${isAdmin() ? `<button class="btn" id="lkSet">⚙️ ${L("Lock rules", "Lock rules")}</button>` : ""}</div>` : "");
   $$("[data-rq]", el).forEach((b) => b.onclick = () => decide(+b.dataset.rq, b.dataset.ok === "1").then(() => viewRequests(el)));
   $$("[data-go-lead]", el).forEach((b) => b.onclick = () => goLead(b.dataset.goLead));
@@ -863,6 +893,33 @@ export async function viewRequests(el) {
   $("#hoBtn", el).onclick = () => openHandover(null, () => viewRequests(el));
   $("#lkSet", el)?.addEventListener("click", () => lockRules(() => viewRequests(el)));
   staleReport($("#staleBox", el), lk.stale_days ?? 2);
+  banReport($("#banBox", el));
+}
+
+// managers: who used chances / is banned on which lead — reset it or hand the lead back
+async function banReport(box) {
+  const { data, error } = await sb.rpc("lock_bans");
+  if (error) { box.innerHTML = `<div class="empty" style="padding:16px">${h(error.message)}</div>`; return; }
+  const by = new Map(); (data || []).forEach((r) => { if (!by.has(r.user_id)) by.set(r.user_id, []); by.get(r.user_id).push(r); });
+  box.innerHTML = `<div class="mu" style="font-size:12.5px;padding:10px 16px;border-bottom:1px solid var(--line)">${L(`Har bande ko har lead pe ${freeChances()} chance milte hain. Chances khatam hone ke baad chhoda to ${coolDays()} din ka ban. Yahan se aap chance / ban hata sakte ho, ya lead seedha wapas de sakte ho.`,
+    `Everyone gets ${freeChances()} chances per lead. Dropping it again after that starts a ${coolDays()}-day ban. Reset a chance / ban here, or hand the lead straight back.`)}</div>
+    ${[...by].map(([u, rows]) => { const nb = rows.filter((r) => r.banned_until).length; return `<div class="stg"><div class="row" style="padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap">
+        <b style="flex:1">${h(userName(u))}</b>${nb ? `<span class="badge bad">🚫 ${nb} ${L("ban", "banned")}</span>` : ""}<span class="badge">${rows.length} ${L("lead", rows.length > 1 ? "leads" : "lead")}</span>
+        <button type="button" class="btn sm" data-pall="${u}">♻️ ${L("Sab reset", "Reset all")}</button><button type="button" class="btn sm ghost" data-stt>${nb ? L("Chhupao", "Hide") + " ▴" : L("Dikhao", "Show") + " ▾"}</button></div><div class="stl" ${nb ? "" : "hidden"}>
+      ${rows.map((r) => `<div class="row" style="padding:8px 16px 8px 32px;border-bottom:1px solid var(--line)">
+        <span style="flex:1;min-width:180px"><a href="${r.entity === "lead" ? "#/leads/" + r.entity_id : "#/rfqs"}">${h(r.company || "#" + r.entity_id)}</a> <span class="badge">${r.entity === "lead" ? "Lead" : "RFQ"}</span>
+          <div class="mu" style="font-size:12px">${h(r.last_why === "expire" ? L("lock khatam hua", "lock expired") : r.last_why === "stale" ? L("stale — manager ne hataya", "stale — removed by manager") : L("khud chhoda", "released"))}${r.last_reason ? ` — “${h(r.last_reason)}”` : ""} · ${h(ago(r.last_at))}${r.holder ? ` · ${L("abhi", "now with")} ${h(userName(r.holder))}${L(" ke paas", "")}` : ` · ${L("abhi pool mein", "now in the pool")}`}</div></span>
+        ${r.banned_until ? `<span class="badge bad">🚫 ${L("Ban", "Banned")} · ${h(dt(r.banned_until))} ${L("tak", "")}</span>` : `<span class="badge ${r.drops >= r.chances ? "warn" : ""}">🎟️ ${Math.min(r.drops, r.chances)}/${r.chances}</span>`}
+        <button type="button" class="btn sm" data-pone="${u}|${r.entity}|${r.entity_id}|0">♻️ ${L("Reset", "Reset")}</button>
+        ${r.holder && r.holder !== u ? "" : r.holder === u ? "" : `<button type="button" class="btn sm primary" data-pone="${u}|${r.entity}|${r.entity_id}|1">↩️ ${L("Lead wapas do", "Give lead back")}</button>`}</div>`).join("")}</div></div>`; }).join("")
+    || `<div class="empty" style="padding:16px">✔ ${L("Kisi ne koi chance use nahi kiya", "Nobody has used a chance")}</div>`}`;
+  $$("[data-stt]", box).forEach((b) => b.onclick = () => { const l = b.closest(".stg").querySelector(".stl"); l.hidden = !l.hidden; b.textContent = l.hidden ? L("Dikhao", "Show") + " ▾" : L("Chhupao", "Hide") + " ▴"; });
+  const run = (btn, args, msg) => busy(btn, async () => { const { data: d, error: e } = await sb.rpc("pardon_lock", args); if (e) throw e;
+    toast(args.p_give ? (d.given ? L("↩️ Lead wapas de diya ✔", "↩️ Lead handed back ✔") : L(`Reset ho gaya, par lead abhi ${userName(d.holder)} ke paas hai`, `Reset done, but the lead is with ${userName(d.holder)} right now`)) : msg); banReport(box); HOOK.softRefresh?.(); });
+  $$("[data-pone]", box).forEach((b) => b.onclick = () => { const [u, en, id, give] = b.dataset.pone.split("|"); run(b, { p_user: u, p_entity: en, p_id: +id, p_give: give === "1" }, L("♻️ Chance / ban hata diya ✔", "♻️ Chance / ban cleared ✔")); });
+  $$("[data-pall]", box).forEach((b) => b.onclick = async () => { const u = b.dataset.pall;
+    if (!(await confirmBox(L(`${userName(u)} ke saare used chances aur ban hata dein?`, `Clear all used chances and bans for ${userName(u)}?`), L("Haan, reset", "Yes, reset")))) return;
+    run(b, { p_user: u, p_entity: null, p_id: null, p_give: false }, L("♻️ Sab reset ✔", "♻️ All reset ✔")); });
 }
 
 async function staleReport(box, days) {
@@ -904,6 +961,7 @@ function lockRules(done) {
       <div><label class="f">${L("Ek bande ke max locks", "Max locks per person")}</label><input class="input" type="number" min="10" max="2000" id="lr3" value="${lk.max_active_per_user ?? 150}"></div>
       <div><label class="f">${L("Chhoda hua lead dobara lene ka gap (din, 0 = off)", "Re-lock cooldown (days, 0 = off)")}</label><input class="input" type="number" min="0" max="60" id="lr4" value="${lk.cooldown_days ?? 7}"></div>
       <div><label class="f">${L("Stale report: kitne din bina kaam", "Stale report: days without work")}</label><input class="input" type="number" min="1" max="30" id="lr5" value="${lk.stale_days ?? 2}"></div>
+      <div><label class="f">${L("Ban se pehle kitne chance (har lead pe)", "Free chances before a ban (per lead)")}</label><input class="input" type="number" min="0" max="10" id="lr6" value="${lk.free_chances ?? 2}"></div>
     </div>
     <div class="sec-t" style="margin-top:16px">⚡ ${L("RFQ speed rule", "RFQ speed rule")}</div>
     <label class="row check"><input type="checkbox" id="rs1" ${sp.enabled !== false ? "checked" : ""}> ${L("Website / email / IndiaMART RFQ pe tay minute mein call / email nahi hua to apne aap agle free bande ko (Mon–Sat, 9:30–7 baje)", "If nobody calls / emails a web / email / IndiaMART RFQ in time, move it to the next free person (Mon–Sat, 9:30–19:00)")}</label>
@@ -914,7 +972,7 @@ function lockRules(done) {
   });
   $("#lrS", m).onclick = (e) => busy(e.target, async () => {
     const n = (id) => Math.max(0, parseInt($(id, m).value, 10) || 0), at = new Date().toISOString();
-    const locks = { ...lk, lead_days: Math.max(1, n("#lr1")), rfq_days: Math.max(1, n("#lr2")), max_active_per_user: Math.max(10, n("#lr3")), cooldown_days: n("#lr4"), stale_days: Math.max(1, n("#lr5")) };
+    const locks = { ...lk, lead_days: Math.max(1, n("#lr1")), rfq_days: Math.max(1, n("#lr2")), max_active_per_user: Math.max(10, n("#lr3")), cooldown_days: n("#lr4"), stale_days: Math.max(1, n("#lr5")), free_chances: n("#lr6") };
     const speed = { ...sp, enabled: $("#rs1", m).checked, minutes: Math.max(5, n("#rs2")), max_hops: Math.max(1, n("#rs3")) };
     if (speed.enabled && !sp.enabled) speed.since = at;      // don't reroute old RFQs when switched on later
     const { error } = await sb.from("settings").upsert([{ key: "locks", value: locks, updated_by: S.me.id, updated_at: at }, { key: "rfq_speed", value: speed, updated_by: S.me.id, updated_at: at }]);

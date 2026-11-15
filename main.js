@@ -9,7 +9,7 @@ import {
   HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail,
 } from "./core.js";
 import {
-  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, openHandover, toggleNotifications, unreadCounts,
+  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
@@ -201,6 +201,7 @@ async function start() {
   timers.push(setInterval(() => !document.hidden && beat(), 60e3));
   timers.push(setInterval(() => !document.hidden && loadTeam().then(updateOnline).catch(() => {}), 120e3));
   timers.push(setInterval(() => !document.hidden && refreshBadges(), 90e3));
+  timers.push(setInterval(() => !document.hidden && reloadMe(), 120e3));      // safety net if the live signal was missed
   subscribeRealtime();
   startOutlookAutoSync();
 }
@@ -274,18 +275,49 @@ function canSee(r) {
 }
 const firstPage = () => PAGEABLE.find(canSee) || "dashboard";
 
+const navHtml = () => NAV.map((n) => {
+          if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
+          if (n[3] && !n[3]()) return "";
+          if (!canSee(n[0])) return "";
+          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}${n[0] === "support" ? '<span class="badge warn" id="tktBadge" hidden></span>' : ""}${n[0] === "renewals" ? '<span class="badge bad" id="renBadge" hidden></span>' : ""}</a>`;
+        }).join("");
+function tidyNav() {
+  $$(".nav .nav-h").forEach((hd) => { hd.hidden = false; const nx = hd.nextElementSibling; if (!nx || nx.classList.contains("nav-h")) hd.hidden = true; });
+  $$(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === S.route));
+}
+// my own access (role / pages / target) was changed by an Admin → pick it up without a reload
+let meAt = 0, meP = null;
+async function reloadMe(force = false) {
+  if (!S.me || (!force && Date.now() - meAt < 30000)) return;
+  if (meP) return meP;
+  meP = (async () => {
+    const { data: me } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages").eq("id", S.me.id).maybeSingle();
+    if (!me) return;
+    if (!me.active) return renderPending();
+    const key = (x) => JSON.stringify([x.role, x.pages, x.categories, x.daily_target, x.full_name]);
+    const changed = key(me) !== key(S.me);
+    Object.assign(S.me, me);
+    if (!changed) return;
+    await loadTeam().catch(() => {});
+    const nav = $(".nav"); if (nav) { nav.innerHTML = navHtml(); tidyNav(); }
+    const rl = $(".side-foot .me small"); if (rl) rl.textContent = ROLE[S.me.role];
+    refreshBadges();
+    const navItem = NAV.find((n) => n[0] === S.route);
+    if (!canSee(S.route) || (navItem?.[3] && !navItem[3]())) route(); else softRefresh(200);
+  })().catch(() => {}).finally(() => { meP = null; meAt = Date.now(); });
+  return meP;
+}
+addEventListener("visibilitychange", () => { if (!document.hidden) reloadMe(); });
+addEventListener("focus", () => reloadMe());
+
 function renderShell() {
+  PAGE_CACHE.clear();
   root.innerHTML = `
   <div class="app">
     <aside class="side" id="side">
       <div class="brand"><div class="logo nlogo-s">${STAR}</div><div><b class="bword">GENESIS NOVA</b><small>by Genesis Infoserve</small></div></div>
       <nav class="nav" aria-label="Main">
-        ${NAV.map((n) => {
-          if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
-          if (n[3] && !n[3]()) return "";
-          if (!canSee(n[0])) return "";
-          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}${n[0] === "support" ? '<span class="badge warn" id="tktBadge" hidden></span>' : ""}${n[0] === "renewals" ? '<span class="badge bad" id="renBadge" hidden></span>' : ""}</a>`;
-        }).join("")}
+        ${navHtml()}
       </nav>
       <div class="side-foot">
         <div class="me"><div class="avatar">${h(initials(S.me.full_name))}</div><div style="min-width:0;flex:1"><b>${h(S.me.full_name)}</b><small>${h(ROLE[S.me.role])}</small></div>
@@ -309,8 +341,7 @@ function renderShell() {
       <main class="page" id="page" tabindex="-1"></main>
     </div>
   </div>`;
-  // hide menu headings left with no pages under them (page access)
-  $$(".nav .nav-h").forEach((hd) => { const nx = hd.nextElementSibling; if (!nx || nx.classList.contains("nav-h")) hd.hidden = true; });
+  tidyNav();      // hide menu headings left with no pages under them (page access)
   refreshBadges();
 }
 
@@ -352,6 +383,7 @@ async function loadAnnouncement() {
 //  Router
 // ---------------------------------------------------------------------
 const VIEWS = {};
+const PAGE_CACHE = new Map();      // route → last rendered HTML (shown instantly on the next visit while fresh data loads)
 function route() {
   if (!S.me) return;
   const [r, ...rest] = (location.hash.replace(/^#\/?/, "") || "dashboard").split("/");
@@ -367,17 +399,21 @@ function route() {
   // every page gets a fresh container: a slow page that finishes late writes into its own
   // (now detached) box and can never overwrite the page the user has moved on to
   const old = $("#page"), page = old.cloneNode(false);
-  page.innerHTML = `<div class="empty">Loading…</div>`;
+  if (old.dataset.r && !old.querySelector(":scope > .empty:only-child") && old.innerHTML.length < 600000) PAGE_CACHE.set(old.dataset.r, old.innerHTML);
+  const cached = !S.params.id && PAGE_CACHE.get(S.route);
+  page.dataset.r = S.route; page.classList.toggle("stale", !!cached);
+  page.innerHTML = cached || `<div class="empty">Loading…</div>`;
   old.replaceWith(page);
   closeDrawer();
   refreshBadges(false);
   Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
+    page.classList.remove("stale");
     if (!page.isConnected) return;
-    enterAnim(page);
+    if (!cached) enterAnim(page);
     if (S.params.id && S.route === "leads") openLead(+S.params.id);
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
     if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
-  }).catch(fail);
+  }).catch((e) => { page.classList.remove("stale"); if (cached && page.isConnected) page.innerHTML = `<div class="empty">—</div>`; fail(e); });
 }
 addEventListener("hashchange", route);
 // cards fade up in sequence and whole-number KPIs count up — only when a page is opened
@@ -467,6 +503,7 @@ function subscribeRealtime() {
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${S.me.id}` }, (p) => {
       toast(p.new.title + (p.new.body ? " — " + p.new.body : ""));
       refreshBadges();
+      if (p.new.kind === "access") reloadMe(true);
       if (S.route === "requests" && p.new.kind === "lock_request") softRefresh();
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "email_messages", filter: `user_id=eq.${S.me.id}` }, () => {
@@ -768,11 +805,12 @@ function closeDrawer() { $$(".drawer, .scrim:not(.m)").forEach((n) => n.remove()
 let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawers stacking on double-click / double route)
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
-  const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }] = await Promise.all([
+  const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = await Promise.all([
     sb.from("leads").select("*").eq("id", id).single(),
     sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
     sb.from("tasks").select("*").eq("lead_id", id).eq("done", false).order("due_at"),
     sb.from("lock_history").select("*").eq("entity", "lead").eq("entity_id", id).order("at", { ascending: false }).limit(30),
+    sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20),
   ]);
   const lastDrop = (lhist || []).find((x) => !x.to_user && x.reason);
   if (error?.code === "PGRST116") return toast(L("Ye lead nahi mila — shayad delete ho gaya hai ya aapke access mein nahi hai", "Lead not found — it may have been deleted or is outside your access"), true);
@@ -781,8 +819,6 @@ async function openLead(id, opt = {}) {
   const SC = isEn() ? SCRIPTS_EN : SCRIPTS, sc = SC[l.category] || SC["IT Hardware"];
   const name = S.me.full_name.split(" ")[0];
   const lk = lockOf(l), canEdit = canWork(l), see = canEdit;     // only the holder (or a manager) sees full contact
-  const { data: mails } = await sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20);
-  if (seq !== leadSeq) return;
   // same lead already open (after a call / status change)? swap the content in place — no flicker, keep scroll
   const prevD = document.querySelector(".drawer"), same = prevD && +prevD.dataset.id === l.id;
   const keepTop = same ? prevD.querySelector(".drawer-b")?.scrollTop || 0 : 0;
@@ -890,11 +926,11 @@ async function openLead(id, opt = {}) {
       return reopen();
     }
     if (a === "release" || a === "force") {
-      const why = await askRelease({ force: a === "force", holder: lk.holder });
+      const why = await askRelease({ force: a === "force", holder: lk.holder, used: dropsUsed(lhist) });
       if (why === false) return;
       const { data, error: e1 } = await sb.rpc("release", { p_entity: "lead", p_id: id, p_reason: why });
       if (e1) throw e1;
-      toast(data?.ok ? "🔓 Lead release ho gaya — ab pool mein hai" : "Release nahi hua", !data?.ok); after();
+      toast(a === "force" ? (data?.ok ? L("🔓 Lock hata diya — lead pool mein hai", "🔓 Lock removed — lead is in the pool") : L("Release nahi hua", "Couldn't release")) : releasedMsg(data), !data?.ok || !!data?.banned_until); after();
       return opt.queue ? nextInQueue(id) : reopen();
     }
     if (a === "request") return requestAccess("lead", l);
@@ -1337,8 +1373,8 @@ function rfqForm(r) {
   }));
   $("#rfRel", m)?.addEventListener("click", (e) => busy(e.target, async () => {
     const why = await askRelease({ force: !lk.mine, holder: lk.holder }); if (why === false) return;
-    const { error } = await sb.rpc("release", { p_entity: "rfq", p_id: r.id, p_reason: why }); if (error) throw error;
-    toast("🔓 Released"); reload(); if (S.route === "rfqs") softRefresh();
+    const { data: rd, error } = await sb.rpc("release", { p_entity: "rfq", p_id: r.id, p_reason: why }); if (error) throw error;
+    toast(lk.mine ? releasedMsg(rd) : "🔓 Released", !!rd?.banned_until); reload(); if (S.route === "rfqs") softRefresh();
   }));
   $("#rfReq", m)?.addEventListener("click", () => requestAccess("rfq", r));
   $("#rfCall", m)?.addEventListener("click", () => { sb.rpc("touch_rfq", { p_id: r.id }).then(() => {}); });   // counts as "worked" for the 15-min rule

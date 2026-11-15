@@ -287,8 +287,8 @@ export async function claim(entity, id) {
 export function claimFailMsg(r) {
   if (r.reason === "limit") return L(`Aapke paas already ${r.limit} active locks hain — pehle kuch release karo`, `You already hold ${r.limit} active locks — release some first`);
   if (r.reason === "locked") return L(`🔒 ${r.holder_name || "Koi aur"} is pe kaam kar raha hai (till ${dt(r.until)})`, `🔒 ${r.holder_name || "Someone"} is working on this (until ${dt(r.until)})`);
-  if (r.reason === "cooldown") return L(`⏳ Ye aapne chhoda tha / aapka lock khatam hua tha — ${r.days || 7}-din rule: ${dt(r.until)} ke baad hi dobara le sakte ho`,
-    `⏳ You dropped this / your lock ran out — ${r.days || 7}-day rule: you can take it again after ${dt(r.until)}`);
+  if (r.reason === "cooldown") return L(`🚫 Is lead pe aapke chances khatam ho gaye — ${dt(r.until)} ke baad hi dobara le sakte ho. Zaroori hai to Admin se bolo, wo reset kar sakta hai.`,
+    `🚫 You've used up your chances on this lead — you can take it again after ${dt(r.until)}. If you need it, ask your Admin to reset it.`);
   if (r.reason === "company") return L(`🏢 Is company ka lead "${r.company}" ${r.holder_name || "kisi aur"} ke paas hai — ek customer, ek hi banda. Unse access maango.`,
     `🏢 "${r.company}" (same company) is with ${r.holder_name || "someone else"} — one customer, one person. Ask them for access.`);
   return L("Lock nahi mil paya", "Couldn't lock it");
