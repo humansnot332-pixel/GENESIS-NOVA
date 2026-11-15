@@ -553,3 +553,19 @@ fieldset[disabled] .input { opacity: .7; }
 
 /* lead drawer re-drawn in place (after a call / status change): no animation */
 .drawer.still, .scrim.still { animation: none; }
+
+/* ---- locks: header chip, usage bar, last-drop note, stale groups ---- */
+.lockchip { display: inline-flex; align-items: center; gap: 3px; height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); color: var(--tx); font-size: 12.5px; text-decoration: none; white-space: nowrap; }
+.lockchip b { font-weight: 700; }
+.lockchip span { color: var(--mu); }
+.lockchip em { font-style: normal; margin-left: 4px; color: var(--warn); font-weight: 600; }
+.lockchip.hot { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--surface-2)); }
+.lockchip:hover { background: var(--hover); }
+.lockchip[hidden] { display: none; }
+@media (max-width: 640px) { .lockchip span { display: none; } }
+.lkbar { height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin: 10px 0 8px; }
+.lkbar i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s; }
+.lkbar.hot i { background: var(--warn); }
+.lockbar small.lastdrop { display: block; margin-top: 3px; color: var(--warn); }
+details.stg > summary { list-style: none; cursor: pointer; flex-wrap: nowrap; }
+details.stg > summary::-webkit-details-marker { display: none; }

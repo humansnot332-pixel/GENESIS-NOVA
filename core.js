@@ -285,9 +285,42 @@ export async function claim(entity, id) {
   return data || { ok: false };
 }
 export function claimFailMsg(r) {
-  if (r.reason === "limit") return `Aapke paas already ${r.limit} active locks hain — pehle kuch release karo`;
-  if (r.reason === "locked") return `🔒 ${r.holder_name || "Koi aur"} is pe kaam kar raha hai (till ${dt(r.until)})`;
-  return "Lock nahi mil paya";
+  if (r.reason === "limit") return L(`Aapke paas already ${r.limit} active locks hain — pehle kuch release karo`, `You already hold ${r.limit} active locks — release some first`);
+  if (r.reason === "locked") return L(`🔒 ${r.holder_name || "Koi aur"} is pe kaam kar raha hai (till ${dt(r.until)})`, `🔒 ${r.holder_name || "Someone"} is working on this (until ${dt(r.until)})`);
+  if (r.reason === "cooldown") return L(`⏳ Ye aapne chhoda tha / aapka lock khatam hua tha — ${r.days || 7}-din rule: ${dt(r.until)} ke baad hi dobara le sakte ho`,
+    `⏳ You dropped this / your lock ran out — ${r.days || 7}-day rule: you can take it again after ${dt(r.until)}`);
+  if (r.reason === "company") return L(`🏢 Is company ka lead "${r.company}" ${r.holder_name || "kisi aur"} ke paas hai — ek customer, ek hi banda. Unse access maango.`,
+    `🏢 "${r.company}" (same company) is with ${r.holder_name || "someone else"} — one customer, one person. Ask them for access.`);
+  return L("Lock nahi mil paya", "Couldn't lock it");
+}
+// success line after a claim: linked same-company leads + near-limit warning
+export function claimOkMsg(r, what = "Lead") {
+  let m = L(`🔒 ${what} aapke naam lock ho gaya`, `🔒 ${what} locked to you`);
+  if (r.linked) m += L(` · +${r.linked} same company lead bhi aapke`, ` · +${r.linked} same-company lead(s) too`);
+  if (r.limit && r.count >= r.limit * 0.9) m += L(` · ⚠️ ${r.count}/${r.limit} locks — purane khatam / release karo`, ` · ⚠️ ${r.count}/${r.limit} locks — finish or release old ones`);
+  return m;
+}
+const LH_TXT = {
+  created: ["ne lead banaya", "created it"], claim: ["ne lock liya", "locked it"], assign: ["→ assign kiya", "→ assigned"], company: ["ko mila (same company)", "got it (same company)"],
+  release: ["ne chhoda", "released it"], manager: ["ne lock hataya", "force-released it"], expire: ["Lock khatam — kaam nahi hua", "Lock ran out — no work done"],
+  stale: ["ne stale lock hataya", "removed a stale lock"], handover: ["Handover", "Handover"], request: ["Request approve → ", "Request approved → "],
+  speed: ["⚡ 15-min rule → ", "⚡ 15-min rule → "], undo: ["Undo", "Undo"], system: ["System → ", "System → "],
+};
+// lock history list (lead drawer / RFQ form)
+export function lockHistoryHtml(rows) {
+  if (!rows?.length) return `<div class="mu" style="padding:8px 0">${L("Abhi koi history nahi", "No history yet")}</div>`;
+  const nm = (id) => (id ? userName(id) : L("Free pool", "Free pool"));
+  return `<ul class="timeline">${rows.map((x) => {
+    const t = LH_TXT[x.why] || [x.why, x.why], w = isEn() ? t[1] : t[0];
+    let line;
+    if (x.why === "expire") line = `${w} · ${h(nm(x.from_user))} → ${L("pool", "pool")}`;
+    else if (["release", "manager", "stale"].includes(x.why)) line = `<b>${h(nm(x.by_user || x.from_user))}</b> ${w}${x.why !== "release" ? ` (${h(nm(x.from_user))})` : ""}`;
+    else if (x.why === "assign") line = `<b>${h(nm(x.by_user))}</b> ${w} <b>${h(nm(x.to_user))}</b>`;
+    else if (["handover", "undo"].includes(x.why)) line = `${w}: ${h(nm(x.from_user))} → <b>${h(nm(x.to_user))}</b>`;
+    else if (["request", "speed", "system"].includes(x.why)) line = `${w}<b>${h(nm(x.to_user))}</b>${x.from_user ? ` (${L("pehle", "was")} ${h(nm(x.from_user))})` : ""}`;
+    else line = `<b>${h(nm(x.to_user))}</b> ${w}`;
+    return `<li><span class="ic">${x.to_user ? "🔒" : "🔓"}</span><div><div>${line}${x.reason ? ` — “${h(x.reason)}”` : ""}</div><div class="t">${h(dt(x.at))}</div></div></li>`;
+  }).join("")}</ul>`;
 }
 export const maskPhone = (p) => { const s = String(p || ""); const d = s.replace(/\D/g, ""); return d.length < 6 ? "•••" : s.slice(0, 7) + " ••• " + d.slice(-3); };
 export const maskEmail = (e) => { const [a, b] = String(e || "").split("@"); return b ? a.slice(0, 1) + "•••@" + b : "•••"; };

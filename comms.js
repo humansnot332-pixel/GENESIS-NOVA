@@ -5,7 +5,7 @@
 // =====================================================================
 import {
   sb, S, h, ic, dt, ago, toast, fail, modal, closeModal, confirmBox, busy, isMgr, isAdmin, userName, ROLE,
-  STATUS, OPEN_STATUSES, HOOK, lockOf, canWork, claim, claimFailMsg, tplContext, TPL_VARS, fillTemplate,
+  STATUS, OPEN_STATUSES, HOOK, lockOf, canWork, claim, claimFailMsg, claimOkMsg, tplContext, TPL_VARS, fillTemplate,
   mdToPlain, mdToHtml, mdToWhatsApp, composeUrl, URL_LIMIT, waUrl, openTab, copyRich, loadScript, isMobile, callFn,
 } from "./core.js";
 import { L, isEn, getLang } from "./i18n.js";
@@ -33,7 +33,7 @@ export async function ensureWork(entity, row) {
   const r = await claim(entity, row.id);
   if (!r.ok) { toast(claimFailMsg(r), true); return false; }
   row.owner_id = S.me.id; row.lock_until = r.until;
-  toast("🔒 Lock aapke naam — ab sirf aap is pe kaam karoge");
+  toast(claimOkMsg(r, entity === "rfq" ? "RFQ" : "Lead"));
   HOOK.softRefresh();
   return true;
 }
@@ -738,24 +738,190 @@ export async function decide(reqId, approve) {
   toast(data?.ok ? (approve ? "✅ Lock transfer ho gaya" : "Request decline ki") : "Request ab pending nahi hai", !data?.ok);
   HOOK.softRefresh(); HOOK.refreshBadges();
 }
+// ---------------------------------------------------------------------
+//  Release with a reason (shown to the next person in lock history)
+// ---------------------------------------------------------------------
+const REL_REASONS = [["Number band / galat", "Number off / wrong"], ["Interested nahi", "Not interested"], ["Baad mein call karo", "Call back later"],
+  ["Kahin aur se le liya", "Bought elsewhere"], ["Mera area / product nahi", "Not my area / product"]];
+const coolDays = () => S.settings?.locks?.cooldown_days ?? 7;
+export function askRelease({ force = false, holder = "" } = {}) {
+  return new Promise((res) => {
+    let done = false; const fin = (v) => { if (!done) { done = true; res(v); } };
+    const m = modal({
+      title: force ? L(`${holder} ka lock hatao`, `Remove ${holder}'s lock`) : L("🔓 Release — kyun chhod rahe ho?", "🔓 Release — why are you dropping it?"),
+      body: `<p class="mu" style="margin-top:0">${force ? L("Unhe notification jayega. Wajah likho (optional):", "They'll be notified. Reason (optional):")
+        : L(`Agle bande ko dikhega kyun chhoda. Ek wajah chuno ya likho.${coolDays() > 0 ? ` <b>Chhodne ke baad ${coolDays()} din tak aap ise dobara lock nahi kar paoge.</b>` : ""}`,
+            `The next person will see why. Pick or type a reason.${coolDays() > 0 ? ` <b>You can't re-lock it for ${coolDays()} days after this.</b>` : ""}`)}</p>
+        <div class="row" style="gap:6px;margin:8px 0 10px">${REL_REASONS.map((r) => `<button type="button" class="chip" data-rr="${h(r[0])}">${h(isEn() ? r[1] : r[0])}</button>`).join("")}</div>
+        <input class="input" id="rrT" maxlength="300" placeholder="${h(L("Ya apni wajah likho…", "Or type your own reason…"))}">`,
+      foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="rrGo">🔓 Release</button>`,
+    });
+    const inp = $("#rrT", m);
+    $$("[data-rr]", m).forEach((c) => c.onclick = () => { $$("[data-rr]", m).forEach((x) => x.classList.toggle("on", x === c)); inp.value = c.dataset.rr; });
+    $("#rrGo", m).onclick = () => {
+      const v = inp.value.trim();
+      if (!force && !v) { inp.focus(); return toast(L("Ek wajah chuno — agle bande ke kaam aayegi", "Pick a reason — it helps the next person"), true); }
+      closeModal(); fin(v || null);
+    };
+    $$("[data-close]", m).forEach((b) => b.addEventListener("click", () => fin(false)));
+    document.querySelector(".scrim.m")?.addEventListener("click", () => fin(false));
+  });
+}
+
+// ---------------------------------------------------------------------
+//  Handover: all of one person's leads / RFQs / tasks → someone else (or pool)
+// ---------------------------------------------------------------------
+export async function openHandover(fromId, onDone) {
+  const people = S.team.filter((u) => u.role !== "admin" || u.id === fromId);
+  const m = modal({
+    title: L("🔁 Kaam handover karo", "🔁 Hand over work"),
+    body: `<p class="mu" style="margin-top:0">${L("Koi chhuti pe hai ya company chhod raha hai? Uske saare open leads, RFQs, tasks (aur tickets / renewals) ek click mein kisi aur ko do — ya pool mein daalo.",
+      "Someone on leave or leaving? Move all their open leads, RFQs, tasks (and tickets / renewals) to someone else in one click — or back to the pool.")}</p>
+      <div class="grid2"><div><label class="f">${L("Kiska kaam", "From")}</label><select class="input" id="hoF">${people.map((u) => `<option value="${u.id}" ${u.id === fromId ? "selected" : ""}>${h(u.full_name)}${u.active ? "" : " (disabled)"}</option>`).join("")}</select></div>
+      <div><label class="f">${L("Kisko dena hai", "To")}</label><select class="input" id="hoT"><option value="">🔓 ${L("Free pool (sab ke liye)", "Free pool (anyone)")}</option>${S.team.filter((u) => u.active).map((u) => `<option value="${u.id}">${h(u.full_name)}</option>`).join("")}</select></div></div>
+      <label class="row check" style="margin-top:10px"><input type="checkbox" id="hoW" checked> ${L("Won customers bhi do (sirf jab kisi bande ko de rahe ho)", "Include won customers (only when giving to a person)")}</label>
+      <div class="card" id="hoP" style="padding:10px 14px;margin-top:12px">…</div>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="hoGo">🔁 Handover</button>`,
+  });
+  const F = $("#hoF", m), T = $("#hoT", m), W = $("#hoW", m), P = $("#hoP", m);
+  const preview = async () => {
+    const f = F.value, won = W.checked && T.value;
+    const cnt = (q) => q.then((r) => r.count ?? 0);
+    const [l, lw, r, t] = await Promise.all([
+      cnt(sb.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", f).in("status", OPEN_STATUSES)),
+      won ? cnt(sb.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", f).eq("status", "won")) : 0,
+      cnt(sb.from("rfqs").select("id", { count: "exact", head: true }).eq("owner_id", f).in("status", won ? ["new", "in_progress", "quoted", "negotiating", "won"] : ["new", "in_progress", "quoted", "negotiating"])),
+      cnt(sb.from("tasks").select("id", { count: "exact", head: true }).eq("assignee_id", f).eq("done", false))]);
+    P.innerHTML = `<b>${L("Jayega", "Will move")}:</b> ${l} ${L("open leads", "open leads")}${won ? ` + ${lw} won` : ""} · ${r} RFQs · ${t} tasks${T.value ? ` · ${L("open tickets + active renewals bhi", "plus open tickets + active renewals")}` : ""}
+      ${F.value === T.value ? `<div style="color:var(--bad)">${L("Same banda chuna hai", "Same person picked twice")}</div>` : ""}`;
+  };
+  [F, T, W].forEach((x) => x.onchange = preview); preview();
+  $("#hoGo", m).onclick = (e) => busy(e.target, async () => {
+    if (F.value === T.value) return toast(L("Alag-alag log chuno", "Pick two different people"), true);
+    const { data, error } = await sb.rpc("handover_locks", { p_from: F.value, p_to: T.value || null, p_won: W.checked });
+    if (error) throw error;
+    closeModal();
+    toast(`🔁 ${L("Handover ho gaya", "Handed over")}: ${data.leads} leads · ${data.rfqs} RFQs · ${data.tasks} tasks${data.tickets + data.renewals ? ` · ${data.tickets} tickets · ${data.renewals} renewals` : ""} — ${L("galti hui to Undo (🕘) se wapas", "use Undo (🕘) if it was a mistake")}`);
+    onDone?.();
+  });
+}
+
+// ---------------------------------------------------------------------
+//  Locks & requests page
+// ---------------------------------------------------------------------
+const goLead = (id) => { location.hash = "#/leads/" + id; };
 export async function viewRequests(el) {
-  const { data, error } = await sb.from("lock_requests").select("*").order("created_at", { ascending: false }).limit(200);
+  const now = Date.now(), soon = new Date(now + 864e5).toISOString();
+  const lk = S.settings?.locks || {}, max = lk.max_active_per_user ?? 150;
+  const [{ data, error }, { data: mine }, { data: dropped }] = await Promise.all([
+    sb.from("lock_requests").select("*").order("created_at", { ascending: false }).limit(200),
+    sb.from("leads").select("id, company, city, lock_until, next_follow_up, status, last_contacted").eq("owner_id", S.me.id).gt("lock_until", new Date(now).toISOString()).in("status", OPEN_STATUSES).order("lock_until").limit(1000),
+    sb.from("lock_history").select("entity, entity_id, why, reason, at").eq("from_user", S.me.id).in("why", ["release", "expire", "stale"]).gt("at", new Date(now - coolDays() * 864e5).toISOString()).order("at", { ascending: false }).limit(30),
+  ]);
   if (error) throw error;
-  const leadIds = data.filter((r) => r.entity === "lead").map((r) => r.entity_id), rfqIds = data.filter((r) => r.entity === "rfq").map((r) => r.entity_id);
+  const leadIds = data.filter((r) => r.entity === "lead").map((r) => r.entity_id).concat((dropped || []).filter((d) => d.entity === "lead").map((d) => d.entity_id));
+  const rfqIds = data.filter((r) => r.entity === "rfq").map((r) => r.entity_id);
   const [{ data: ls }, { data: rs }] = await Promise.all([
-    leadIds.length ? sb.from("leads").select("id, company").in("id", leadIds) : { data: [] },
+    leadIds.length ? sb.from("leads").select("id, company").in("id", [...new Set(leadIds)]) : { data: [] },
     rfqIds.length ? sb.from("rfqs").select("id, company, rfq_no").in("id", rfqIds) : { data: [] }]);
-  const nm = (r) => r.entity === "lead" ? (ls || []).find((x) => x.id === r.entity_id)?.company : ((x) => x && `${x.rfq_no} · ${x.company}`)((rs || []).find((x) => x.id === r.entity_id));
+  const lname = (id) => (ls || []).find((x) => x.id === id)?.company;
+  const nm = (r) => r.entity === "lead" ? lname(r.entity_id) : ((x) => x && `${x.rfq_no} · ${x.company}`)((rs || []).find((x) => x.id === r.entity_id));
   const sec = (title, list, mineAsHolder) => `<div class="sec-t" style="margin-top:18px">${title} (${list.length})</div><div class="card">${list.map((r) => `
     <div class="row" style="padding:11px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap">
       <div style="flex:1;min-width:0"><b>${h(nm(r) || r.entity + " #" + r.entity_id)}</b> <span class="badge">${r.entity === "lead" ? "Lead" : "RFQ"}</span>
         <div class="mu" style="font-size:12.5px">${mineAsHolder ? h(userName(r.requester)) + " maang raha/rahi hai" : "Holder: " + h(userName(r.holder))}${r.note ? ` — “${h(r.note)}”` : ""} · ${h(ago(r.created_at))}</div></div>
       ${r.status === "pending" && (mineAsHolder || isMgr()) && r.requester !== S.me.id ? `<button class="btn sm primary" data-ok="1" data-rq="${r.id}">✅ De do</button><button class="btn sm" data-ok="0" data-rq="${r.id}">Mana</button>` : `<span class="badge ${r.status === "approved" ? "good" : r.status === "pending" ? "warn" : ""}">${h(r.status)}</span>`}
     </div>`).join("") || '<div class="empty" style="padding:16px">—</div>'}</div>`;
-  el.innerHTML = sec("🙋 Mujhse maange gaye", data.filter((r) => r.holder === S.me.id && r.status === "pending"), true)
+
+  // ---- my locks ----
+  const my = mine || [], exp = my.filter((l) => l.lock_until < soon), pct = Math.min(100, Math.round((my.length / max) * 100));
+  const myCard = `<div class="card" style="padding:16px">
+    <div class="row"><div style="flex:1;min-width:200px"><div class="mu" style="font-size:12.5px">${L("Mere active locks", "My active locks")}</div>
+      <div style="font-size:26px;font-weight:700">${my.length} <span class="mu" style="font-size:15px;font-weight:500">/ ${max}</span></div></div>
+      ${exp.length ? `<span class="badge warn" style="font-size:13px">⏳ ${exp.length} ${L("kal tak khatam", "expire within 24h")}</span>` : `<span class="badge good">✔ ${L("Koi lock khatam nahi ho raha", "Nothing expiring")}</span>`}</div>
+    <div class="lkbar ${pct >= 90 ? "hot" : ""}"><i style="width:${pct}%"></i></div>
+    <div class="mu" style="font-size:12.5px">${pct >= 90 ? L("⚠️ Limit ke paas — naye leads lene se pehle purane khatam karo ya release karo.", "⚠️ Near the limit — finish or release old leads before taking new ones.")
+      : L(`Lead pe call / email / note karte hi lock ${lk.lead_days ?? 3} din badh jata hai. Kaam nahi kiya to lead pool mein chala jata hai.`, `Any call / email / note on a lead extends its lock by ${lk.lead_days ?? 3} days. No work → it goes back to the pool.`)}</div>
+  </div>
+  ${exp.length ? `<div class="sec-t" style="margin-top:18px">⏳ ${L("24 ghante mein khatam — aaj call karo", "Expiring in 24h — call today")} (${exp.length})</div><div class="card">${exp.slice(0, 60).map((l) => `
+    <div class="row" style="padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap;cursor:pointer" data-go-lead="${l.id}">
+      <div style="flex:1;min-width:0"><b>${h(l.company)}</b><div class="mu" style="font-size:12.5px">${h(l.city || "")} · ${L("lock khatam", "lock ends")} ${h(dt(l.lock_until))} · ${L("last call", "last call")} ${h(ago(l.last_contacted))}</div></div>
+      <button class="btn sm primary">📞 ${L("Kholo", "Open")}</button></div>`).join("")}</div>` : ""}
+  ${(dropped || []).length ? `<details class="card sec" style="margin-top:18px"><summary>🚫 ${L(`Ye ${coolDays()} din tak aap dobara lock nahi kar sakte`, `You can't re-lock these for ${coolDays()} days`)} (${dropped.length})</summary><div class="card-b" style="padding:4px 16px">${dropped.map((d) => `
+    <div class="row" style="padding:7px 0;border-bottom:1px solid var(--line)"><span style="flex:1">${h(d.entity === "lead" ? lname(d.entity_id) || "#" + d.entity_id : "RFQ #" + d.entity_id)}</span>
+      <span class="mu" style="font-size:12px">${h(d.why === "expire" ? L("lock khatam", "expired") : d.why === "stale" ? L("manager ne hataya", "removed by manager") : L("aapne chhoda", "you released"))}${d.reason ? ` — “${h(d.reason)}”` : ""} · ${L("phir se", "again from")} ${h(dt(new Date(new Date(d.at).getTime() + coolDays() * 864e5)))}</span></div>`).join("")}</div></details>` : ""}`;
+
+  el.innerHTML = myCard
+    + sec("🙋 Mujhse maange gaye", data.filter((r) => r.holder === S.me.id && r.status === "pending"), true)
     + sec("📤 Maine maange", data.filter((r) => r.requester === S.me.id), false)
-    + (isMgr() ? sec("👥 Team ke pending requests", data.filter((r) => r.status === "pending" && r.holder !== S.me.id && r.requester !== S.me.id), true) : "");
+    + (isMgr() ? sec("👥 Team ke pending requests", data.filter((r) => r.status === "pending" && r.holder !== S.me.id && r.requester !== S.me.id), true)
+      + `<div class="sec-t" style="margin-top:24px">🧹 ${L("Stale locks — lock liya par kaam nahi", "Stale locks — locked but no work")}</div><div id="staleBox" class="card"><div class="empty" style="padding:16px">…</div></div>
+         <div class="row" style="margin-top:18px;gap:8px"><button class="btn" id="hoBtn">🔁 ${L("Handover (chhuti / resign)", "Handover (leave / exit)")}</button>${isAdmin() ? `<button class="btn" id="lkSet">⚙️ ${L("Lock rules", "Lock rules")}</button>` : ""}</div>` : "");
   $$("[data-rq]", el).forEach((b) => b.onclick = () => decide(+b.dataset.rq, b.dataset.ok === "1").then(() => viewRequests(el)));
+  $$("[data-go-lead]", el).forEach((b) => b.onclick = () => goLead(b.dataset.goLead));
+  if (!isMgr()) return;
+  $("#hoBtn", el).onclick = () => openHandover(null, () => viewRequests(el));
+  $("#lkSet", el)?.addEventListener("click", () => lockRules(() => viewRequests(el)));
+  staleReport($("#staleBox", el), lk.stale_days ?? 2);
+}
+
+async function staleReport(box, days) {
+  const { data, error } = await sb.rpc("stale_locks", { p_days: days });
+  if (error) { box.innerHTML = `<div class="empty" style="padding:16px">${h(error.message)}</div>`; return; }
+  const by = new Map(); (data || []).forEach((r) => { if (!by.has(r.owner_id)) by.set(r.owner_id, []); by.get(r.owner_id).push(r); });
+  box.innerHTML = `<div class="row" style="padding:10px 16px;border-bottom:1px solid var(--line)"><span class="mu" style="font-size:12.5px;flex:1">${L("Jinpe itne din se koi call / email / note nahi hua (aage ka follow-up set ho to nahi dikhte):", "No call / email / note for this many days (leads with a future follow-up are skipped):")}</span>
+      <select class="input" id="stD" style="width:auto;height:30px">${[1, 2, 3, 5, 7].map((d) => `<option value="${d}" ${d === days ? "selected" : ""}>${d} ${L("din", d > 1 ? "days" : "day")}</option>`).join("")}</select>
+      <button class="btn sm danger" id="stGo" disabled>🧹 ${L("Selected release", "Release selected")} (<span id="stN">0</span>)</button></div>
+    ${[...by].map(([u, rows]) => `<div class="stg"><div class="row" style="padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap"><input type="checkbox" data-stall="${u}" aria-label="${h(L("Sab chuno", "Select all"))}">
+        <b style="flex:1">${h(userName(u))}</b><span class="badge warn">${rows.length}</span><button type="button" class="btn sm ghost" data-stt>${L("Dikhao", "Show")} ▾</button></div><div class="stl" hidden>
+      ${rows.map((r) => `<label class="row check" style="padding:7px 16px 7px 40px;border-bottom:1px solid var(--line);flex-wrap:nowrap"><input type="checkbox" data-st="${r.entity}:${r.id}" data-u="${u}">
+        <span style="flex:1;min-width:0"><a href="${r.entity === "lead" ? "#/leads/" + r.id : "#/rfqs"}">${h(r.company)}</a> <span class="badge">${r.entity === "lead" ? "Lead" : "RFQ"}</span></span>
+        <span class="mu" style="font-size:12px;white-space:nowrap">${L("last kaam", "last work")} ${h(ago(r.last_touch))}</span></label>`).join("")}</div></div>`).join("")
+    || `<div class="empty" style="padding:16px">✔ ${L("Sab log apne locks pe kaam kar rahe hain", "Everyone is working their locks")}</div>`}`;
+  const sel = () => $$("[data-st]:checked", box);
+  const upd = () => { const n = sel().length; $("#stN", box).textContent = n; $("#stGo", box).disabled = !n; };
+  $$("[data-st]", box).forEach((c) => c.onchange = upd);
+  $$("[data-stall]", box).forEach((c) => c.onchange = () => { $$(`[data-u="${c.dataset.stall}"]`, box).forEach((x) => x.checked = c.checked); upd(); });
+  $("#stD", box).onchange = (e) => staleReport(box, +e.target.value);
+  $$("[data-stt]", box).forEach((b) => b.onclick = () => { const l = b.closest(".stg").querySelector(".stl"); l.hidden = !l.hidden; b.textContent = l.hidden ? L("Dikhao", "Show") + " ▾" : L("Chhupao", "Hide") + " ▴"; });
+  $("#stGo", box).onclick = (e) => busy(e.target, async () => {
+    const ids = { lead: [], rfq: [] }; sel().forEach((c) => { const [k, id] = c.dataset.st.split(":"); ids[k].push(+id); });
+    if (!(await confirmBox(L(`${ids.lead.length + ids.rfq.length} locks hata ke pool mein daalne hain? Holders ko notification jayega aur wo ${coolDays()} din tak inhe dobara nahi le paayenge.`,
+      `Release ${ids.lead.length + ids.rfq.length} locks to the pool? Holders get notified and can't re-lock them for ${coolDays()} days.`), L("Release", "Release")))) return;
+    let n = 0;
+    for (const k of ["lead", "rfq"]) if (ids[k].length) { const { data: c, error: er } = await sb.rpc("release_bulk", { p_entity: k, p_ids: ids[k], p_reason: L("Kaam nahi hua (stale)", "No work done (stale)") }); if (er) throw er; n += c || 0; }
+    toast(`🧹 ${n} ${L("locks pool mein", "locks released to pool")}`); staleReport(box, +$("#stD", box).value);
+  });
+}
+
+function lockRules(done) {
+  const lk = S.settings?.locks || {}, sp = S.settings?.rfq_speed || {};
+  const m = modal({
+    title: L("⚙️ Lock rules", "⚙️ Lock rules"),
+    body: `<div class="grid2">
+      <div><label class="f">${L("Lead lock (din)", "Lead lock (days)")}</label><input class="input" type="number" min="1" max="30" id="lr1" value="${lk.lead_days ?? 3}"></div>
+      <div><label class="f">${L("RFQ lock (din)", "RFQ lock (days)")}</label><input class="input" type="number" min="1" max="30" id="lr2" value="${lk.rfq_days ?? 2}"></div>
+      <div><label class="f">${L("Ek bande ke max locks", "Max locks per person")}</label><input class="input" type="number" min="10" max="2000" id="lr3" value="${lk.max_active_per_user ?? 150}"></div>
+      <div><label class="f">${L("Chhoda hua lead dobara lene ka gap (din, 0 = off)", "Re-lock cooldown (days, 0 = off)")}</label><input class="input" type="number" min="0" max="60" id="lr4" value="${lk.cooldown_days ?? 7}"></div>
+      <div><label class="f">${L("Stale report: kitne din bina kaam", "Stale report: days without work")}</label><input class="input" type="number" min="1" max="30" id="lr5" value="${lk.stale_days ?? 2}"></div>
+    </div>
+    <div class="sec-t" style="margin-top:16px">⚡ ${L("RFQ speed rule", "RFQ speed rule")}</div>
+    <label class="row check"><input type="checkbox" id="rs1" ${sp.enabled !== false ? "checked" : ""}> ${L("Website / email / IndiaMART RFQ pe tay minute mein call / email nahi hua to apne aap agle free bande ko (Mon–Sat, 9:30–7 baje)", "If nobody calls / emails a web / email / IndiaMART RFQ in time, move it to the next free person (Mon–Sat, 9:30–19:00)")}</label>
+    <div class="grid2"><div><label class="f">${L("Minute", "Minutes")}</label><input class="input" type="number" min="5" max="240" id="rs2" value="${sp.minutes ?? 15}"></div>
+      <div><label class="f">${L("Max kitni baar aage bheje", "Max hops")}</label><input class="input" type="number" min="1" max="10" id="rs3" value="${sp.max_hops ?? 3}"></div></div>
+    <p class="mu" style="font-size:12.5px">${L("Pehle us customer ke lead owner ko milta hai, warna jo online hai aur jiske paas kam naye RFQ hain. RFQ page ka access jinke paas hai wahi isme aate hain. Koi na mile to Admin / Manager ko alert.", "It goes first to that customer's lead owner, else to whoever is online with the fewest new RFQs — only people with RFQ page access. If nobody fits, Admin / Manager get an alert.")}</p>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="lrS">Save</button>`,
+  });
+  $("#lrS", m).onclick = (e) => busy(e.target, async () => {
+    const n = (id) => Math.max(0, parseInt($(id, m).value, 10) || 0), at = new Date().toISOString();
+    const locks = { ...lk, lead_days: Math.max(1, n("#lr1")), rfq_days: Math.max(1, n("#lr2")), max_active_per_user: Math.max(10, n("#lr3")), cooldown_days: n("#lr4"), stale_days: Math.max(1, n("#lr5")) };
+    const speed = { ...sp, enabled: $("#rs1", m).checked, minutes: Math.max(5, n("#rs2")), max_hops: Math.max(1, n("#rs3")) };
+    if (speed.enabled && !sp.enabled) speed.since = at;      // don't reroute old RFQs when switched on later
+    const { error } = await sb.from("settings").upsert([{ key: "locks", value: locks, updated_by: S.me.id, updated_at: at }, { key: "rfq_speed", value: speed, updated_by: S.me.id, updated_at: at }]);
+    if (error) throw error;
+    S.settings.locks = locks; S.settings.rfq_speed = speed;
+    closeModal(); toast(L("Lock rules saved ✔", "Lock rules saved ✔")); done?.();
+  });
 }
 export function requestAccess(entity, row) {
   const k = lockOf(row);

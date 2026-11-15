@@ -6,10 +6,10 @@ import {
   isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, telHref, waHref, isMobile, statusBadge, rfqBadge,
   userName, online, followBadge, toLocalInput, ic, toast, fail, modal, closeModal, confirmBox, formData, busy,
   toCSV, download, parseCSV, callFn, loadTeam, assignable, toastAction, friendly,
-  HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, maskPhone, maskEmail,
+  HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail,
 } from "./core.js";
 import {
-  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, toggleNotifications, unreadCounts,
+  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, openHandover, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
@@ -244,7 +244,7 @@ const NAV = [
   ["support", "Support tickets", "tool"],
   ["products", "Products & prices", "tag"],
   ["templates", "Email / WA templates", "copy"],
-  ["requests", "Lock requests", "shield"],
+  ["requests", "Locks & requests", "shield"],
   ["Insights"],
   ["reports", "Reports", "chart"],
   ["daily", "Daily report", "clock"],
@@ -298,6 +298,7 @@ function renderShell() {
         <button class="btn ghost icon menu-btn" data-act="menu" aria-label="Menu">${ic("menu")}</button>
         <h1 id="title"></h1><div class="sp"></div>
         <button class="search-btn" data-act="palette">${ic("search")}<span>Search leads…</span><kbd>Ctrl K</kbd></button>
+        <a class="lockchip" id="lockChip" href="#/requests" hidden title="${h(L("Mere active locks / limit", "My active locks / limit"))}">🔒 <b>0</b><span>/150</span><em hidden></em></a>
         <button class="btn ghost icon" data-act="history" title="${L("Undo / Recent changes (Ctrl+Z)", "Undo / Recent changes (Ctrl+Z)")}" aria-label="Undo and recent changes">${ic("history")}</button>
         <button class="btn ghost icon bell" id="bellBtn" data-act="bell" aria-label="Notifications">🔔<span class="badge bad" id="bellBadge" hidden></span></button>
         <button class="btn sm" id="installBtn" data-act="install" ${installEvt ? "" : "hidden"} title="${L("Phone / PC pe app install karo", "Install as an app on phone / PC")}">📲 ${L("App install", "Install app")}</button>
@@ -327,6 +328,13 @@ async function refreshBadges(force = true) {
     const set = (id, n) => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n || ""; } };
     set("#rfqBadge", data.rfqs); set("#dueBadge", data.due); set("#inboxBadge", data.replies); set("#bellBadge", data.notif);
     set("#reqBadge", data.requests); set("#tktBadge", data.tickets); set("#renBadge", data.renewals);
+    const c = $("#lockChip");
+    if (c) {
+      c.hidden = !data.locks && !data.expiring; c.querySelector("b").textContent = data.locks || 0; c.querySelector("span").textContent = "/" + (data.lock_max || 150);
+      c.classList.toggle("hot", data.locks >= (data.lock_max || 150) * 0.9);
+      const e = c.querySelector("em"); e.hidden = !data.expiring; e.textContent = "⏳" + (data.expiring || "");
+      c.title = L(`${data.locks || 0} / ${data.lock_max} active locks${data.expiring ? ` · ${data.expiring} kal tak khatam` : ""}`, `${data.locks || 0} / ${data.lock_max} active locks${data.expiring ? ` · ${data.expiring} expire within 24h` : ""}`);
+    }
   })().catch(() => {}).finally(() => { badgeP = null; badgeAt = Date.now(); });
   return badgeP;
 }
@@ -760,11 +768,13 @@ function closeDrawer() { $$(".drawer, .scrim:not(.m)").forEach((n) => n.remove()
 let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawers stacking on double-click / double route)
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
-  const [{ data: l, error }, { data: acts }, { data: tasks }] = await Promise.all([
+  const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }] = await Promise.all([
     sb.from("leads").select("*").eq("id", id).single(),
     sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
     sb.from("tasks").select("*").eq("lead_id", id).eq("done", false).order("due_at"),
+    sb.from("lock_history").select("*").eq("entity", "lead").eq("entity_id", id).order("at", { ascending: false }).limit(30),
   ]);
+  const lastDrop = (lhist || []).find((x) => !x.to_user && x.reason);
   if (error?.code === "PGRST116") return toast(L("Ye lead nahi mila — shayad delete ho gaya hai ya aapke access mein nahi hai", "Lead not found — it may have been deleted or is outside your access"), true);
   if (error) return fail(error);
   if (seq !== leadSeq) return;
@@ -790,7 +800,7 @@ async function openLead(id, opt = {}) {
       ${lk.mine ? `<div class="lockbar mine">🔒 <div><b>Aap is lead pe kaam kar rahe ho</b><small>Lock ${lk.until && new Date(lk.until).getFullYear() > 9000 ? "permanent (won)" : "till " + h(dt(lk.until))} · har call / email pe apne aap badhta hai</small></div><button class="btn sm" data-lk="release">🔓 Release</button></div>`
       : lk.other ? `<div class="lockbar other">🔒 <div><b>${h(lk.holder)} is lead pe kaam kar raha/rahi hai</b><small>${L(`Locked ${h(ago(l.locked_at))} · till ${h(dt(lk.until))}. Aap dekh sakte ho, par call / email / edit sirf ${h(lk.holder)} karega.`, `Locked ${h(ago(l.locked_at))} · until ${h(dt(lk.until))}. You can view it, but only ${h(lk.holder)} can call / email / edit.`)}</small></div>
           ${isMgr() ? `<button class="btn sm" data-lk="force">Force release</button>` : `<button class="btn sm primary" data-lk="request">🙋 Request access</button>`}</div>`
-      : `<div class="lockbar free">🔓 <div><b>Free lead</b><small>Jo pehle lock karega, wahi kaam karega. Lock karte hi number dikhega.</small></div><button class="btn sm primary" data-lk="claim">🔒 Lock karke shuru karo</button></div>`}
+      : `<div class="lockbar free">🔓 <div><b>Free lead</b><small>Jo pehle lock karega, wahi kaam karega. Lock karte hi number dikhega.</small>${lastDrop ? `<small class="lastdrop">↩ ${L("Pichhli baar", "Last time")}: ${h(userName(lastDrop.from_user))} ${L("ne chhoda", "dropped it")} — “${h(lastDrop.reason)}” · ${h(ago(lastDrop.at))}</small>` : ""}</div><button class="btn sm primary" data-lk="claim">🔒 Lock karke shuru karo</button></div>`}
       <div class="contact">
         ${l.phone ? (see ? `<a class="btn primary" href="${h(telHref(l.phone))}">${ic("phone")} ${h(l.phone)}</a><button class="btn icon" data-copy="${h(l.phone)}" title="Copy" aria-label="Copy number">${ic("copy")}</button>`
           : lk.free ? `<button class="btn primary" data-lk="claimcall">${ic("phone")} Lock & call</button>` : `<span class="btn" aria-disabled="true">${ic("phone")} ${h(maskPhone(l.phone))}</span>`) : ""}
@@ -849,6 +859,8 @@ async function openLead(id, opt = {}) {
           <div class="mu" style="font-size:12px">${e.direction === "in" ? "From " : "To "}${h(e.counterpart)} · ${h(ago(e.created_at))} · ${h(userName(e.user_id))}</div></div></div>`).join("")}
       </div></div>` : ""}
 
+      <details class="card sec"><summary>🔐 ${L("Lock history", "Lock history")} (${(lhist || []).length})</summary><div class="card-b" style="padding:4px 16px">${lockHistoryHtml(lhist)}</div></details>
+
       <div class="card sec"><div class="card-h"><h3>Activity</h3></div><div class="card-b" style="padding:4px 16px">
         <ul class="timeline">${(acts || []).map((a) => `<li><span class="ic">${actIc[a.kind] || "•"}</span><div><div>${a.outcome ? `<b>${h(OUTCOME[a.outcome]?.[1] || a.outcome)}</b> ` : ""}${h(a.body || (a.kind === "call" ? "" : a.kind))}</div><div class="t">${h(userName(a.user_id))} · ${h(dt(a.created_at))}</div></div></li>`).join("") || '<li><span></span><span class="mu">Abhi koi activity nahi</span></li>'}</ul>
       </div></div>
@@ -868,14 +880,19 @@ async function openLead(id, opt = {}) {
     const a = b.dataset.lk;
     if (a === "claim" || a === "claimcall") {
       const r = await claim("lead", id);
-      if (!r.ok) { toast(claimFailMsg(r), true); return reopen(); }
-      toast("🔒 Lead aapke naam lock ho gaya"); after();
+      if (!r.ok) {
+        if (r.reason === "company" && r.lead_id) toastAction(claimFailMsg(r), L("Wo lead kholo", "Open that lead"), () => openLead(r.lead_id), 9000);
+        else toast(claimFailMsg(r), true);
+        return reopen();
+      }
+      toast(claimOkMsg(r)); after();
       if (a === "claimcall" && l.phone) location.href = telHref(l.phone);
       return reopen();
     }
     if (a === "release" || a === "force") {
-      if (!(await confirmBox(a === "force" ? `${lk.holder} ka lock hatana hai? Unhe notification jayega.` : "Lead release karna hai? Phir koi bhi isko le sakta hai.", "Release"))) return;
-      const { data, error: e1 } = await sb.rpc("release", { p_entity: "lead", p_id: id });
+      const why = await askRelease({ force: a === "force", holder: lk.holder });
+      if (why === false) return;
+      const { data, error: e1 } = await sb.rpc("release", { p_entity: "lead", p_id: id, p_reason: why });
       if (e1) throw e1;
       toast(data?.ok ? "🔓 Lead release ho gaya — ab pool mein hai" : "Release nahi hua", !data?.ok); after();
       return opt.queue ? nextInQueue(id) : reopen();
@@ -1310,19 +1327,26 @@ function rfqForm(r) {
       <div><label class="f">Quoted value (₹)</label><input class="input" name="quoted_value" type="number" min="0" value="${h(r.quoted_value || "")}"></div>
       <div><label class="f">Lock / owner</label>${isMgr() ? `<select class="input" name="owner_id"><option value="">— Free pool —</option>${assignable().map((u) => `<option value="${u.id}" ${u.id === r.owner_id ? "selected" : ""}>${h(u.full_name)}</option>`).join("")}</select>` : `<input class="input" disabled value="${h(isNew ? "Aap (save pe)" : lk.free ? "Free" : lk.holder)}">`}</div>
     </div><label class="f">Details</label><textarea class="input" name="details" maxlength="5000">${h(r.details || "")}</textarea></fieldset>
-    ${r.source && r.source !== "manual" ? `<p class="mu">Source: ${h(SOURCES[r.source] || r.source)} ${r.source_ref ? "· " + h(r.source_ref) : ""}</p>` : ""}</form>`,
-    foot: `${r.lead_id ? `<button class="btn" id="rfLead">Lead kholo</button>` : ""}${!isNew && (work || lk.free) ? `<button class="btn" id="rfMail">${ic("mail")} Email</button><button class="btn" id="rfWa">${ic("wa")} WhatsApp</button><button class="btn" id="rfQ">${ic("file")} Quotation</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button>${work ? `<button class="btn primary" id="rfS">Save</button>` : ""}`,
+    ${r.source && r.source !== "manual" ? `<p class="mu">Source: ${h(SOURCES[r.source] || r.source)} ${r.source_ref ? "· " + h(r.source_ref) : ""}</p>` : ""}</form>
+    ${isNew ? "" : `<details class="card sec" id="rfH"><summary>🔐 ${L("Lock history", "Lock history")}</summary><div class="card-b" style="padding:4px 16px"><div class="mu">…</div></div></details>`}`,
+    foot: `${r.lead_id ? `<button class="btn" id="rfLead">Lead kholo</button>` : ""}${!isNew && work && r.phone ? `<a class="btn primary" id="rfCall" href="${h(telHref(r.phone))}">${ic("phone")} Call</a>` : ""}${!isNew && (work || lk.free) ? `<button class="btn" id="rfMail">${ic("mail")} Email</button><button class="btn" id="rfWa">${ic("wa")} WhatsApp</button><button class="btn" id="rfQ">${ic("file")} Quotation</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button>${work ? `<button class="btn primary" id="rfS">Save</button>` : ""}`,
   });
   const reload = async () => { const { data } = await sb.from("rfqs").select("*").eq("id", r.id).single(); if (data) rfqForm(data); };
   $("#rfClaim", m)?.addEventListener("click", (e) => busy(e.target, async () => {
-    const x = await claim("rfq", r.id); if (!x.ok) toast(claimFailMsg(x), true); else toast("🔒 RFQ aapke naam lock"); refreshBadges(); reload(); if (S.route === "rfqs") softRefresh();
+    const x = await claim("rfq", r.id); if (!x.ok) toast(claimFailMsg(x), true); else toast(claimOkMsg(x, "RFQ")); refreshBadges(); reload(); if (S.route === "rfqs") softRefresh();
   }));
   $("#rfRel", m)?.addEventListener("click", (e) => busy(e.target, async () => {
-    if (!(await confirmBox(lk.mine ? "RFQ release karna hai?" : `${lk.holder} ka lock hatana hai?`, "Release"))) return;
-    const { error } = await sb.rpc("release", { p_entity: "rfq", p_id: r.id }); if (error) throw error;
+    const why = await askRelease({ force: !lk.mine, holder: lk.holder }); if (why === false) return;
+    const { error } = await sb.rpc("release", { p_entity: "rfq", p_id: r.id, p_reason: why }); if (error) throw error;
     toast("🔓 Released"); reload(); if (S.route === "rfqs") softRefresh();
   }));
   $("#rfReq", m)?.addEventListener("click", () => requestAccess("rfq", r));
+  $("#rfCall", m)?.addEventListener("click", () => { sb.rpc("touch_rfq", { p_id: r.id }).then(() => {}); });   // counts as "worked" for the 15-min rule
+  $("#rfH", m)?.addEventListener("toggle", async (e) => {
+    if (!e.target.open || e.target.dataset.done) return; e.target.dataset.done = "1";
+    const { data } = await sb.from("lock_history").select("*").eq("entity", "rfq").eq("entity_id", r.id).order("at", { ascending: false }).limit(30);
+    e.target.querySelector(".card-b").innerHTML = lockHistoryHtml(data);
+  });
   const outreach = async (channel) => { if (!(await ensureWork("rfq", r))) return; openComposer({ channel, rfq: r, onSent: () => S.route === "rfqs" && softRefresh() }); };
   $("#rfMail", m)?.addEventListener("click", () => outreach("email"));
   $("#rfWa", m)?.addEventListener("click", () => outreach("whatsapp"));
@@ -1565,7 +1589,7 @@ VIEWS.team = async (el) => {
   ${S.team.map((u) => `<tr style="cursor:default"><td><div class="row" style="flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><div><div class="co">${h(u.full_name)}</div><div class="sub">${h(u.email)}</div></div></div></td>
     <td>${h(ROLE[u.role])}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
     <td class="sub">${h(ago(u.last_seen))}</td><td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge bad">Disabled</span>'}</td>
-    <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm" data-act="pwUser" data-id="${u.id}">Password</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
+    <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm" data-act="pwUser" data-id="${u.id}">Password</button> <button class="btn sm" data-act="handover" data-id="${u.id}" title="${h(L("Iske saare leads / RFQs / tasks kisi aur ko do", "Move all their leads / RFQs / tasks to someone else"))}">🔁 Handover</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>
   <p class="mu" style="font-size:12.5px">🔒 Disable karte hi user ka login band, aur uske pending (new/contacted) leads pool mein wapas. Har change Audit log mein record hota hai.</p>`;
 };
@@ -1661,8 +1685,14 @@ ACT.pwUser = (t) => {
 ACT.toggleUser = async (t) => {
   const u = S.teamById.get(t.dataset.id);
   if (u.active && !(await confirmBox(`${u.full_name} ko disable karna hai? Login turant band ho jayega.`, "Disable"))) return;
-  busy(t, async () => { await callFn("admin-users", { action: "set_active", user_id: u.id, active: !u.active }); toast(u.active ? "Disabled" : "Enabled"); VIEWS.team($("#page")); });
+  busy(t, async () => {
+    await callFn("admin-users", { action: "set_active", user_id: u.id, active: !u.active }); toast(u.active ? "Disabled" : "Enabled"); VIEWS.team($("#page"));
+    if (!u.active) return;
+    const { count } = await sb.from("leads").select("id", { count: "exact", head: true }).eq("owner_id", u.id).in("status", OPEN_STATUSES);
+    if (count && (await confirmBox(L(`${u.full_name} ke paas ${count} open leads hain. Kisi aur ko handover karna hai?`, `${u.full_name} still holds ${count} open leads. Hand them over to someone?`), L("Haan, handover", "Yes, hand over")))) openHandover(u.id, () => VIEWS.team($("#page")));
+  });
 };
+ACT.handover = (t) => openHandover(t.dataset.id, () => VIEWS.team($("#page")));
 ACT.distribute = async (b) => {
   if (!(await confirmBox(L("Free pool ke leads team mein baant dein? (Galti ho to turant ↩ Undo kar sakte ho)", "Share the free-pool leads across the team? (You can ↩ Undo right after)"), L("Haan, baanto", "Yes, distribute")))) return;
   busy(b, async () => {
