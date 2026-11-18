@@ -125,12 +125,13 @@ export async function openComposer(opts) {
     <textarea class="input" id="cBody" style="min-height:300px;font-size:13.5px;line-height:1.55"></textarea>
     <div id="cPreview" class="script" style="display:none;max-height:340px;overflow:auto;background:var(--surface);border:1px solid var(--line)"></div>
     <div class="mu" style="font-size:12px;margin-top:4px">**text** = bold. Aap kuch bhi edit kar sakte ho — bhejne se pehle sab yahin badlo.</div>
-    ${isEmail && bannerOn() ? `<div class="sigtip ok"><img src="${h(bannerUrl())}" alt=""><span>${L("✔ Geninfo banner mail ke neeche apne aap lagega", "✔ The Geninfo banner is added under the mail automatically")}</span></div>` : ""}
+    ${isEmail ? `<div class="sigtip" id="cSendInfo"><img src="${h(bannerUrl())}" alt="" ${bannerOn() ? "" : "hidden"}><span>…</span></div>` : ""}
     ${lead && !bulk ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="cFu" ${lead.next_follow_up ? "" : "checked"}> 3 din baad follow-up reminder set karo</label>` : ""}
     <div id="cFallback"></div>`,
     foot: isEmail
       ? `<button class="btn" id="cCopy" title="Formatting ke saath copy">${ic("copy")} Copy</button><span style="flex:1"></span>
-         ${PROVIDERS.map(([k, l]) => `<button class="btn ${k === pref ? "primary" : ""}" data-send="${k}">${ic("mail")} ${l} mein kholo</button>`).join("")}`
+         ${PROVIDERS.map(([k, l]) => `<button class="btn" data-send="${k}">${ic("mail")} ${l} mein kholo</button>`).join("")}
+         <button class="btn primary" id="cAuto" hidden>📨 ${L("Send", "Send")}</button>`
       : `<button class="btn" id="cCopy">${ic("copy")} Copy</button><span style="flex:1"></span>
          <button class="btn" data-wa="web">WhatsApp Web</button><button class="btn primary" data-wa="app">${ic("wa")} WhatsApp kholo</button>`,
   });
@@ -163,6 +164,38 @@ export async function openComposer(opts) {
     $("#cPrev", m).textContent = on ? "✏️ Edit" : "👁 Preview";
   };
   $("#cSave", m).onclick = () => saveAsTemplate(channel, sub?.value || "", body.value);
+  // can this person's Gmail script send for us? → one-click 📨 Send, banner added automatically
+  if (isEmail) sb.rpc("mail_status").then(({ data: ms }) => {
+    const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
+    const t = box.querySelector("span");
+    if (ms?.can_send) {
+      $("#cAuto", m).hidden = false; box.classList.add("ok");
+      t.textContent = bannerOn() ? L("📨 Send dabao — mail aapke Gmail se Geninfo banner ke saath apne aap chala jayega (~1 min).", "📨 Press Send — the mail goes from your Gmail with the Geninfo banner automatically (~1 min).")
+                                 : L("📨 Send dabao — mail aapke Gmail se apne aap chala jayega (~1 min).", "📨 Press Send — the mail goes from your Gmail automatically (~1 min).");
+    } else {
+      t.innerHTML = ms?.connected ? L("Mail seedha CRM se (banner ke saath, bina Gmail khole) bhejne ke liye <b>Gmail code ek baar update karo</b>.", "To send straight from the CRM (with the banner, no Gmail tab) <b>update your Gmail code once</b>.")
+                                  : L("Mail seedha CRM se (banner ke saath, bina Gmail khole) bhejne ke liye <b>Gmail ek baar connect karo</b>.", "To send straight from the CRM (with the banner, no Gmail tab) <b>connect Gmail once</b>.");
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = ms?.connected ? L("Update karo", "Update") : L("Connect karo", "Connect");
+      b.onclick = () => gmailSetup(); box.append(b);
+      $$("[data-send]", m).forEach((x) => x.classList.toggle("primary", x.dataset.send === pref));
+    }
+  });
+  $("#cAuto", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const subject = (sub?.value || "").trim(), text = fillTemplate(body.value, ctx);
+    const toList = bulk ? [] : splitEmails($("#cTo", m).value), cc = bulk ? [] : splitEmails($("#cCc", m).value);
+    const bad = [...toList, ...cc].filter((x) => !EMAIL_RE.test(x));
+    if (bad.length) return toast("Email galat hai: " + bad.join(", "), true);
+    if (!bulk && !toList.length) return toast("To mein email daalo", true);
+    if (bulk && !bulkList.length) return toast("Kisi selected lead ka email nahi hai", true);
+    if (!subject) return toast("Subject daalo", true);
+    const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerOn() ? bannerHtml() : ""}</div>`;
+    const { error } = await sb.from("email_outbox").insert({ to_addr: bulk ? S.me.email : toList.join(","), cc: cc.join(",") || null, bcc: bulk ? bulkList.map((l) => l.email).join(",") : null,
+      subject, html, body: mdToPlain(text), lead_id: !bulk && lead && canWork(lead) ? lead.id : null });
+    if (error) throw error;
+    await logEmail({ provider: "gmail", subject, text, toList, cc, opts, tplId: tplId(), bulkList, fu: $("#cFu", m)?.checked });
+    closeModal();
+    toast(L("📨 Mail bheja ja raha hai — ~1 minute mein aapke Gmail se chala jayega", "📨 Sending — it leaves from your Gmail within ~1 minute"));
+  }));
   $("#cCopy", m).onclick = async () => { const ok = isEmail ? await copyRich(body.value, { banner: bannerOn() }) : await navigator.clipboard.writeText(mdToWhatsApp(body.value)).then(() => true, () => false); toast(ok ? "Copied ✔ — kahin bhi paste karo" : "Copy nahi hua", !ok); };
 
   const tplId = () => +$("#cTpl", m).value || null;
@@ -485,14 +518,15 @@ async function readMail(id, pane, refresh) {
 // ---------------------------------------------------------------------
 function appsScript(token) {
   const url = CONFIG.SUPABASE_URL + "/functions/v1/mail-sync";
-  return `// Genesis CRM — Gmail reply sync for ${S.me.email}
-// Sirf un addresses ke replies CRM ko bhejta hai jinko aapne CRM se email kiya hai.
+  return `// Genesis Nova — Gmail for ${S.me.email}
+// 1) CRM se "Send" kiye mails aapke Gmail se bhejta hai (Geninfo banner ke saath)
+// 2) Sirf un addresses ke replies CRM ko bhejta hai jinko aapne CRM se email kiya hai.
 const CRM_URL = "${url}";
 const TOKEN = "${token}";   // personal — kisi ke saath share mat karo
 
 function setup() {                       // ▶ ek baar ye function Run karo
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger("syncReplies").timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger("syncReplies").timeBased().everyMinutes(1).create();
   syncReplies();
 }
 
@@ -515,7 +549,27 @@ function call_(action, payload) {
   return JSON.parse(res.getContentText());
 }
 
+function sendQueued_() {                // CRM mein "Send" kiye mails → aapke Gmail se
+  var o = call_("outbox");
+  if (!o.items || !o.items.length) return;
+  var img = null;
+  if (o.banner) { try { img = UrlFetchApp.fetch(o.banner).getBlob().setName("geninfo-banner"); } catch (e) { img = null; } }
+  var res = [];
+  o.items.forEach(function (m) {
+    try {
+      var opt = { htmlBody: m.html, name: o.name };
+      if (img) { opt.htmlBody = m.html.split(o.banner).join("cid:gnbanner"); opt.inlineImages = { gnbanner: img }; }
+      if (m.cc) opt.cc = m.cc;
+      if (m.bcc) opt.bcc = m.bcc;
+      GmailApp.sendEmail(m.to, m.subject, m.body || " ", opt);
+      res.push({ id: m.id, ok: true });
+    } catch (e) { res.push({ id: m.id, ok: false, error: String(e && e.message || e) }); }
+  });
+  call_("sent", { results: res });
+}
+
 function syncReplies() {
+  sendQueued_();
   var w = call_("watchlist");
   var who = (w.emails || []).concat(w.domains || []);
   if (!who.length) return;
@@ -543,14 +597,14 @@ function syncReplies() {
 export async function gmailSetup(done) {
   const { data: ms } = await sb.rpc("mail_status");
   const m = modal({
-    title: "🔗 Gmail replies connect karo", wide: true,
+    title: L("🔗 Gmail connect karo — mail bhejo + replies", "🔗 Connect Gmail — send mail + get replies"), wide: true,
     body: `<p>Ye aapke <b>apne Gmail</b> mein ek chhota script lagata hai jo har 5 minute mein check karta hai ki jin companies ko aapne CRM se mail kiya, unka reply aaya ya nahi — aur sirf wahi replies yahan dikhata hai. Koi aur email CRM mein nahi aata.</p>
       <ol style="padding-left:18px;line-height:1.7">
         <li>Neeche <b>Code banao</b> dabao aur code copy karo.</li>
         <li><a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener noreferrer">script.google.com → New project</a> kholo (usi Gmail account se jisse mail bhejte ho).</li>
         <li>Editor mein <b>Ctrl + A</b> dabao → <b>Delete</b> (pehle se likha <code>function myFunction() { }</code> poora hatana zaroori hai, warna <i>"Unexpected token"</i> error aata hai) → phir ye code paste karo → 💾 Save.</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
-        <li>Bas! Setup Run karte hi pehli sync ho jaati hai, phir har 5 minute mein. Status yahan Inbox mein dikhega.</li>
+        <li>${L("Bas! Ab CRM ka <b>📨 Send</b> button mail seedha aapke Gmail se bhejta hai (Geninfo banner ke saath, ~1 minute mein), aur replies har minute Inbox mein aate hain.", "Done! The CRM's <b>📨 Send</b> button now sends mail straight from your Gmail (with the Geninfo banner, within ~1 minute), and replies reach the Inbox every minute.")}</li>
         <li class="mu">${L("Band karna ho: yahan <b>Disconnect</b> dabao (ya Apps Script mein <b>removeSetup</b> Run karo).", "To stop: press <b>Disconnect</b> here (or Run <b>removeSetup</b> in Apps Script).")}</li>
       </ol>
       <div id="gsCode"></div>

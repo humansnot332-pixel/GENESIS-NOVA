@@ -510,7 +510,11 @@ function subscribeRealtime() {
       if (["inbox", "dashboard"].includes(S.route)) softRefresh();
       refreshBadges();
     })
-    .on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => loadAnnouncement());
+    .on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => loadAnnouncement())
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "email_outbox", filter: `user_id=eq.${S.me.id}` }, (p) => {
+      if (p.new.status === "sent") toast(L(`✅ Mail chala gaya: ${p.new.subject}`, `✅ Mail sent: ${p.new.subject}`));
+      else if (p.new.status === "failed") toast(L(`❌ Mail nahi gaya: ${p.new.subject} — ${p.new.error || ""}`, `❌ Mail failed: ${p.new.subject} — ${p.new.error || ""}`), true);
+    });
   // everything else: any add / edit / delete on another device shows up here within a second or two
   for (const [table, routes] of Object.entries(LIVE)) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, (p) => onLive(table, routes, p));
