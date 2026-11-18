@@ -589,3 +589,10 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .sigprev img { margin-top: 0 !important; }
 #cPreview img { max-width: 100%; height: auto; }
 @media (max-width: 640px) { .sigtip img { display: none; } }
+
+/* email banners (max 5) */
+.eb-list { display: grid; gap: 10px; }
+.eb-item { display: block; border: 2px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; cursor: pointer; background: var(--surface); }
+.eb-item.on { border-color: var(--accent); background: var(--accent-soft); }
+.eb-item .eb-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.eb-item img { display: block; width: 100%; max-width: 600px; height: auto; border-radius: 4px; background: #fff; border: 1px solid var(--line); margin-bottom: 6px; }

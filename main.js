@@ -1766,48 +1766,86 @@ const CO_FIELDS = [
   ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"],
   ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
 ];
-// ---- email banner under every mail (Admin can switch off / replace it) ----
+// ---- email banners: Admin keeps up to 5 and picks the one the whole team uses ----
+const MAX_BANNERS = 5;
+const bannerList = () => { const v = S.settings.email_banner || {}; return v.list?.length ? v.list : [{ id: "b1", name: "Geninfo", url: bannerUrl(), link: bannerCfg().link }]; };
 function bannerCard(ro) {
-  const b = bannerCfg();
-  return `<div class="card sec" style="max-width:860px" id="ebCard"><div class="card-h"><h3>📧 ${L("Email banner", "Email banner")}</h3><span class="sp"></span>
-      <label class="check"><input type="checkbox" id="ebOn" ${b.on !== false ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("Har mail ke neeche lagao", "Add under every mail")}</label></div>
-    <div class="card-b"><div class="sigprev" id="ebPrev">${bannerHtml()}</div>
-      <p class="mu" style="font-size:12.5px">${L("CRM se bheje har email ke neeche ye banner lagta hai (template ke naam / designation ke neeche). Kisi ko kuch setup nahi karna.", "This banner goes under every email sent from the CRM (below the name / designation of the template). Nobody has to set anything up.")}</p>
-      ${ro ? "" : `<div class="grid2">
-        <div><label class="f">${L("Naya banner (PNG / JPG, ~1000 × 250 px, 1 MB tak)", "New banner (PNG / JPG, ~1000 × 250 px, up to 1 MB)")}</label><input class="input" type="file" id="ebFile" accept="image/png,image/jpeg,image/gif,image/webp"></div>
-        <div><label class="f">${L("Banner pe click karne se kya khule", "Link when the banner is clicked")}</label><input class="input" id="ebLink" maxlength="300" value="${h(b.link || "")}" placeholder="https://www.genesisinfoserve.com"></div></div>
-      <div class="row" style="margin-top:12px"><button class="btn primary" id="ebSave">Save</button><button class="btn" id="ebReset">${L("Default banner wapas", "Back to the default banner")}</button></div>`}
+  const v = S.settings.email_banner || {}, list = bannerList(), act = v.active || list[0]?.id;
+  return `<div class="card sec" style="max-width:860px" id="ebCard"><div class="card-h"><h3>📧 ${L("Email banners", "Email banners")} <span class="mu" style="font-weight:500">(${list.length}/${MAX_BANNERS})</span></h3><span class="sp"></span>
+      <label class="check"><input type="checkbox" id="ebOn" ${v.on !== false ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("Har mail ke neeche lagao", "Add under every mail")}</label></div>
+    <div class="card-b">
+      <p class="mu" style="font-size:12.5px;margin-top:0">${L("Jo banner <b>chuna</b> hai, wahi poori team ke Gmail signature mein lagta hai — CRM se Gmail kholo to template ke neeche apne aap. Banner badlo, ~1 minute mein sabke Gmail mein badal jata hai.", "The <b>selected</b> banner goes into the whole team's Gmail signature — open Gmail from the CRM and it sits under the template automatically. Change it and everyone's Gmail updates within ~1 minute.")}</p>
+      <div class="eb-list">${list.map((b) => `<label class="eb-item ${b.id === act ? "on" : ""}">
+        <div class="eb-top"><input type="radio" name="ebAct" value="${h(b.id)}" ${b.id === act ? "checked" : ""} ${ro ? "disabled" : ""}><b>${h(b.name || L("Banner", "Banner"))}</b>${b.id === act ? `<span class="badge good">${L("Team ke liye ON", "In use by the team")}</span>` : ""}<span class="sp" style="flex:1"></span>
+          ${ro ? "" : `<button type="button" class="btn sm ghost" data-ebedit="${h(b.id)}">${ic("file")} ${L("Edit", "Edit")}</button><button type="button" class="btn sm ghost danger" data-ebdel="${h(b.id)}" title="${h(L("Delete", "Delete"))}">${ic("trash")}</button>`}</div>
+        <img src="${h(b.url)}" alt="${h(b.name || "")}"><div class="mu" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🔗 ${h(b.link || "—")}</div></label>`).join("")}</div>
+      ${ro ? "" : `<div class="row" style="margin-top:12px"><button class="btn primary" id="ebAdd" ${list.length >= MAX_BANNERS ? "disabled" : ""}>${ic("plus")} ${L("Naya banner", "Add banner")}</button>
+        <span class="mu" style="font-size:12px">${list.length >= MAX_BANNERS ? L("Max 5 — naya daalne ke liye ek delete karo", "Max 5 — delete one to add another") : L("PNG / JPG, ~1000 × 250 px, 1 MB tak", "PNG / JPG, ~1000 × 250 px, up to 1 MB")}</span></div>
+      <div class="mu" id="ebTeam" style="font-size:12.5px;margin-top:10px"></div>`}
     </div></div>`;
 }
 function wireBannerCard(el) {
   const card = $("#ebCard", el); if (!card) return;
-  let picked = null;
-  const prev = (url) => { const i = $("#ebPrev img", card); if (i) i.src = url; };
-  $("#ebFile", card).onchange = (e) => {
-    const f = e.target.files?.[0]; picked = null; if (!f) return;
-    if (!/^image\/(png|jpeg|gif|webp)$/.test(f.type)) return toast(L("Sirf PNG / JPG / GIF / WebP image", "Images only: PNG / JPG / GIF / WebP"), true);
-    if (f.size > 1048576) return toast(L("Image 1 MB se chhoti honi chahiye", "The image must be under 1 MB"), true);
-    picked = f; prev(URL.createObjectURL(f));
+  const redraw = () => { card.outerHTML = bannerCard(false); wireBannerCard(el); };
+  // every change gets a new version → each person's Gmail script re-applies the signature
+  const save = async (patch, msg) => {
+    const cur = S.settings.email_banner || {}, list = patch.list || bannerList(), active = patch.active || cur.active || list[0]?.id;
+    const a = list.find((b) => b.id === active) || list[0];
+    const v = { ...cur, list, ...patch, active: a?.id || null, url: a?.url || null, link: a?.link || null, ver: `${a?.id || "none"}-${Date.now()}` };
+    const { error } = await sb.from("settings").upsert({ key: "email_banner", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    S.settings.email_banner = v; toast(msg); redraw();
   };
-  const save = (v) => sb.from("settings").upsert({ key: "email_banner", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() }).then(({ error }) => { if (error) throw error; S.settings.email_banner = v; });
-  $("#ebSave", card).onclick = (e) => busy(e.target, async () => {
-    const cur = bannerCfg(), link = $("#ebLink", card).value.trim();
-    if (link && !/^https?:\/\//i.test(link)) return toast(L("Link https:// se shuru hona chahiye", "The link must start with https://"), true);
-    let url = S.settings.email_banner?.url || null;
-    if (picked) {
-      const ext = (picked.type.split("/")[1] || "png").replace("jpeg", "jpg"), path = `email-banner-${Date.now()}.${ext}`;
-      const { error } = await sb.storage.from("brand").upload(path, picked, { contentType: picked.type, cacheControl: "31536000", upsert: false });
-      if (error) throw error;
-      url = sb.storage.from("brand").getPublicUrl(path).data.publicUrl;
-    }
-    await save({ on: $("#ebOn", card).checked, url, link: link || cur.link });
-    picked = null; $("#ebFile", card).value = "";
-    toast(L("✔ Email banner saved — ab se har mail mein naya banner", "✔ Email banner saved — new mails use it from now on"));
+  const upload = async (file) => {
+    const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg"), path = `email-banner-${Date.now()}.${ext}`;
+    const { error } = await sb.storage.from("brand").upload(path, file, { contentType: file.type, cacheControl: "31536000", upsert: false });
+    if (error) throw error;
+    return sb.storage.from("brand").getPublicUrl(path).data.publicUrl;
+  };
+  const editor = (b) => {
+    const isNew = !b;
+    const m = modal({ title: isNew ? L("📧 Naya banner", "📧 Add banner") : L("📧 Banner edit", "📧 Edit banner"), body: `
+      <label class="f">${L("Naam (sirf aapke liye)", "Name (just for you)")}</label><input class="input" id="bnName" maxlength="60" value="${h(b?.name || "")}" placeholder="${h(L("jaise Diwali offer", "e.g. Diwali offer"))}">
+      <label class="f">${isNew ? L("Banner image *", "Banner image *") : L("Naya image (optional — khaali chhodo to wahi rahega)", "New image (optional — leave empty to keep it)")}</label>
+      <input class="input" type="file" id="bnFile" accept="image/png,image/jpeg,image/gif,image/webp">
+      <label class="f">${L("Banner pe click karne se kya khule", "Link when the banner is clicked")}</label><input class="input" id="bnLink" maxlength="300" value="${h(b?.link || S.settings.company?.website_url || "https://www.genesisinfoserve.com")}">
+      <div class="sigprev" style="margin-top:12px"><img id="bnPrev" src="${h(b?.url || "")}" alt="" style="width:100%;max-width:600px;${b?.url ? "" : "display:none"}"></div>`,
+      foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="bnSave">Save</button>` });
+    let picked = null;
+    $("#bnFile", m).onchange = (e) => {
+      const f = e.target.files?.[0]; picked = null; if (!f) return;
+      if (!/^image\/(png|jpeg|gif|webp)$/.test(f.type)) return toast(L("Sirf PNG / JPG / GIF / WebP image", "Images only: PNG / JPG / GIF / WebP"), true);
+      if (f.size > 1048576) return toast(L("Image 1 MB se chhoti honi chahiye", "The image must be under 1 MB"), true);
+      picked = f; const i = $("#bnPrev", m); i.src = URL.createObjectURL(f); i.style.display = "";
+    };
+    $("#bnSave", m).onclick = (e) => busy(e.target, async () => {
+      const link = $("#bnLink", m).value.trim(), name = $("#bnName", m).value.trim();
+      if (link && !/^https?:\/\//i.test(link)) return toast(L("Link https:// se shuru hona chahiye", "The link must start with https://"), true);
+      if (isNew && !picked) return toast(L("Banner image chuno", "Pick a banner image"), true);
+      const url = picked ? await upload(picked) : b.url;
+      const list = bannerList().slice();
+      if (isNew) list.push({ id: "b" + Date.now().toString(36), name: name || L("Banner", "Banner") + " " + (list.length + 1), url, link });
+      else Object.assign(list.find((x) => x.id === b.id), { name: name || b.name, url, link });
+      closeModal();
+      await save({ list }, isNew ? L("✔ Banner add ho gaya — team ke liye use karne ko use chuno", "✔ Banner added — select it to use it for the team") : L("✔ Banner update ho gaya", "✔ Banner updated"));
+    });
+  };
+  $("#ebAdd", card)?.addEventListener("click", () => editor(null));
+  $$("[data-ebedit]", card).forEach((x) => x.onclick = (e) => { e.preventDefault(); editor(bannerList().find((b) => b.id === x.dataset.ebedit)); });
+  $$("[data-ebdel]", card).forEach((x) => x.onclick = async (e) => {
+    e.preventDefault();
+    const list = bannerList(), b = list.find((y) => y.id === x.dataset.ebdel), act = (S.settings.email_banner || {}).active || list[0]?.id;
+    if (b.id === act) return toast(L("Ye banner abhi team use kar rahi hai — pehle doosra chuno, phir delete karo", "The team is using this banner — select another one first, then delete"), true);
+    if (!(await confirmBox(L(`"${b.name}" banner delete karna hai?`, `Delete the "${b.name}" banner?`), "Delete"))) return;
+    busy(x, () => save({ list: list.filter((y) => y.id !== b.id) }, L("🗑 Banner delete ho gaya", "🗑 Banner deleted")));
   });
-  $("#ebOn", card).onchange = (e) => busy(null, async () => { await save({ ...(S.settings.email_banner || {}), on: e.target.checked }); toast(e.target.checked ? L("✔ Banner ON", "✔ Banner ON") : L("Banner OFF — mails bina banner ke jayenge", "Banner OFF — mails go without the banner")); });
-  $("#ebReset", card).onclick = (e) => busy(e.target, async () => {
-    if (!(await confirmBox(L("Default Geninfo banner wapas lagana hai?", "Go back to the default Geninfo banner?"), L("Haan", "Yes")))) return;
-    await save({ on: true, url: null, link: S.settings.email_banner?.link || null }); prev(bannerUrl()); toast(L("✔ Default banner wapas", "✔ Default banner restored"));
+  $$("input[name=ebAct]", card).forEach((r) => r.onchange = () => busy(null, () => save({ active: r.value }, L("✔ Team banner badla — sabke Gmail mein ~1 minute mein", "✔ Team banner changed — everyone's Gmail updates within ~1 minute"))));
+  $("#ebOn", card).onchange = (e) => busy(null, () => save({ on: e.target.checked }, e.target.checked ? L("✔ Banner ON", "✔ Banner ON") : L("Banner OFF — sabke Gmail signature se hat jayega", "Banner OFF — it will be removed from everyone's Gmail signature")));
+  // who already has it in their Gmail
+  sb.rpc("banner_team_status").then(({ data }) => {
+    const box = $("#ebTeam", card); if (!box || !data) return;
+    const ok = data.filter((r) => r.sig_ok), todo = data.filter((r) => !r.sig_ok);
+    box.innerHTML = `📬 ${L("Gmail mein lag gaya", "In their Gmail")}: <b>${ok.length}/${data.length}</b>${todo.length ? ` · ${L("baaki", "pending")}: ${todo.map((r) => h(userName(r.user_id)) + (r.connected ? "" : L(" (Gmail setup nahi)", " (no Gmail setup)"))).join(", ")}` : " ✔"}`;
   });
 }
 

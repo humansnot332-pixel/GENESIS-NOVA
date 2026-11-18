@@ -395,7 +395,10 @@ export function openTab(url) {
 }
 // ---------- company email banner (Geninfo) under every mail ----------
 // Admin sets it in Company settings → Email banner (settings key "email_banner"); default = the file shipped with the app.
-export const bannerCfg = () => ({ on: true, link: S.settings?.company?.website_url || "https://www.genesisinfoserve.com", ...(S.settings?.email_banner || {}) });
+export const bannerCfg = () => {
+  const v = S.settings?.email_banner || {}, a = (v.list || []).find((b) => b.id === v.active);
+  return { ...v, on: v.on !== false, url: a?.url || v.url || null, link: a?.link || v.link || S.settings?.company?.website_url || "https://www.genesisinfoserve.com", name: a?.name || "" };
+};
 export const bannerUrl = () => bannerCfg().url || new URL("email-banner.png", location.href.split("#")[0]).href;
 export const bannerOn = () => bannerCfg().on !== false;
 export const bannerHtml = () => `<a href="${h(bannerCfg().link || "#")}" target="_blank" rel="noopener noreferrer"><img src="${h(bannerUrl())}" alt="Geninfo — Genesis Infoserve" width="600" style="display:block;width:600px;max-width:100%;height:auto;border:0;margin-top:14px"></a>`;

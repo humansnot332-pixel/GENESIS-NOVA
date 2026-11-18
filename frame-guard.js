@@ -5,7 +5,8 @@ if (window.top !== window.self) { document.documentElement.style.display = "none
 (function () {
   function show(msg) {
     var r = document.getElementById("root");
-    if (!r || !/Loading/.test(r.textContent) || r.dataset.err) return;
+    // only while the app is still booting — once it runs, a page's own "Loading…" text must never trigger this
+    if (!r || r.querySelector(".app, .auth-form") || !/Loading/.test(r.textContent) || r.dataset.err) return;
     r.dataset.err = "1";
     var box = document.createElement("div");
     box.style.cssText = "max-width:560px;margin:18vh auto;padding:20px 24px;border:1px solid #f3c2c2;background:#fdecec;color:#7f1d1d;border-radius:12px;font:14px/1.5 system-ui,sans-serif";
@@ -18,6 +19,7 @@ if (window.top !== window.self) { document.documentElement.style.display = "none
   }
   window.addEventListener("error", function (e) {
     var t = e.target;
+    if (t && t.tagName === "IMG") return;                 // a broken picture is never a reason to stop the app
     if (t && (t.src || t.href)) show("File nahi mili: " + (t.src || t.href).split("/").slice(-2).join("/"));
     else if (e.message) show((e.filename ? e.filename.split("/").pop() + ": " : "") + e.message);
   }, true);
