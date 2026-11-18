@@ -293,10 +293,13 @@ function translateNode(n) {
     if (t !== n.nodeValue) n.nodeValue = t;
     return;
   }
-  if (n.nodeType !== 1 || n.matches(SKIP)) return;
-  for (const a of ATTRS) if (n.hasAttribute(a)) { const v = n.getAttribute(a), t = tr(v); if (t !== v) n.setAttribute(a, t); }
+  if (n.nodeType !== 1) return;
+  // a text box's typed value is never touched, but its placeholder / tooltip is UI text
+  const attrs = (e) => { for (const a of ATTRS) if (e.hasAttribute(a)) { const v = e.getAttribute(a), t = tr(v); if (t !== v) e.setAttribute(a, t); } };
+  if (n.matches(SKIP)) { if (n.matches("textarea, input, select") && !n.closest("[data-raw]")) attrs(n); n.querySelectorAll?.("textarea").forEach((x) => !x.closest("[data-raw]") && attrs(x)); return; }
+  attrs(n);
   const w = document.createTreeWalker(n, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode: (x) => (x.nodeType === 1 && x.matches(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    acceptNode: (x) => (x.nodeType === 1 && x.matches(SKIP) ? (x.matches("textarea") && !x.closest("[data-raw]") && attrs(x), NodeFilter.FILTER_REJECT) : NodeFilter.FILTER_ACCEPT),
   });
   let x;
   while ((x = w.nextNode())) {
