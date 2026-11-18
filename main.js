@@ -1774,7 +1774,7 @@ function bannerCard(ro) {
   return `<div class="card sec" style="max-width:860px" id="ebCard"><div class="card-h"><h3>📧 ${L("Email banners", "Email banners")} <span class="mu" style="font-weight:500">(${list.length}/${MAX_BANNERS})</span></h3><span class="sp"></span>
       <label class="check"><input type="checkbox" id="ebOn" ${v.on !== false ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("Har mail ke neeche lagao", "Add under every mail")}</label></div>
     <div class="card-b">
-      <p class="mu" style="font-size:12.5px;margin-top:0">${L("Jo banner <b>chuna</b> hai, wahi poori team ke Gmail signature mein lagta hai — CRM se Gmail kholo to template ke neeche apne aap. Banner badlo, ~1 minute mein sabke Gmail mein badal jata hai.", "The <b>selected</b> banner goes into the whole team's Gmail signature — open Gmail from the CRM and it sits under the template automatically. Change it and everyone's Gmail updates within ~1 minute.")}</p>
+      <p class="mu" style="font-size:12.5px;margin-top:0">${L("Jo banner <b>chuna</b> hai, wahi poori team ke har CRM mail mein lagta hai — Gmail mein kholo dabao, draft template + banner ke saath khulta hai. Banner badlo, agle mail se sabke liye naya.", "The <b>selected</b> banner goes into every CRM mail of the whole team — press Open in Gmail and the draft opens with the template + banner. Change it and everyone's next mail uses the new one.")}</p>
       <div class="eb-list">${list.map((b) => `<label class="eb-item ${b.id === act ? "on" : ""}">
         <div class="eb-top"><input type="radio" name="ebAct" value="${h(b.id)}" ${b.id === act ? "checked" : ""} ${ro ? "disabled" : ""}><b>${h(b.name || L("Banner", "Banner"))}</b>${b.id === act ? `<span class="badge good">${L("Team ke liye ON", "In use by the team")}</span>` : ""}<span class="sp" style="flex:1"></span>
           ${ro ? "" : `<button type="button" class="btn sm ghost" data-ebedit="${h(b.id)}">${ic("file")} ${L("Edit", "Edit")}</button><button type="button" class="btn sm ghost danger" data-ebdel="${h(b.id)}" title="${h(L("Delete", "Delete"))}">${ic("trash")}</button>`}</div>
@@ -1839,13 +1839,13 @@ function wireBannerCard(el) {
     if (!(await confirmBox(L(`"${b.name}" banner delete karna hai?`, `Delete the "${b.name}" banner?`), "Delete"))) return;
     busy(x, () => save({ list: list.filter((y) => y.id !== b.id) }, L("🗑 Banner delete ho gaya", "🗑 Banner deleted")));
   });
-  $$("input[name=ebAct]", card).forEach((r) => r.onchange = () => busy(null, () => save({ active: r.value }, L("✔ Team banner badla — sabke Gmail mein ~1 minute mein", "✔ Team banner changed — everyone's Gmail updates within ~1 minute"))));
-  $("#ebOn", card).onchange = (e) => busy(null, () => save({ on: e.target.checked }, e.target.checked ? L("✔ Banner ON", "✔ Banner ON") : L("Banner OFF — sabke Gmail signature se hat jayega", "Banner OFF — it will be removed from everyone's Gmail signature")));
+  $$("input[name=ebAct]", card).forEach((r) => r.onchange = () => busy(null, () => save({ active: r.value }, L("✔ Team banner badla — agle mail se sabke liye", "✔ Team banner changed — everyone's next mail uses it"))));
+  $("#ebOn", card).onchange = (e) => busy(null, () => save({ on: e.target.checked }, e.target.checked ? L("✔ Banner ON", "✔ Banner ON") : L("Banner OFF — mails bina banner ke", "Banner OFF — mails go without it")));
   // who already has it in their Gmail
   sb.rpc("banner_team_status").then(({ data }) => {
     const box = $("#ebTeam", card); if (!box || !data) return;
     const ok = data.filter((r) => r.sig_ok), todo = data.filter((r) => !r.sig_ok);
-    box.innerHTML = `📬 ${L("Gmail mein lag gaya", "In their Gmail")}: <b>${ok.length}/${data.length}</b>${todo.length ? ` · ${L("baaki", "pending")}: ${todo.map((r) => h(userName(r.user_id)) + (r.connected ? "" : L(" (Gmail setup nahi)", " (no Gmail setup)"))).join(", ")}` : " ✔"}`;
+    box.innerHTML = `📬 ${L("Gmail ready (naya code)", "Gmail ready (new code)")}: <b>${ok.length}/${data.length}</b>${todo.length ? ` · ${L("baaki", "pending")}: ${todo.map((r) => h(userName(r.user_id)) + (r.connected ? "" : L(" (Gmail setup nahi)", " (no Gmail setup)"))).join(", ")}` : " ✔"}`;
   });
 }
 

@@ -39,6 +39,35 @@ export async function ensureWork(entity, row) {
 }
 
 // ---------------------------------------------------------------------
+//  Gmail draft with the team banner (made by the person's Gmail script)
+// ---------------------------------------------------------------------
+function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m }) {
+  // open the tab now (inside the click) — a tab opened later would be blocked
+  const w = window.open("", "_blank");
+  try { w.document.title = "Gmail draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Gmail draft ban raha hai…", "Making your Gmail draft…")}</b><br><span style="color:#667">${L("Template + Geninfo banner ke saath. ~30 second, ye tab apne aap khul jayega.", "With the template + Geninfo banner. ~30 seconds, this tab opens it automatically.")}</span></div>`; } catch { /* ignore */ }
+  const plainUrl = composeUrl("gmail", parts);
+  const go = (url) => { if (w && !w.closed) w.location.href = url; else if (!openTab(url)) toastAction(L("Gmail draft ready", "Gmail draft ready"), L("Kholo", "Open"), () => openTab(url), 20000); };
+  const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerHtml()}</div>`;
+  sb.from("email_outbox").insert({ kind: "draft", to_addr: parts.to, cc: parts.cc || null, bcc: parts.bcc || null, subject: parts.subject, html, body: parts.body,
+    lead_id: !bulk && lead && canWork(lead) ? lead.id : null }).select("id").single().then(async ({ data: row, error }) => {
+    if (error) { go(plainUrl); return fail(error); }
+    logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu }).catch(fail);
+    toast(L("⏳ Gmail draft ban raha hai — naye tab mein apne aap khulega (~30 sec)", "⏳ Making the Gmail draft — it opens in the new tab automatically (~30 sec)"));
+    const t0 = Date.now();
+    while (Date.now() - t0 < 110000) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const { data: d } = await sb.from("email_outbox").select("status, gmail_id, account, error").eq("id", row.id).single();
+      if (d?.status === "drafted" && d.gmail_id) return go(`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id)}`);
+      if (d?.status === "failed") { toast(L("Gmail draft nahi bana: ", "Couldn't make the Gmail draft: ") + (d.error || ""), true); return go(plainUrl); }
+    }
+    await sb.from("email_outbox").update({ status: "cancelled" }).eq("id", row.id).eq("status", "queued");
+    toast(L("Gmail script jawab nahi de raha — bina banner ke Gmail khol diya", "The Gmail script didn't answer — opened Gmail without the banner"), true);
+    go(plainUrl);
+  });
+  closeModal();
+}
+
+// ---------------------------------------------------------------------
 //  Templates cache
 // ---------------------------------------------------------------------
 let TPL = [], tplAt = 0;
@@ -163,15 +192,16 @@ export async function openComposer(opts) {
     $("#cPrev", m).textContent = on ? "✏️ Edit" : "👁 Preview";
   };
   $("#cSave", m).onclick = () => saveAsTemplate(channel, sub?.value || "", body.value);
-  // is the team banner already in this person's Gmail signature?
+  // can this person's Gmail script make the draft (template + banner)?
+  let draftOk = false;
   if (isEmail) sb.rpc("mail_status").then(({ data: ms }) => {
+    draftOk = !!ms?.draft_ok;
     const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
     const t = box.querySelector("span");
-    if (!bannerOn()) { box.hidden = true; return; }
-    if (ms?.sig_ok) { box.classList.add("ok"); t.textContent = L("✔ Gmail kholte hi template ke neeche Geninfo banner apne aap aayega (aapke Gmail signature se).", "✔ When Gmail opens, the Geninfo banner is under the template automatically (from your Gmail signature)."); return; }
-    t.innerHTML = ms?.sig_err ? L("Banner aapke Gmail mein set nahi ho paya — <b>Gmail setup ek baar dobara karo</b>.", "The banner couldn't be set in your Gmail — <b>run the Gmail setup once more</b>.")
-      : L("Har mail ke neeche team banner ke liye <b>Gmail setup ek baar karo</b> (2 min) — phir hamesha apne aap.", "For the team banner under every mail, <b>do the Gmail setup once</b> (2 min) — then it's automatic forever.");
-    const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = L("Setup", "Set up");
+    if (draftOk) { box.classList.add("ok"); t.textContent = L("✔ Gmail mein kholo — draft template + Geninfo banner ke saath khulega (~30 sec).", "✔ Open in Gmail — the draft opens with the template + the Geninfo banner (~30 sec)."); return; }
+    t.innerHTML = ms?.connected ? L("Banner ke saath Gmail draft ke liye <b>Gmail code ek baar update karo</b>.", "For Gmail drafts with the banner, <b>update your Gmail code once</b>.")
+                                : L("Banner ke saath Gmail draft ke liye <b>Gmail ek baar connect karo</b> (2 min).", "For Gmail drafts with the banner, <b>connect Gmail once</b> (2 min).");
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = ms?.connected ? L("Update", "Update") : L("Connect", "Connect");
     b.onclick = () => gmailSetup(); box.append(b);
   });
 
@@ -194,7 +224,8 @@ export async function openComposer(opts) {
     if (!subject) return toast("Subject daalo", true);
     const bcc = bulk ? bulkList.map((l) => l.email).join(",") : "";
     const parts = { to: bulk ? S.me.email : toList.join(","), cc: cc.join(","), bcc, subject, body: mdToPlain(text) };
-    // the template goes in the compose link; the banner comes from the person's Gmail signature (set by their Gmail script)
+    // Gmail + banner + script ready → the script makes a real Gmail draft (template + banner) and we open it
+    if (provider === "gmail" && bannerOn() && draftOk) return openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, m });
     let url = composeUrl(provider, parts), copied = false;
     if (url.length > URL_LIMIT[provider]) { url = composeUrl(provider, { ...parts, body: "" }); copyRich(text); copied = true; }
     if (!openTab(url)) showFallback(url, PROVIDERS.find((p) => p[0] === provider)[1]);
@@ -500,9 +531,8 @@ const GAS_MANIFEST = JSON.stringify({
 function appsScript(token) {
   const url = CONFIG.SUPABASE_URL + "/functions/v1/mail-sync";
   return `// Genesis Nova — Gmail for ${S.me.email}
-// 1) Admin ka chuna hua Geninfo banner aapke Gmail signature mein lagata hai (banner badla to yahan bhi apne aap)
-// 2) CRM se "Send" kiye mails aapke Gmail se bhejta hai
-// 3) Sirf un addresses ke replies CRM ko bhejta hai jinko aapne CRM se email kiya hai.
+// 1) CRM mein "Gmail mein kholo" dabate hi aapke Gmail mein draft banata hai — template + team ka banner
+// 2) Sirf un addresses ke replies CRM ko bhejta hai jinko aapne CRM se email kiya hai.
 const CRM_URL = "${url}";
 const TOKEN = "${token}";   // personal — kisi ke saath share mat karo
 
@@ -518,7 +548,7 @@ function removeSetup() {                 // ▶ sync band karna ho to ye Run kar
 }
 
 function call_(action, payload) {
-  var res = UrlFetchApp.fetch(CRM_URL + "?action=" + action, {
+  var res = UrlFetchApp.fetch(CRM_URL + "?v=2&action=" + action, {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
@@ -531,35 +561,29 @@ function call_(action, payload) {
   return JSON.parse(res.getContentText());
 }
 
-function sendQueued_() {                // CRM mein "Send" kiye mails → aapke Gmail se
+function sendQueued_() {                // CRM se aaye mails: draft banao (ya seedha bhejo)
   var o = call_("outbox");
-  try { syncSignature_(o); } catch (e) { try { call_("sig", { ok: false, error: String(e && e.message || e) }); } catch (e2) {} }
   if (!o.items || !o.items.length) return;
   var img = null;
   if (o.banner) { try { img = UrlFetchApp.fetch(o.banner).getBlob().setName("geninfo-banner"); } catch (e) { img = null; } }
+  var me = Session.getActiveUser().getEmail();
   var res = [];
   o.items.forEach(function (m) {
     try {
       var opt = { htmlBody: m.html, name: o.name };
-      if (img) { opt.htmlBody = m.html.split(o.banner).join("cid:gnbanner"); opt.inlineImages = { gnbanner: img }; }
+      if (img && o.banner) { opt.htmlBody = m.html.split(o.banner).join("cid:gnbanner"); opt.inlineImages = { gnbanner: img }; }
       if (m.cc) opt.cc = m.cc;
       if (m.bcc) opt.bcc = m.bcc;
-      GmailApp.sendEmail(m.to, m.subject, m.body || " ", opt);
-      res.push({ id: m.id, ok: true });
+      if (m.kind === "draft") {
+        var d = GmailApp.createDraft(m.to, m.subject, m.body || " ", opt);
+        res.push({ id: m.id, ok: true, draft: true, msg_id: d.getMessage().getId(), account: me });
+      } else {
+        GmailApp.sendEmail(m.to, m.subject, m.body || " ", opt);
+        res.push({ id: m.id, ok: true });
+      }
     } catch (e) { res.push({ id: m.id, ok: false, error: String(e && e.message || e) }); }
   });
   call_("sent", { results: res });
-}
-
-function syncSignature_(o) {             // team banner → Gmail signature (sirf jab admin banner badle)
-  var props = PropertiesService.getUserProperties();
-  var want = String(o.banner_ver || "default");
-  if (props.getProperty("sigver") === want) return;
-  var me = Session.getActiveUser().getEmail();
-  var html = o.banner ? '<div><a href="' + (o.banner_link || "#") + '"><img src="' + o.banner + '" width="600" alt="Geninfo" style="width:600px;max-width:100%;height:auto;border:0"></a></div>' : "";
-  Gmail.Users.Settings.SendAs.patch({ signature: html }, "me", me);
-  props.setProperty("sigver", want);
-  call_("sig", { ver: want, ok: true });
 }
 
 function syncReplies() {
@@ -600,7 +624,7 @@ export async function gmailSetup(done) {
         <li>${L('Left side ⚙️ <b>Project Settings</b> → <b>"Show appsscript.json manifest file"</b> tick karo → wapas <b>Editor</b> (&lt;&gt;) → <b>appsscript.json</b> kholo → <b>Ctrl + A</b> → neeche diya <b>appsscript.json</b> paste karo → 💾 Save. (Isse script aapke Gmail signature mein team ka banner laga sakta hai.)',
           'Left side ⚙️ <b>Project Settings</b> → tick <b>"Show appsscript.json manifest file"</b> → back to the <b>Editor</b> (&lt;&gt;) → open <b>appsscript.json</b> → <b>Ctrl + A</b> → paste the <b>appsscript.json</b> below → 💾 Save. (This lets the script put the team banner in your Gmail signature.)')}</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
-        <li>${L("Bas! ~1 minute mein team ka banner aapke Gmail signature mein lag jayega — CRM se Gmail kholo, template ke neeche banner apne aap. Admin banner badle to aapke Gmail mein bhi apne aap badlega. Replies har minute Inbox mein aate hain.", "Done! Within ~1 minute the team banner is in your Gmail signature — open Gmail from the CRM and the banner is under the template automatically. When the Admin changes it, yours changes too. Replies reach the Inbox every minute.")}</li>
+        <li>${L("Bas! Ab CRM mein <b>Gmail mein kholo</b> dabao — aapke Gmail mein draft khulega: template + neeche team ka banner. Admin banner badle to agle mail se naya. Replies har minute Inbox mein aate hain.", "Done! Now press <b>Open in Gmail</b> in the CRM — a draft opens in your Gmail: the template + the team banner underneath. When the Admin changes the banner, the next mail uses it. Replies reach the Inbox every minute.")}</li>
         <li class="mu">${L("Band karna ho: yahan <b>Disconnect</b> dabao (ya Apps Script mein <b>removeSetup</b> Run karo).", "To stop: press <b>Disconnect</b> here (or Run <b>removeSetup</b> in Apps Script).")}</li>
       </ol>
       <div id="gsCode"></div>
