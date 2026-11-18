@@ -579,3 +579,14 @@ details.stg > summary::-webkit-details-marker { display: none; }
 
 /* a page shown from memory while fresh data loads: visible at once, not clickable for that split second */
 .page.stale { pointer-events: none; }
+
+/* email banner tip / preview */
+.sigtip { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--accent-soft); font-size: 13px; }
+.sigtip.ok { background: var(--surface-2); color: var(--tx-2); }
+.sigtip img { height: 34px; width: auto; border-radius: 4px; border: 1px solid var(--line); background: #fff; }
+.sigtip span { flex: 1; min-width: 0; }
+.sigprev { padding: 14px; background: #fff; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.sigprev img { margin-top: 0 !important; }
+#cPreview img { max-width: 100%; height: auto; }
+@media (max-width: 640px) { .sigtip img { display: none; } }
+.sigtip .sigguide { flex-basis: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; color: var(--tx); }

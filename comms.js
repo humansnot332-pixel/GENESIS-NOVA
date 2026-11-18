@@ -6,7 +6,7 @@
 import {
   sb, S, h, ic, dt, ago, toast, fail, modal, closeModal, confirmBox, busy, isMgr, isAdmin, userName, ROLE,
   STATUS, OPEN_STATUSES, HOOK, lockOf, canWork, claim, claimFailMsg, claimOkMsg, tplContext, TPL_VARS, fillTemplate,
-  mdToPlain, mdToHtml, mdToWhatsApp, composeUrl, URL_LIMIT, waUrl, openTab, copyRich, loadScript, isMobile, callFn,
+  mdToPlain, mdToHtml, mdToWhatsApp, composeUrl, URL_LIMIT, waUrl, openTab, copyRich, loadScript, isMobile, callFn, bannerHtml, bannerUrl, bannerInSignature,
 } from "./core.js";
 import { L, isEn, getLang } from "./i18n.js";
 import { CONFIG } from "./config.js";
@@ -36,6 +36,65 @@ export async function ensureWork(entity, row) {
   toast(claimOkMsg(r, entity === "rfq" ? "RFQ" : "Lead"));
   HOOK.softRefresh();
   return true;
+}
+
+// ---------------------------------------------------------------------
+//  Geninfo banner in the mail signature (one-time, per person)
+// ---------------------------------------------------------------------
+const SIG_OK = () => L("✔ Geninfo banner aapke mail signature se har mail ke neeche lagega.", "✔ The Geninfo banner is added under every mail by your mail signature.");
+function sigSteps(k) {
+  const st = {
+    gmail: [L("<b>📋 Banner copy karo</b> dabao.", "Click <b>📋 Copy banner</b>."),
+      L('<a href="https://mail.google.com/mail/u/0/#settings/general" target="_blank" rel="noopener noreferrer">Gmail → ⚙️ Settings → See all settings → General</a> kholo (usi account se jisse mail bhejte ho).', 'Open <a href="https://mail.google.com/mail/u/0/#settings/general" target="_blank" rel="noopener noreferrer">Gmail → ⚙️ Settings → See all settings → General</a> (the account you send mail from).'),
+      L("<b>Signature</b> tak scroll karo → <b>+ Create new</b> → naam do <i>Geninfo banner</i> → box mein <b>Ctrl+V</b> (Mac: Cmd+V).", "Scroll to <b>Signature</b> → <b>+ Create new</b> → name it <i>Geninfo banner</i> → paste with <b>Ctrl+V</b> (Mac: Cmd+V)."),
+      L("Usi ke neeche <b>Signature defaults</b>: <i>For new emails use</i> aur <i>On reply/forward use</i> dono mein <b>Geninfo banner</b> chuno.", "Under <b>Signature defaults</b> pick <b>Geninfo banner</b> for both <i>For new emails use</i> and <i>On reply/forward use</i>."),
+      L("Page ke bilkul neeche <b>Save Changes</b> dabao. Bas!", "Click <b>Save Changes</b> at the very bottom. Done!")],
+    outlook: [L("<b>📋 Banner copy karo</b> dabao.", "Click <b>📋 Copy banner</b>."),
+      L('<a href="https://outlook.office.com/mail/options/mail/messageContent" target="_blank" rel="noopener noreferrer">Outlook → ⚙️ Settings → Mail → Compose and reply</a> kholo.', 'Open <a href="https://outlook.office.com/mail/options/mail/messageContent" target="_blank" rel="noopener noreferrer">Outlook → ⚙️ Settings → Mail → Compose and reply</a>.'),
+      L("<b>+ New signature</b> → naam <i>Geninfo banner</i> → box mein <b>Ctrl+V</b> → <b>Save</b>.", "<b>+ New signature</b> → name it <i>Geninfo banner</i> → paste with <b>Ctrl+V</b> → <b>Save</b>."),
+      L("<b>Select default signatures</b>: <i>For New Messages</i> aur <i>For Replies/Forwards</i> dono mein <b>Geninfo banner</b> → <b>Save</b>.", "<b>Select default signatures</b>: pick <b>Geninfo banner</b> for <i>For New Messages</i> and <i>For Replies/Forwards</i> → <b>Save</b>.")],
+  };
+  return `<ol style="padding-left:20px;line-height:1.75;margin:10px 0 0">${st[k].map((x) => `<li>${x}</li>`).join("")}</ol>`;
+}
+function sigGuideHtml(withPreview) {
+  const prov = S.me?.mail_provider === "outlook" ? "outlook" : "gmail";
+  return `<p class="mu" style="margin:0">${L("CRM se mail Gmail / Outlook mein khulta hai — banner wahan aapke <b>signature</b> se lagta hai. Ek baar set karo, phir CRM se ho ya seedha Gmail se, har naye mail aur reply ke neeche apne aap aayega. Template ka naam / designation wala hissa waise hi rahega, banner uske neeche aayega.",
+      "Mails from the CRM open in Gmail / Outlook — the banner comes from your <b>signature</b> there. Set it once and it appears under every new mail and reply, from the CRM or straight from Gmail. The name / designation part of your templates stays; the banner sits below it.")}</p>
+    ${withPreview ? `<div class="sigprev" style="margin-top:12px">${bannerHtml()}</div>` : ""}
+    <div class="chips" style="margin-top:12px">${[["gmail", "Gmail"], ["outlook", "Outlook"]].map(([k, l]) => `<button type="button" class="chip ${k === prov ? "on" : ""}" data-sp="${k}">${l}</button>`).join("")}</div>
+    <div data-spsteps>${sigSteps(prov)}</div>`;
+}
+async function copyBanner() {
+  const html = bannerHtml(); let ok = false;
+  try { if (window.ClipboardItem) { await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([bannerUrl()], { type: "text/plain" }) })]); ok = true; } } catch { /* fall back */ }
+  if (!ok) try { await navigator.clipboard.writeText(bannerUrl()); ok = true; } catch { /* ignore */ }
+  toast(ok ? L("📋 Banner copy ho gaya — ab signature box mein Ctrl+V karo", "📋 Banner copied — now press Ctrl+V in the signature box") : L("Copy nahi hua — banner pe right-click → Copy image karo", "Couldn't copy — right-click the banner → Copy image"), !ok);
+}
+const markSigDone = () => { try { localStorage.setItem("crm_sig_banner", "1"); } catch { /* ignore */ } };
+function wireSigGuide(root, onDone) {
+  $$("[data-sp]", root).forEach((b) => b.onclick = () => { $$("[data-sp]", root).forEach((x) => x.classList.toggle("on", x === b)); $("[data-spsteps]", root).innerHTML = sigSteps(b.dataset.sp); });
+  $("[data-spcopy]", root).onclick = copyBanner;
+  $("[data-spdone]", root).onclick = () => { markSigDone(); onDone(); toast(L("✔ Banner set — ab har mail ke neeche aayega", "✔ Banner set — it will appear under every mail")); };
+}
+// from the profile: a popup.  From the email composer: opens inside it, so the draft is never lost.
+export function signatureSetup(inline) {
+  const btns = `<button type="button" class="btn" data-spcopy>📋 ${L("Banner copy karo", "Copy banner")}</button><span style="flex:1"></span><button type="button" class="btn primary" data-spdone>✔ ${L("Ho gaya, set kar diya", "Done, it's set")}</button>`;
+  if (inline) {
+    const open = inline.querySelector(".sigguide");
+    if (open) { open.parentNode.removeChild(open); return; }
+    const g = document.createElement("div"); g.className = "sigguide";
+    g.innerHTML = sigGuideHtml(false) + `<div class="row" style="margin-top:10px">${btns}</div>`;
+    inline.append(g);
+    wireSigGuide(g, () => {
+      g.parentNode && g.parentNode.removeChild(g);
+      inline.classList.add("ok"); inline.querySelector("span").textContent = SIG_OK();
+      const b = inline.querySelector("#cSig"); if (b) { b.textContent = L("Dobara setup", "Set up again"); b.classList.remove("primary"); }
+    });
+    return;
+  }
+  const m = modal({ title: L("🖼 Har mail ke neeche Geninfo banner", "🖼 Geninfo banner under every mail"), wide: true, body: sigGuideHtml(true),
+    foot: btns.replace('<span style="flex:1"></span>', `<span style="flex:1"></span><button class="btn" data-close>${L("Baad mein", "Later")}</button>`) });
+  wireSigGuide(m, () => closeModal());
 }
 
 // ---------------------------------------------------------------------
@@ -125,6 +184,9 @@ export async function openComposer(opts) {
     <textarea class="input" id="cBody" style="min-height:300px;font-size:13.5px;line-height:1.55"></textarea>
     <div id="cPreview" class="script" style="display:none;max-height:340px;overflow:auto;background:var(--surface);border:1px solid var(--line)"></div>
     <div class="mu" style="font-size:12px;margin-top:4px">**text** = bold. Aap kuch bhi edit kar sakte ho — bhejne se pehle sab yahin badlo.</div>
+    ${isEmail ? `<div class="sigtip ${bannerInSignature() ? "ok" : ""}" id="cSigTip"><img src="${h(bannerUrl())}" alt=""><span>${bannerInSignature() ? SIG_OK()
+      : L("🖼 Har mail ke neeche Geninfo banner — Gmail / Outlook signature mein ek baar set karo (1 min).", "🖼 Geninfo banner under every mail — set it once in your Gmail / Outlook signature (1 min).")}</span>
+      <button type="button" class="btn sm ${bannerInSignature() ? "" : "primary"}" id="cSig">${bannerInSignature() ? L("Dobara setup", "Set up again") : L("Setup karo", "Set it up")}</button></div>` : ""}
     ${lead && !bulk ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="cFu" ${lead.next_follow_up ? "" : "checked"}> 3 din baad follow-up reminder set karo</label>` : ""}
     <div id="cFallback"></div>`,
     foot: isEmail
@@ -157,12 +219,13 @@ export async function openComposer(opts) {
   };
   $("#cPrev", m).onclick = () => {
     const p = $("#cPreview", m), on = p.style.display === "none";
-    p.innerHTML = isEmail ? mdToHtml(body.value) : h(mdToWhatsApp(body.value)).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+    p.innerHTML = isEmail ? mdToHtml(body.value) + bannerHtml() : h(mdToWhatsApp(body.value)).replace(/\*([^*\n]+)\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
     p.style.display = on ? "block" : "none"; body.style.display = on ? "none" : "block";
     $("#cPrev", m).textContent = on ? "✏️ Edit" : "👁 Preview";
   };
   $("#cSave", m).onclick = () => saveAsTemplate(channel, sub?.value || "", body.value);
-  $("#cCopy", m).onclick = async () => { const ok = isEmail ? await copyRich(body.value) : await navigator.clipboard.writeText(mdToWhatsApp(body.value)).then(() => true, () => false); toast(ok ? "Copied ✔ — kahin bhi paste karo" : "Copy nahi hua", !ok); };
+  $("#cSig", m)?.addEventListener("click", () => signatureSetup($("#cSigTip", m)));
+  $("#cCopy", m).onclick = async () => { const ok = isEmail ? await copyRich(body.value, { banner: true }) : await navigator.clipboard.writeText(mdToWhatsApp(body.value)).then(() => true, () => false); toast(ok ? "Copied ✔ — kahin bhi paste karo" : "Copy nahi hua", !ok); };
 
   const tplId = () => +$("#cTpl", m).value || null;
   const showFallback = (url, label) => {
@@ -182,7 +245,7 @@ export async function openComposer(opts) {
     const bcc = bulk ? bulkList.map((l) => l.email).join(",") : "";
     const parts = { to: bulk ? S.me.email : toList.join(","), cc: cc.join(","), bcc, subject, body: mdToPlain(text) };
     let url = composeUrl(provider, parts), copied = false;
-    if (url.length > URL_LIMIT[provider]) { url = composeUrl(provider, { ...parts, body: "" }); copyRich(text); copied = true; }
+    if (url.length > URL_LIMIT[provider]) { url = composeUrl(provider, { ...parts, body: "" }); copyRich(text, { banner: !bannerInSignature() }); copied = true; }
     if (!openTab(url)) showFallback(url, PROVIDERS.find((p) => p[0] === provider)[1]);
     if (provider !== S.me.mail_provider) { S.me.mail_provider = provider; sb.from("profiles").update({ mail_provider: provider }).eq("id", S.me.id).then(() => {}, () => {}); }
     logEmail({ provider, subject, text, toList, cc, opts, tplId: tplId(), bulkList, fu: $("#cFu", m)?.checked }).catch(fail);

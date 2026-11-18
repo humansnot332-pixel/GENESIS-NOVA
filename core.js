@@ -393,8 +393,17 @@ export function openTab(url) {
   if (w) { try { w.opener = null; } catch { /* ignore */ } return true; }
   return false;
 }
-export async function copyRich(md) {
-  const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${mdToHtml(md)}</div>`;
+// ---------- company email banner (Geninfo) under every mail ----------
+// Compose links (Gmail / Outlook) only carry plain text, so the banner rides in each person's mail signature;
+// the CRM shows it in the preview and adds it to rich "Copy".
+export const bannerUrl = () => new URL("email-banner.png", location.href.split("#")[0]).href;
+export const bannerHtml = () => {
+  const site = S.settings?.company?.website_url || "https://www.genesisinfoserve.com";
+  return `<a href="${h(site)}" target="_blank" rel="noopener noreferrer"><img src="${h(bannerUrl())}" alt="Geninfo — Genesis Infoserve" width="600" style="display:block;width:600px;max-width:100%;height:auto;border:0;margin-top:14px"></a>`;
+};
+export const bannerInSignature = () => { try { return localStorage.getItem("crm_sig_banner") === "1"; } catch { return false; } };
+export async function copyRich(md, { banner = false } = {}) {
+  const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${mdToHtml(md)}${banner ? bannerHtml() : ""}</div>`;
   try {
     if (window.ClipboardItem) {
       await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([mdToPlain(md)], { type: "text/plain" }) })]);

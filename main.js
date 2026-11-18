@@ -9,7 +9,7 @@ import {
   HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail,
 } from "./core.js";
 import {
-  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, toggleNotifications, unreadCounts,
+  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, signatureSetup, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
@@ -1988,11 +1988,13 @@ ACT.profile = () => {
       <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
       <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="en" ${isEn() ? "selected" : ""}>English</option><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option></select></div>
       <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
+      <div class="sigtip" style="margin-top:14px"><img src="email-banner.png" alt=""><span>${L("Geninfo banner aapke mails ke neeche", "Geninfo banner under your mails")}</span><button type="button" class="btn sm" id="pSig">🖼 ${L("Setup", "Set up")}</button></div>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">
       <input class="input" id="pp2" type="password" placeholder="Confirm" autocomplete="new-password">`,
     foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="ps">Save</button>`,
   });
+  $("#pSig", m).onclick = () => signatureSetup();
   $("#ps", m).onclick = (e) => busy(e.target, async () => {
     const n = $("#pn", m).value.trim(), p1 = $("#pp1", m).value, p2 = $("#pp2", m).value;
     const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value, lang: $("#plang", m).value };
