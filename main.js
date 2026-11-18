@@ -646,22 +646,26 @@ ACT.go = (t) => { location.hash = "#/" + t.dataset.go; };
 // ---------------------------------------------------------------------
 //  Small chart helpers (single-series, hover tooltip)
 // ---------------------------------------------------------------------
-function barChart(data, { height = 180, fmt = num, label = "" } = {}) {
+function barChart(data, { height = 190, fmt = num, label = "", hiLast = false } = {}) {
   if (!data.length) return `<div class="empty">Data nahi hai</div>`;
-  const W = 640, H = height, pl = 34, pb = 22, pt = 8, max = Math.max(1, ...data.map((d) => d.v));
-  const nice = (m) => { const p = Math.pow(10, Math.floor(Math.log10(m))); return Math.ceil(m / p) * p; };
-  const top = nice(max), bw = (W - pl) / data.length, gap = Math.min(10, bw * 0.3);
-  const y = (v) => pt + (H - pt - pb) * (1 - v / top);
-  const ticks = [0, top / 2, top];
-  const every = Math.ceil(data.length / 8);
+  const W = 640, H = height, pl = 30, pb = 24, pt = 18, max = Math.max(0, ...data.map((d) => d.v));
+  // whole-number axis with at most ~4 steps: 0,1,2 / 0,5,10 / 0,25,50 …
+  const ints = data.every((d) => Number.isInteger(d.v));
+  const raw = Math.max(ints ? 1 : 0.0001, max / 4), mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw && (!ints || Number.isInteger(x))) || 10 * mag;
+  const top = Math.max(step, Math.ceil(max / step) * step), ticks = [...Array(Math.round(top / step) + 1)].map((_, i) => i * step);
+  const bw = (W - pl) / data.length, gap = Math.min(12, bw * 0.28), y = (v) => pt + (H - pt - pb) * (1 - v / top);
+  const every = Math.ceil(data.length / 14), showVals = data.length <= 31, last = data.length - 1;
+  const showLab = (i) => i === last || (i % every === 0 && last - i >= every);
   return `<div class="chart" role="img" aria-label="${h(label)}"><svg viewBox="0 0 ${W} ${H}">
     <g class="grid">${ticks.map((t) => `<line x1="${pl}" x2="${W}" y1="${y(t)}" y2="${y(t)}"/>`).join("")}</g>
     <g class="axis">${ticks.map((t) => `<text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end">${h(fmt(t))}</text>`).join("")}
-      ${data.map((d, i) => i % every === 0 ? `<text x="${pl + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${h(d.l)}</text>` : "").join("")}</g>
+      ${data.map((d, i) => showLab(i) ? `<text x="${pl + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle" class="${hiLast && i === last ? "today" : ""}">${h(hiLast && i === last ? L("Aaj", "Today") : d.l)}</text>` : "").join("")}</g>
     ${data.map((d, i) => {
-      const x = pl + i * bw + gap / 2, w = bw - gap, yy = y(d.v), hh = Math.max(0, H - pb - yy), r = Math.min(4, w / 2, hh);
-      const path = hh > 0 ? `M${x},${H - pb} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + w - r} Q${x + w},${yy} ${x + w},${yy + r} V${H - pb} Z` : "";
-      return `<g><rect class="hit" x="${pl + i * bw}" y="${pt}" width="${bw}" height="${H - pt - pb}" data-tip="${h(d.t || d.l)}" data-tv="${h(fmt(d.v))}"/>${path ? `<path class="bar" d="${path}"/>` : ""}</g>`;
+      const x = pl + i * bw + gap / 2, w = bw - gap, yy = y(d.v), hh = Math.max(0, H - pb - yy), r = Math.min(5, w / 2, hh);
+      const path = hh > 0 ? `M${x},${H - pb} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + w - r} Q${x + w},${yy} ${x + w},${yy + r} V${H - pb} Z` : `M${x},${H - pb - 2} H${x + w} V${H - pb} H${x} Z`;
+      const cls = (hh > 0 ? "bar" : "bar zero") + (hiLast && i === last ? " now" : "");
+      return `<g class="col" tabindex="0" data-tip="${h(d.t || d.l)}" data-tv="${h(fmt(d.v))}"><rect class="hit" x="${pl + i * bw}" y="${pt - 14}" width="${bw}" height="${H - pt - pb + 14}"/><path class="${cls}" d="${path}"/>${showVals && d.v > 0 ? `<text class="val" x="${x + w / 2}" y="${yy - 5}" text-anchor="middle">${h(fmt(d.v))}</text>` : ""}</g>`;
     }).join("")}
   </svg></div>`;
 }
@@ -669,16 +673,22 @@ function hbars(rows, fmt = num) {
   const max = Math.max(1, ...rows.map((r) => r.v));
   return rows.map((r) => `<div class="hbar" title="${h(r.l)}: ${h(fmt(r.v))}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(r.l)}</span><span class="trk"><i style="width:${(r.v / max) * 100}%"></i></span><span class="n">${h(fmt(r.v))}</span></div>`).join("") || `<div class="mu">—</div>`;
 }
-document.addEventListener("mouseover", (e) => {
-  const t = e.target.closest?.(".chart .hit"); const c = t?.closest(".chart");
-  $$(".chart .tip").forEach((x) => x.remove());
-  if (!t || !c) return;
-  const r = t.getBoundingClientRect(), cr = c.getBoundingClientRect();
+// chart tooltip: hover on PC, tap on phone; sits above the bar, never on top of it
+function chartTip(col) {
+  $$(".chart .tip").forEach((x) => x.parentNode && x.parentNode.removeChild(x)); $$(".chart .col.on").forEach((x) => x.classList.toggle("on", false));
+  const c = col?.closest(".chart"); if (!col || !c) return;
+  col.classList.add("on");
+  const bar = col.querySelector(".bar") || col, r = bar.getBoundingClientRect(), hr = col.querySelector(".hit").getBoundingClientRect(), cr = c.getBoundingClientRect();
   const tip = document.createElement("div"); tip.className = "tip";
-  tip.innerHTML = `<b>${h(t.dataset.tv)}</b>${h(t.dataset.tip)}`;
-  tip.style.left = r.left - cr.left + r.width / 2 + "px"; tip.style.top = Math.max(0, r.top - cr.top + 30) + "px";
-  c.append(tip);
-});
+  tip.innerHTML = `<b>${h(col.dataset.tv)}</b>${h(col.dataset.tip)}`; c.append(tip);
+  const tw = tip.offsetWidth, cx = hr.left - cr.left + hr.width / 2;
+  tip.style.left = Math.min(Math.max(cx, tw / 2 + 4), cr.width - tw / 2 - 4) + "px";
+  tip.style.top = Math.max(tip.offsetHeight + 4, r.top - cr.top - 10) + "px";
+}
+// hover only for a real mouse — on phones a tap fires stray mouse events that would close the tip again
+document.addEventListener("pointerover", (e) => { if (e.pointerType !== "mouse") return; const col = e.target.closest?.(".chart .col"); if (col || e.target.closest?.(".chart")) chartTip(col); else if (document.querySelector(".chart .tip")) chartTip(null); });
+document.addEventListener("click", (e) => { const col = e.target.closest?.(".chart .col"); if (col || document.querySelector(".chart .tip")) chartTip(col || null); });
+document.addEventListener("focusin", (e) => { const col = e.target.closest?.(".chart .col"); if (col) chartTip(col); });
 
 // ---------------------------------------------------------------------
 //  DASHBOARD
@@ -715,7 +725,7 @@ VIEWS.dashboard = async (el) => {
   </div>
   <div class="cols">
     <div class="stack">
-      <div class="card"><div class="card-h"><h3>${isMgr() ? "Team calls" : "Meri calls"} — last 14 din</h3></div><div class="card-b">${barChart(perDay, { label: "Calls per day" })}</div></div>
+      <div class="card"><div class="card-h"><h3>${isMgr() ? "Team calls" : "Meri calls"} — last 14 din</h3></div><div class="card-b">${barChart(perDay, { label: "Calls per day", hiLast: true })}</div></div>
       <div class="card"><div class="card-h"><h3>Lead status</h3><span class="sp"></span><a href="#/pipeline" class="mu">Pipeline →</a></div><div class="card-b">${hbars(STATUSES.map(([k, l]) => ({ l, v: bs[k] || 0 })))}</div></div>
     </div>
     <div class="stack">
@@ -1598,7 +1608,7 @@ VIEWS.reports = async (el) => {
       <div class="card kpi"><div class="l">Win rate (all leads)</div><div class="v">${total ? ((won / total) * 100).toFixed(1) : 0}%</div><div class="s">${num(won)} won / ${num(total)}</div></div>
       <div class="card kpi"><div class="l">Pipeline value</div><div class="v">${inrShort(st?.pipeline_value)}</div></div>
     </div>
-    <div class="card"><div class="card-h"><h3>Calls per day</h3></div><div class="card-b">${barChart(series, { height: 200, label: "Calls per day" })}</div></div>
+    <div class="card"><div class="card-h"><h3>Calls per day</h3></div><div class="card-b">${barChart(series, { height: 210, label: "Calls per day", hiLast: true })}</div></div>
     <div class="cols sec">
       <div class="card"><div class="card-h"><h3>${isMgr() ? "Team performance" : "Meri performance"}</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Calls</th><th class="num">Avg / din</th><th class="num">Positive</th><th class="num">Conversion</th></tr></thead><tbody>
         ${rows.map((r) => `<tr style="cursor:default"><td class="co">${h(r.name)}</td><td class="num">${num(r.calls)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num">${num(r.pos)}</td><td class="num">${r.conv.toFixed(1)}%</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Is period mein koi call nahi</td></tr>`}</tbody></table></div></div>

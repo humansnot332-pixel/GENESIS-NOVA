@@ -311,8 +311,15 @@ details.card[open] > summary { border-bottom: 1px solid var(--line); }
 .chart .axis text { fill: var(--mu); font-size: 11px; }
 .chart .bar { fill: var(--accent); }
 .chart .bar.dim { opacity: .45; }
-.chart .hit { fill: transparent; cursor: default; }
-.chart .hit:hover + .bar, .chart .bar.hl { fill: var(--accent-2); }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .col { outline: none; }
+.chart .bar { transition: fill .15s; }
+.chart .bar.zero { fill: var(--line-2); }
+.chart .bar.now { fill: var(--accent-2); }
+.chart .col:hover .bar:not(.zero), .chart .col.on .bar:not(.zero), .chart .col:focus-visible .bar:not(.zero), .chart .bar.hl { fill: var(--accent-2); filter: brightness(1.12); }
+.chart .col:hover .hit, .chart .col.on .hit { fill: color-mix(in srgb, var(--accent) 7%, transparent); }
+.chart .val { fill: var(--tx-2); font-size: 11px; font-weight: 700; pointer-events: none; }
+.chart .axis text.today { fill: var(--accent); font-weight: 700; }
 .tip {
   position: absolute; pointer-events: none; z-index: 5; background: var(--surface); border: 1px solid var(--line-2);
   box-shadow: var(--shadow-lg); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; white-space: nowrap; transform: translate(-50%, -110%);
