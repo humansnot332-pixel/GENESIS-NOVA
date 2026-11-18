@@ -44,7 +44,7 @@ export async function ensureWork(entity, row) {
 function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m }) {
   // open the tab now (inside the click) — a tab opened later would be blocked
   const w = window.open("", "_blank");
-  try { w.document.title = "Gmail draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Gmail draft ban raha hai…", "Making your Gmail draft…")}</b><br><span style="color:#667">${L("Template + Geninfo banner ke saath. ~30 second, ye tab apne aap khul jayega.", "With the template + Geninfo banner. ~30 seconds, this tab opens it automatically.")}</span></div>`; } catch { /* ignore */ }
+  try { w.document.title = "Gmail draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Gmail draft ban raha hai…", "Making your Gmail draft…")}</b><br><span style="color:#667">${S.me.mail_webapp ? L("Template + Geninfo banner ke saath. Bas 2-3 second…", "With the template + Geninfo banner. Just 2-3 seconds…") : L("Template + Geninfo banner ke saath. ~30 second, ye tab apne aap khul jayega.", "With the template + Geninfo banner. ~30 seconds, this tab opens it automatically.")}</span></div>`; } catch { /* ignore */ }
   const plainUrl = composeUrl("gmail", parts);
   const go = (url) => { if (w && !w.closed) w.location.href = url; else if (!openTab(url)) toastAction(L("Gmail draft ready", "Gmail draft ready"), L("Kholo", "Open"), () => openTab(url), 20000); };
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerHtml()}</div>`;
@@ -52,12 +52,20 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
     lead_id: !bulk && lead && canWork(lead) ? lead.id : null }).select("id").single().then(async ({ data: row, error }) => {
     if (error) { go(plainUrl); return fail(error); }
     logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu }).catch(fail);
+    const draftUrl = (d) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id || d.msg_id)}`;
+    if (S.me.mail_webapp) {
+      try {
+        const r = await fetch(S.me.mail_webapp, { redirect: "follow" }); const j = await r.json();
+        const mine = (j.done || []).find((x) => x.id === row.id && x.ok && x.msg_id);
+        if (mine) return go(draftUrl(mine));
+      } catch { /* the timer will still pick it up */ }
+    }
     toast(L("⏳ Gmail draft ban raha hai — naye tab mein apne aap khulega (~30 sec)", "⏳ Making the Gmail draft — it opens in the new tab automatically (~30 sec)"));
     const t0 = Date.now();
     while (Date.now() - t0 < 110000) {
       await new Promise((r) => setTimeout(r, 2500));
       const { data: d } = await sb.from("email_outbox").select("status, gmail_id, account, error").eq("id", row.id).single();
-      if (d?.status === "drafted" && d.gmail_id) return go(`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id)}`);
+      if (d?.status === "drafted" && d.gmail_id) return go(draftUrl(d));
       if (d?.status === "failed") { toast(L("Gmail draft nahi bana: ", "Couldn't make the Gmail draft: ") + (d.error || ""), true); return go(plainUrl); }
     }
     await sb.from("email_outbox").update({ status: "cancelled" }).eq("id", row.id).eq("status", "queued");
@@ -198,7 +206,11 @@ export async function openComposer(opts) {
     draftOk = !!ms?.draft_ok;
     const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
     const t = box.querySelector("span");
-    if (draftOk) { box.classList.add("ok"); t.textContent = L("✔ Gmail mein kholo — draft template + Geninfo banner ke saath khulega (~30 sec).", "✔ Open in Gmail — the draft opens with the template + the Geninfo banner (~30 sec)."); return; }
+    if (draftOk && S.me.mail_webapp) { box.classList.add("ok"); t.textContent = L("⚡ Gmail mein kholo — draft template + Geninfo banner ke saath turant khulega.", "⚡ Open in Gmail — the draft opens instantly with the template + the Geninfo banner."); return; }
+    if (draftOk) {
+      box.classList.add("ok"); t.innerHTML = L("✔ Draft banner ke saath ~30 sec mein khulega. <b>Turant</b> chahiye? Ek baar web app set karo.", "✔ The draft opens with the banner in ~30 sec. Want it <b>instant</b>? Set up the web app once.");
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn sm"; b.textContent = L("⚡ Turant karo", "⚡ Make it instant"); b.onclick = () => gmailSetup(); box.append(b); return;
+    }
     t.innerHTML = ms?.connected ? L("Banner ke saath Gmail draft ke liye <b>Gmail code ek baar update karo</b>.", "For Gmail drafts with the banner, <b>update your Gmail code once</b>.")
                                 : L("Banner ke saath Gmail draft ke liye <b>Gmail ek baar connect karo</b> (2 min).", "For Gmail drafts with the banner, <b>connect Gmail once</b> (2 min).");
     const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = ms?.connected ? L("Update", "Update") : L("Connect", "Connect");
@@ -561,12 +573,24 @@ function call_(action, payload) {
   return JSON.parse(res.getContentText());
 }
 
+function doGet(e) {                     // CRM "Gmail mein kholo" dabate hi isse bulata hai → draft turant
+  var out = { ok: true };
+  try { out.done = sendQueued_() || []; } catch (err) { out.ok = false; out.error = String(err && err.message || err); }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+
 function sendQueued_() {                // CRM se aaye mails: draft banao (ya seedha bhejo)
+  var lock = LockService.getUserLock();
+  if (!lock.tryLock(20000)) return [];
+  try { return sendQueuedNow_(); } finally { lock.releaseLock(); }
+}
+
+function sendQueuedNow_() {
   var o = call_("outbox");
-  if (!o.items || !o.items.length) return;
+  if (!o.items || !o.items.length) return [];
   var img = null;
   if (o.banner) { try { img = UrlFetchApp.fetch(o.banner).getBlob().setName("geninfo-banner"); } catch (e) { img = null; } }
-  var me = Session.getActiveUser().getEmail();
+  var me = Session.getEffectiveUser().getEmail();
   var res = [];
   o.items.forEach(function (m) {
     try {
@@ -584,6 +608,7 @@ function sendQueued_() {                // CRM se aaye mails: draft banao (ya se
     } catch (e) { res.push({ id: m.id, ok: false, error: String(e && e.message || e) }); }
   });
   call_("sent", { results: res });
+  return res;
 }
 
 function syncReplies() {
@@ -594,7 +619,7 @@ function syncReplies() {
   var props = PropertiesService.getUserProperties();
   var since = Number(props.getProperty("since") || (Date.now() - 3 * 864e5));
   var after = Math.floor((since - 2 * 3600e3) / 1000);
-  var me = Session.getActiveUser().getEmail().toLowerCase();
+  var me = Session.getEffectiveUser().getEmail().toLowerCase();
   var out = [];
   for (var i = 0; i < who.length; i += 25) {
     var q = "from:(" + who.slice(i, i + 25).join(" OR ") + ") after:" + after + " -in:sent -in:chats";
@@ -623,15 +648,28 @@ export async function gmailSetup(done) {
         <li>Editor mein <b>Ctrl + A</b> dabao → <b>Delete</b> (pehle se likha <code>function myFunction() { }</code> poora hatana zaroori hai, warna <i>"Unexpected token"</i> error aata hai) → phir ye code paste karo → 💾 Save.</li>
         <li>${L('Left side ⚙️ <b>Project Settings</b> → <b>"Show appsscript.json manifest file"</b> tick karo → wapas <b>Editor</b> (&lt;&gt;) → <b>appsscript.json</b> kholo → <b>Ctrl + A</b> → neeche diya <b>appsscript.json</b> paste karo → 💾 Save. (Isse script aapke Gmail signature mein team ka banner laga sakta hai.)',
           'Left side ⚙️ <b>Project Settings</b> → tick <b>"Show appsscript.json manifest file"</b> → back to the <b>Editor</b> (&lt;&gt;) → open <b>appsscript.json</b> → <b>Ctrl + A</b> → paste the <b>appsscript.json</b> below → 💾 Save. (This lets the script put the team banner in your Gmail signature.)')}</li>
+        <li>${L('<b>Turant draft ke liye (ek baar):</b> upar <b>Deploy → New deployment</b> → ⚙️ <b>Web app</b> chuno → <i>Execute as:</i> <b>Me</b>, <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → <b>Web app URL</b> copy karke neeche wale box mein paste karo → Save.',
+          '<b>For instant drafts (once):</b> top <b>Deploy → New deployment</b> → ⚙️ choose <b>Web app</b> → <i>Execute as:</i> <b>Me</b>, <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → copy the <b>Web app URL</b> and paste it in the box below → Save.')}</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
         <li>${L("Bas! Ab CRM mein <b>Gmail mein kholo</b> dabao — aapke Gmail mein draft khulega: template + neeche team ka banner. Admin banner badle to agle mail se naya. Replies har minute Inbox mein aate hain.", "Done! Now press <b>Open in Gmail</b> in the CRM — a draft opens in your Gmail: the template + the team banner underneath. When the Admin changes the banner, the next mail uses it. Replies reach the Inbox every minute.")}</li>
         <li class="mu">${L("Band karna ho: yahan <b>Disconnect</b> dabao (ya Apps Script mein <b>removeSetup</b> Run karo).", "To stop: press <b>Disconnect</b> here (or Run <b>removeSetup</b> in Apps Script).")}</li>
       </ol>
+      <div class="row" style="gap:8px;margin:6px 0 10px;flex-wrap:nowrap"><input class="input" id="gsWeb" placeholder="https://script.google.com/macros/s/…/exec" value="${h(S.me.mail_webapp || "")}" style="flex:1"><button type="button" class="btn sm primary" id="gsWebSave">${L("Save", "Save")}</button></div>
       <div id="gsCode"></div>
       <p class="mu" style="font-size:12.5px">🔒 Code mein aapka personal token hai. Naya code banane se purana token band ho jata hai.</p>
       ${ms?.connected ? `<div class="banner" style="margin-top:10px">✅ <div><b>${L("Gmail abhi connected hai", "Gmail is connected")}</b> · ${L("last sync", "last sync")}: ${h(ms.last_sync ? ago(ms.last_sync) : L("abhi tak nahi", "not yet"))}<br>
         <small>${L("Naya code tabhi banao jab Apps Script mein code badalna ho — warna chal raha sync band ho jayega.", "Only make a new code if you'll replace it in Apps Script — otherwise the running sync stops.")}</small></div></div>` : ""}`,
     foot: `${ms?.connected ? `<button class="btn danger" id="gsOff">${ic("trash")} ${L("Disconnect", "Disconnect")}</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Close</button><button class="btn primary" id="gsGo">${ms?.connected ? L("Naya code banao", "Make a new code") : L("Code banao", "Make code")}</button>`,
+  });
+  $("#gsWebSave", m).onclick = (e) => busy(e.target, async () => {
+    const v = $("#gsWeb", m).value.trim();
+    if (v && !/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{20,}\/exec$/.test(v)) return toast(L("Ye Web app URL sahi nahi lagta — script.google.com/macros/s/…/exec wala poora link daalo", "That doesn't look like a Web app URL — paste the full script.google.com/macros/s/…/exec link"), true);
+    const { error } = await sb.from("profiles").update({ mail_webapp: v || null }).eq("id", S.me.id); if (error) throw error;
+    S.me.mail_webapp = v || null;
+    if (!v) return toast(L("Web app hata diya", "Web app removed"));
+    // try it once so a wrong deployment shows up now, not on the next mail
+    try { const r = await fetch(v, { redirect: "follow" }); const j = await r.json(); toast(j.ok ? L("⚡ Web app chal raha hai — ab Gmail draft turant khulega", "⚡ Web app works — Gmail drafts now open instantly") : L("Web app ne error diya: ", "The web app returned an error: ") + (j.error || ""), !j.ok); }
+    catch { toast(L("Web app se jawab nahi aaya — 'Who has access: Anyone' chuna tha? Deploy dobara karke naya URL daalo.", "No answer from the web app — did you pick 'Who has access: Anyone'? Deploy again and paste the new URL."), true); }
   });
   $("#gsOff", m)?.addEventListener("click", async () => {
     if (!(await confirmBox(L("Gmail reply sync band karna hai? Apps Script apne aap ruk jayega (agli baar chalte hi). Purane replies CRM mein rahenge.", "Turn off Gmail reply sync? The Apps Script stops itself on its next run. Replies already in the CRM stay."), "Disconnect"))) return;

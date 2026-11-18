@@ -179,7 +179,7 @@ async function start() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
   S.session = session;
-  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages")
+  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp")
     .eq("id", session.user.id).single();
   if (error || !me) return renderLogin("login", "Profile load nahi hua: " + (error?.message || ""));
   if (!me.active) return renderPending();
@@ -291,7 +291,7 @@ async function reloadMe(force = false) {
   if (!S.me || (!force && Date.now() - meAt < 30000)) return;
   if (meP) return meP;
   meP = (async () => {
-    const { data: me } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages").eq("id", S.me.id).maybeSingle();
+    const { data: me } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp").eq("id", S.me.id).maybeSingle();
     if (!me) return;
     if (!me.active) return renderPending();
     const key = (x) => JSON.stringify([x.role, x.pages, x.categories, x.daily_target, x.full_name]);
