@@ -394,14 +394,11 @@ export function openTab(url) {
   return false;
 }
 // ---------- company email banner (Geninfo) under every mail ----------
-// Compose links (Gmail / Outlook) only carry plain text, so the banner rides in each person's mail signature;
-// the CRM shows it in the preview and adds it to rich "Copy".
-export const bannerUrl = () => new URL("email-banner.png", location.href.split("#")[0]).href;
-export const bannerHtml = () => {
-  const site = S.settings?.company?.website_url || "https://www.genesisinfoserve.com";
-  return `<a href="${h(site)}" target="_blank" rel="noopener noreferrer"><img src="${h(bannerUrl())}" alt="Geninfo — Genesis Infoserve" width="600" style="display:block;width:600px;max-width:100%;height:auto;border:0;margin-top:14px"></a>`;
-};
-export const bannerInSignature = () => { try { return localStorage.getItem("crm_sig_banner") === "1"; } catch { return false; } };
+// Admin sets it in Company settings → Email banner (settings key "email_banner"); default = the file shipped with the app.
+export const bannerCfg = () => ({ on: true, link: S.settings?.company?.website_url || "https://www.genesisinfoserve.com", ...(S.settings?.email_banner || {}) });
+export const bannerUrl = () => bannerCfg().url || new URL("email-banner.png", location.href.split("#")[0]).href;
+export const bannerOn = () => bannerCfg().on !== false;
+export const bannerHtml = () => `<a href="${h(bannerCfg().link || "#")}" target="_blank" rel="noopener noreferrer"><img src="${h(bannerUrl())}" alt="Geninfo — Genesis Infoserve" width="600" style="display:block;width:600px;max-width:100%;height:auto;border:0;margin-top:14px"></a>`;
 export async function copyRich(md, { banner = false } = {}) {
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${mdToHtml(md)}${banner ? bannerHtml() : ""}</div>`;
   try {

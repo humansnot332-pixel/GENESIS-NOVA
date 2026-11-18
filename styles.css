@@ -589,4 +589,3 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .sigprev img { margin-top: 0 !important; }
 #cPreview img { max-width: 100%; height: auto; }
 @media (max-width: 640px) { .sigtip img { display: none; } }
-.sigtip .sigguide { flex-basis: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; color: var(--tx); }

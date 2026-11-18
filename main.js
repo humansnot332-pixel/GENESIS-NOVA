@@ -6,10 +6,10 @@ import {
   isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, telHref, waHref, isMobile, statusBadge, rfqBadge,
   userName, online, followBadge, toLocalInput, ic, toast, fail, modal, closeModal, confirmBox, formData, busy,
   toCSV, download, parseCSV, callFn, loadTeam, assignable, toastAction, friendly,
-  HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail,
+  HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail, bannerCfg, bannerHtml, bannerUrl,
 } from "./core.js";
 import {
-  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, signatureSetup, toggleNotifications, unreadCounts,
+  openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
@@ -1762,6 +1762,51 @@ const CO_FIELDS = [
   ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"],
   ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
 ];
+// ---- email banner under every mail (Admin can switch off / replace it) ----
+function bannerCard(ro) {
+  const b = bannerCfg();
+  return `<div class="card sec" style="max-width:860px" id="ebCard"><div class="card-h"><h3>📧 ${L("Email banner", "Email banner")}</h3><span class="sp"></span>
+      <label class="check"><input type="checkbox" id="ebOn" ${b.on !== false ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("Har mail ke neeche lagao", "Add under every mail")}</label></div>
+    <div class="card-b"><div class="sigprev" id="ebPrev">${bannerHtml()}</div>
+      <p class="mu" style="font-size:12.5px">${L("CRM se bheje har email ke neeche ye banner lagta hai (template ke naam / designation ke neeche). Kisi ko kuch setup nahi karna.", "This banner goes under every email sent from the CRM (below the name / designation of the template). Nobody has to set anything up.")}</p>
+      ${ro ? "" : `<div class="grid2">
+        <div><label class="f">${L("Naya banner (PNG / JPG, ~1000 × 250 px, 1 MB tak)", "New banner (PNG / JPG, ~1000 × 250 px, up to 1 MB)")}</label><input class="input" type="file" id="ebFile" accept="image/png,image/jpeg,image/gif,image/webp"></div>
+        <div><label class="f">${L("Banner pe click karne se kya khule", "Link when the banner is clicked")}</label><input class="input" id="ebLink" maxlength="300" value="${h(b.link || "")}" placeholder="https://www.genesisinfoserve.com"></div></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="ebSave">Save</button><button class="btn" id="ebReset">${L("Default banner wapas", "Back to the default banner")}</button></div>`}
+    </div></div>`;
+}
+function wireBannerCard(el) {
+  const card = $("#ebCard", el); if (!card) return;
+  let picked = null;
+  const prev = (url) => { const i = $("#ebPrev img", card); if (i) i.src = url; };
+  $("#ebFile", card).onchange = (e) => {
+    const f = e.target.files?.[0]; picked = null; if (!f) return;
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(f.type)) return toast(L("Sirf PNG / JPG / GIF / WebP image", "Images only: PNG / JPG / GIF / WebP"), true);
+    if (f.size > 1048576) return toast(L("Image 1 MB se chhoti honi chahiye", "The image must be under 1 MB"), true);
+    picked = f; prev(URL.createObjectURL(f));
+  };
+  const save = (v) => sb.from("settings").upsert({ key: "email_banner", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() }).then(({ error }) => { if (error) throw error; S.settings.email_banner = v; });
+  $("#ebSave", card).onclick = (e) => busy(e.target, async () => {
+    const cur = bannerCfg(), link = $("#ebLink", card).value.trim();
+    if (link && !/^https?:\/\//i.test(link)) return toast(L("Link https:// se shuru hona chahiye", "The link must start with https://"), true);
+    let url = S.settings.email_banner?.url || null;
+    if (picked) {
+      const ext = (picked.type.split("/")[1] || "png").replace("jpeg", "jpg"), path = `email-banner-${Date.now()}.${ext}`;
+      const { error } = await sb.storage.from("brand").upload(path, picked, { contentType: picked.type, cacheControl: "31536000", upsert: false });
+      if (error) throw error;
+      url = sb.storage.from("brand").getPublicUrl(path).data.publicUrl;
+    }
+    await save({ on: $("#ebOn", card).checked, url, link: link || cur.link });
+    picked = null; $("#ebFile", card).value = "";
+    toast(L("✔ Email banner saved — ab se har mail mein naya banner", "✔ Email banner saved — new mails use it from now on"));
+  });
+  $("#ebOn", card).onchange = (e) => busy(null, async () => { await save({ ...(S.settings.email_banner || {}), on: e.target.checked }); toast(e.target.checked ? L("✔ Banner ON", "✔ Banner ON") : L("Banner OFF — mails bina banner ke jayenge", "Banner OFF — mails go without the banner")); });
+  $("#ebReset", card).onclick = (e) => busy(e.target, async () => {
+    if (!(await confirmBox(L("Default Geninfo banner wapas lagana hai?", "Go back to the default Geninfo banner?"), L("Haan", "Yes")))) return;
+    await save({ on: true, url: null, link: S.settings.email_banner?.link || null }); prev(bannerUrl()); toast(L("✔ Default banner wapas", "✔ Default banner restored"));
+  });
+}
+
 function brandCard(b, ro) {
   const cur = b.login_animation || "server", tg = b.tagline || TAGLINES[0], custom = !TAGLINES.includes(tg);
   return `<div class="card sec" style="max-width:860px"><div class="card-h"><h3>🎬 ${L("Login screen", "Login screen")}</h3></div><div class="card-b">
@@ -1859,14 +1904,16 @@ async function wireBackupCard(el) {
   });
 }
 VIEWS.company = async (el) => {
-  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding"]);
+  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding", "email_banner"]);
   const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
+  if (m.email_banner) S.settings.email_banner = m.email_banner;
   const c = m.company || {}, ro = !isAdmin();
   el.innerHTML = `<div class="card" style="max-width:860px"><div class="card-h"><h3>🏢 ${L("Company details", "Company details")}</h3><span class="sp"></span>${ro ? `<span class="badge">${L("Read-only (Admin edit karega)", "Read-only (Admin edits)")}</span>` : ""}</div>
     <div class="card-b"><fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
       ${CO_FIELDS.map(([k, hi, en]) => `<div ${k === "address" ? 'style="grid-column:1/-1"' : ""}><label class="f">${h(L(hi, en))}</label><input class="input" data-co="${k}" value="${h(c[k] || "")}" maxlength="${k === "address" ? 300 : 120}"></div>`).join("")}
       <div><label class="f">${L("Payment terms (din) — invoice due date ke liye", "Payment terms (days) — for invoice due dates")}</label><input class="input" type="number" min="0" max="365" id="coTerms" value="${h(m.payment_terms_days ?? 30)}"></div>
     </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
+    ${bannerCard(ro)}
     ${brandCard(m.branding || {}, ro)}
     ${outlookCard(m.outlook || {}, ro)}
     ${isAdmin() ? `<div class="card" style="max-width:860px" id="bkCard"><div class="card-h"><h3>💾 ${L("Backup", "Backup")}</h3><span class="sp"></span>
@@ -1876,6 +1923,7 @@ VIEWS.company = async (el) => {
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
   wireOutlookCard(el, m.outlook || {});
   wireBrandCard(el, m.branding || {});
+  if (!ro) wireBannerCard(el);
   if (isAdmin()) wireBackupCard(el);
   $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
@@ -1988,13 +2036,11 @@ ACT.profile = () => {
       <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
       <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="en" ${isEn() ? "selected" : ""}>English</option><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option></select></div>
       <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
-      <div class="sigtip" style="margin-top:14px"><img src="email-banner.png" alt=""><span>${L("Geninfo banner aapke mails ke neeche", "Geninfo banner under your mails")}</span><button type="button" class="btn sm" id="pSig">🖼 ${L("Setup", "Set up")}</button></div>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">
       <input class="input" id="pp2" type="password" placeholder="Confirm" autocomplete="new-password">`,
     foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="ps">Save</button>`,
   });
-  $("#pSig", m).onclick = () => signatureSetup();
   $("#ps", m).onclick = (e) => busy(e.target, async () => {
     const n = $("#pn", m).value.trim(), p1 = $("#pp1", m).value, p2 = $("#pp2", m).value;
     const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value, lang: $("#plang", m).value };
