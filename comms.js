@@ -681,7 +681,7 @@ export async function unreadCounts() {
 }
 // ---- notifications: grouped by day, like a phone (Aaj / Kal / Monday / 12 Nov) ----
 const N_ICON = { assign: "👤", digest: "📊", lock: "🔒", lock_request: "🙋", payment: "💰", quote_reply: "💬", quote_view: "👀",
-  renewal: "🔁", reply: "✉️", rfq: "📥", ticket: "🎫" };
+  renewal: "🔁", reply: "✉️", rfq: "📥", ticket: "🎫", mail_stale: "📭", access: "🔑", lock_warn: "⏳", rfq_stuck: "🚨" };
 function nDay(t) {
   const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);
   const day = new Date(d); day.setHours(0, 0, 0, 0);
