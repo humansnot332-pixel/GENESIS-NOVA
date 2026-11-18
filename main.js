@@ -376,7 +376,7 @@ async function loadAnnouncement() {
   if (!el) return;
   let dismissed = ""; try { dismissed = localStorage.getItem("crm_ann") || ""; } catch { /* ignore */ }
   if (!a || dismissed === a.created_at || Date.now() - new Date(a.created_at).getTime() > 3 * 864e5) { el.innerHTML = ""; return; }
-  el.innerHTML = `<div class="banner">📢 <div><b>${h(a.created_by ? userName(a.created_by) : "System")}:</b> <span data-raw>${h(a.body)}</span></div><span class="right row" style="gap:6px;flex-wrap:nowrap">${isMgr() ? `<button class="btn ghost sm" data-act="delAnn" data-id="${a.id}" title="${h(L("Sab ke liye hatao", "Remove for everyone"))}">${ic("trash")} ${L("Delete", "Delete")}</button>` : ""}<button class="btn ghost sm" data-act="dismissAnn" data-v="${h(a.created_at)}" title="${h(L("Sirf mere liye chhupao", "Hide just for me"))}">Dismiss</button></span></div>`;
+  el.innerHTML = `<div class="banner">📢 <div><b>${h(a.created_by ? userName(a.created_by) : "System")}:</b> <span ${a.created_by ? "data-raw" : ""}>${h(a.body)}</span></div><span class="right row" style="gap:6px;flex-wrap:nowrap">${isMgr() ? `<button class="btn ghost sm" data-act="delAnn" data-id="${a.id}" title="${h(L("Sab ke liye hatao", "Remove for everyone"))}">${ic("trash")} ${L("Delete", "Delete")}</button>` : ""}<button class="btn ghost sm" data-act="dismissAnn" data-v="${h(a.created_at)}" title="${h(L("Sirf mere liye chhupao", "Hide just for me"))}">Dismiss</button></span></div>`;
 }
 
 // ---------------------------------------------------------------------
@@ -781,7 +781,7 @@ VIEWS.today = async (el) => {
   <div class="sec-t">⏰ Follow-ups due (${(due || []).length})</div>
   <div class="queue">${(due || []).map(card).join("") || '<div class="card empty">Koi follow-up due nahi</div>'}</div>
   <div class="sec-t" style="margin-top:22px">🆕 Fresh leads (${(fresh || []).length})</div>
-  <div class="queue">${(fresh || []).map(card).join("") || `<div class="card empty"><b>Aapke naam koi fresh lead nahi</b>Neeche free pool se lo — ya "Next lead" dabao, system apne aap agla free lead lock kar dega.</div>`}</div>
+  <div class="queue">${(fresh || []).map(card).join("") || `<div class="card empty"><b>${L("Aapke naam koi fresh lead nahi", "No fresh leads assigned to you")}</b>${L('Neeche free pool se lo — ya "Next lead" dabao, system apne aap agla free lead lock kar dega.', 'Pick one from the free pool below — or press "Call next lead" and the system locks the next free lead for you.')}</div>`}</div>
   <div class="sec-t" style="margin-top:22px">🔓 Free pool — jo pehle lock kare uska (${st?.pool_free ?? (pool || []).length})</div>
   <div class="queue">${(pool || []).map(card).join("") || `<div class="card empty">Pool khaali hai${isMgr() ? " — Automation se naye leads lao" : ""}</div>`}</div>`;
   $$("[data-stop]", el).forEach((a) => a.addEventListener("click", (e) => e.stopPropagation()));
@@ -1002,7 +1002,7 @@ async function openLead(id, opt = {}) {
   d.querySelector("[data-mkrfq]")?.addEventListener("click", () => rfqForm({ lead_id: id, company: l.company, contact: l.contact_name, phone: l.phone, email: l.email, city: l.city }));
   d.querySelector("[data-mkq]")?.addEventListener("click", () => quoteEditor({ lead_id: id, to_party: { name: l.company, contact: l.contact_name, email: l.email, address: l.address || [l.area, l.city].filter(Boolean).join(", "), state: l.state || "Maharashtra", gstin: l.gstin || "" }, items: [] }));
   d.querySelector("[data-del]")?.addEventListener("click", async () => {
-    if (!(await confirmBox(`"${l.company}" ko permanently delete karna hai?`, "Delete"))) return;
+    if (!(await confirmBox(L(`"${l.company}" ko permanently delete karna hai?`, `Permanently delete "${l.company}"?`), "Delete"))) return;
     const { error: e1 } = await sb.from("leads").delete().eq("id", id); if (e1) return fail(e1);
     closeDrawer(); toast("Deleted"); after();
   });
@@ -1132,7 +1132,7 @@ async function drawLeads(el) {
       ${th("company", "Company")}<th>Phone</th>${th("city", "City")}${th("status", "Status")}${th("score", "Score", "num")}<th>Lock</th>${th("next_follow_up", "Follow-up")}${th("deal_value", "Value", "num")}${th("created_at", "Added")}</tr></thead>
     <tbody>${data.map((l) => `<tr data-act="lead" data-id="${l.id}">
       <td data-nolink><input type="checkbox" data-sel="${l.id}" ${LF.sel.has(l.id) ? "checked" : ""} aria-label="Select"></td>
-      <td><div class="co">${h(l.company)}${l.reply_count ? ' <span title="Reply aaya">📩</span>' : l.email_count ? ' <span title="Email bheja">📤</span>' : ""}</div><div class="sub">${h(l.contact_name || l.category)}</div></td>
+      <td><div class="co">${h(l.company)}${l.reply_count ? ` <span title="${L("Reply aaya", "Reply received")}">📩</span>` : l.email_count ? ` <span title="${L("Email bheja", "Email sent")}">📤</span>` : ""}</div><div class="sub">${h(l.contact_name || l.category)}</div></td>
       <td class="mono">${h(canWork(l) ? l.phone || "" : l.phone ? maskPhone(l.phone) : "")}</td><td>${h(l.city || "")}<div class="sub">${h(l.area || "")}</div></td>
       <td>${statusBadge(l.status)}</td><td class="num">${l.score}</td>
       <td>${lockBadge(l)}</td>
@@ -1331,10 +1331,10 @@ ACT.rfq = async (t) => {
 };
 ACT.rfqHook = () => {
   const url = CONFIG.SUPABASE_URL + "/functions/v1/inbound-rfq";
-  modal({ title: "Website / Google Form se RFQ", wide: true, body: `
-    <p>Apni website ke enquiry form ko is URL pe <b>POST</b> karo. RFQ + lead apne aap ban jayega aur sabko live notification jayega.</p>
+  modal({ title: L("Website / Google Form se RFQ", "RFQs from your website / Google Form"), wide: true, body: `
+    <p>${L("Apni website ke enquiry form ko is URL pe <b>POST</b> karo. RFQ + lead apne aap ban jayega aur sabko live notification jayega.", "<b>POST</b> your website's enquiry form to this URL. An RFQ + lead is created automatically and everyone gets a live notification.")}</p>
     <div class="script mono" style="word-break:break-all">${h(url)}</div>
-    <p class="mu">Fields: <span class="mono">company*, product*, contact, phone, email, city, qty, details, due_date</span>. Bot se bachne ke liye ek hidden field <span class="mono">website_url</span> khaali rakho. Website ka domain <span class="mono">ALLOWED_ORIGINS</span> secret mein hona chahiye; server-to-server (Zapier / Apps Script) ke liye header <span class="mono">x-webhook-secret</span> bhejo.</p>
+    <p class="mu">Fields: <span class="mono">company*, product*, contact, phone, email, city, qty, details, due_date</span>. ${L('Bot se bachne ke liye ek hidden field <span class="mono">website_url</span> khaali rakho. Website ka domain <span class="mono">ALLOWED_ORIGINS</span> secret mein hona chahiye; server-to-server (Zapier / Apps Script) ke liye header <span class="mono">x-webhook-secret</span> bhejo.', 'To stop bots, keep a hidden field <span class="mono">website_url</span> empty. Your website\'s domain must be in the <span class="mono">ALLOWED_ORIGINS</span> secret; for server-to-server (Zapier / Apps Script) send the header <span class="mono">x-webhook-secret</span>.')}</p>
     <pre class="log">&lt;form method="post" action="${h(url)}"&gt;
   &lt;input name="company" required&gt; &lt;input name="contact"&gt; &lt;input name="phone"&gt;
   &lt;input name="email" type="email"&gt; &lt;input name="product" required&gt; &lt;input name="qty"&gt;

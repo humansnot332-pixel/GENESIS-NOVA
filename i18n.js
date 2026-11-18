@@ -211,8 +211,60 @@ const D = [
   ["🔁 Renewal aaj:", "🔁 Renewal today:"], ["din mein:", "days:"], ["📊 Aaj ka report", "📊 Today's report"],
   ["👁 Customer ne quotation online dekhi:", "👁 Customer viewed quotation online:"], ["✅ Customer ne quotation online accept ki:", "✅ Customer accepted quotation online:"],
   ["duplicate lead(s) merge kiye", "duplicate lead(s) merged"], ["payment mila", "payment received"],
+  // ---------- lock system / server notifications (035–037) ----------
+  ["lead ka lock khatam — pool mein chale gaye", "lead lock(s) expired — back in the pool"],
+  ["In par 3 din kaam nahi hua. Ab 7 din tak aap inhe dobara lock nahi kar sakte.", "No work on them for 3 days. You can't re-lock them for 7 days."],
+  ["In par kaam nahi hua. Har lead pe ek chance kam hua — chances khatam hone par 7 din ka ban lagta hai.", "No work was done on them. Each lead used up one chance — once the chances run out, a 7-day ban starts."],
+  ["kal tak chhoot jayenge", "will expire by tomorrow"],
+  ["Aaj ek call / email kar do — lock apne aap 3 din badh jayega. List: Locks page → \"24 ghante mein khatam\".", "Make one call / email today — the lock extends by 3 days automatically. List: Locks page → \"Expiring in 24h\"."],
+  ["aapse wapas pool mein", "taken back from you to the pool"], ["kaam nahi hua —", "no work done —"], ["koi call / email nahi", "no call / email"], ["Kaam nahi hua", "No work done"],
+  ["Alag-alag log chuno", "Pick two different people"], ["Jisko dena hai wo active nahi hai", "The person you're giving it to is not active"], ["Ye user active nahi hai", "This user is not active"],
+  ["ka kaam aapko mila", "— their work is now yours"],
+  ["🚨 RFQ pe", "🚨 No call on an RFQ for"], ["min se koi call nahi:", "min:"], ["— kisi ko assign karo", "— assign it to someone"],
+  ["⚡ Naya RFQ aapko diya:", "⚡ New RFQ assigned to you:"], ["min mein call karo, warna aage chala jayega", "min to call, or it moves to someone else"],
+  ["⏩ RFQ aage bheja:", "⏩ RFQ moved on:"], ["min mein call / email nahi hua →", "min with no call / email → moved to"],
+  ["min tak kisi ne nahi liya", "min nobody took it"], ["min mein koi call / email nahi", "min with no call / email"], ["Pool mein", "In the pool for"],
+  ["↩️ Lead wapas mila:", "↩️ Lead handed back to you:"], ["ne ye lead dobara aapko diya", "gave this lead back to you"],
+  ["✅ Aapke lock chances reset hue", "✅ Your lock chances were reset"], ["ne aapke saare chances / ban hata diye", "cleared all your chances / bans"],
+  ["ne is lead ka chance / ban hata diya — ab aap ise dobara lock kar sakte ho", "cleared your chance / ban on this lead — you can lock it again"],
+  ["↩️ Wapas diya →", "↩️ Handed back →"], ["Wapas diya:", "Handed back by"],
+  ["⛔ Aapka access band kiya gaya", "⛔ Your access was turned off"], ["🔑 Aapka access update hua", "🔑 Your access was updated"],
+  ["ne aapki settings badli — CRM apne aap update ho gaya", "changed your settings — your CRM updated itself"],
+  ["📭 Aapka Gmail sync", "📭 Your Gmail sync has been stopped for"], ["ka Gmail sync", "— Gmail sync stopped for"],
+  ["din se ruka hai", "days"], ["ghante se ruka hai", "hours"],
+  ["Customer ke replies CRM mein nahi aa rahe. Theek karo: script.google.com → apna Genesis project → \"setup\" chuno → Run → Allow. (Ya Inbox → Gmail setup se naya code.)", "Customer replies aren't reaching the CRM. Fix: script.google.com → your Genesis project → pick \"setup\" → Run → Allow. (Or Inbox → Gmail setup for a new code.)"],
+  ["Unke customer replies CRM mein nahi aa rahe. Unhe bolo: script.google.com → Genesis project → \"setup\" Run karein.", "Their customer replies aren't reaching the CRM. Ask them to run \"setup\" in script.google.com → Genesis project."],
+  // ---------- undo / redo (017) ----------
+  ["Ye change mila nahi", "Change not found"], ["Ye khud ek undo/redo hai", "This is itself an undo / redo"], ["Is change ka undo nahi ho sakta (settings / users)", "This change can't be undone (settings / users)"],
+  ["30 din se purana change undo nahi hota", "Changes older than 30 days can't be undone"], ["Sirf apne changes undo kar sakte ho", "You can only undo your own changes"],
+  ["24 ghante se purana change — Manager se bolo", "Older than 24 hours — ask a Manager"], ["Ye lead ab aapke paas nahi hai", "This lead is no longer yours"], ["Ye pehle se undo ho chuka hai", "This was already undone"],
+  ["Undo nahi hua — ye cheez baad mein kisi ne badal di ya hata di hai", "Couldn't undo — someone changed or removed it afterwards"], ["Redo ke liye pehle undo hona chahiye", "Undo something first, then redo"],
+  ["Undo karne ke liye koi change nahi", "Nothing to undo"], ["Redo karne ke liye kuch nahi", "Nothing to redo"],
+  // ---------- auto-leads (011/018/019 + auto-ingest) ----------
+  ["nahi mila (website bhi check ki)", "not found (website checked too)"], ["Pehle se CRM mein hai (duplicate)", "Already in the CRM (duplicate)"], ["company website se mila", "found on the company website"],
+  ["Website khuli nahi (band / galat website)", "Website didn't open (down / wrong website)"], ["Company ka naam website pe nahi mila", "Company name not found on the website"],
+  ["Email website se match nahi hua", "Email doesn't match the website"], ["website pe likha", "listed on the website"],
+  ["naye leads — sab mein phone, email, website aur address hai", "new leads — all have phone, email, website and address"],
+  ["naye genuine leads — website, naam aur email verify kiye hue", "new genuine leads — website, name and email verified"],
+  ["poore leads (baaki verify ho rahe hain)", "complete leads (the rest are being verified)"], ["adhure leads reject hue", "incomplete leads rejected"], ["leads reject hue", "leads rejected"],
+  ["naye leads add hue (free)", "new leads added (free)"], ["OSM: cities / queries mein koi pehchani city ya business type nahi", "OSM: no known city or business type in cities / queries"],
+  ["searches shuru — naye leads agle 10–30 minute mein apne aap aayenge", "searches started — new leads arrive automatically in the next 10–30 minutes"],
+  ["IndiaMART: key set nahi hai (INDIAMART_CRM_KEY) — skip", "IndiaMART: key not set (INDIAMART_CRM_KEY) — skipped"], ["(5 min mein 1 hi call allowed)", "(only 1 call allowed per 5 min)"],
+  ["IndiaMART adhura", "IndiaMART incomplete"], ["nahi) — skip:", "missing) — skipped:"],
+  ["Email galat hai", "Invalid email"], ["Ye details zaroori hain:", "These details are required:"], ["Save nahi hua", "Could not save"], ["Abhi backup lo", "Back up now"],
+  // ---------- small UI words ----------
+  ["Kisne", "Who"], ["180 din tak rakhe jaate hain", "kept for 180 days"],
+];
+// patterns with a changing part: [regex, replacement]
+const RX = [
+  [/(^|[^\p{L}])Adhura:(?=\s)/gu, "$1Incomplete:"], [/(^|[^\p{L}])(email|phone|website|address|pincode)(, (?:email|phone|website|address|pincode))* nahi(?=$|[^\p{L}])/gu, (m) => m.replace(/ nahi$/, " missing")],
+  [/(\d+) din(?=$|[^\p{L}])/gu, (m, n) => n + (n === "1" ? " day" : " days")], [/(\d+) ghante(?=$|[^\p{L}])/gu, (m, n) => n + (n === "1" ? " hour" : " hours")],
+  [/(\d+) lead(?= taken back)/gu, (m, n) => n + (n === "1" ? " lead" : " leads")],
 ];
 
+// the notification list shows the leading emoji separately → also match the text without it
+const EMO = /^[^\p{L}\p{N}"'(\[]+\s+/u;
+for (const [a, b] of D.slice()) if (EMO.test(a) && EMO.test(b)) D.push([a.replace(EMO, ""), b.replace(EMO, "")]);
 const EXACT = new Map(D.map(([a, b]) => [a.replace(/\s+/g, " ").trim(), b]));
 // fragments used inside longer sentences: only multi-word, longest first
 const FRAG = D.filter(([a]) => /\s/.test(a.trim()) && a.trim().length >= 6)
@@ -226,6 +278,7 @@ export function tr(text) {
   if (EXACT.has(core)) return lead + EXACT.get(core) + tail;
   let out = core;
   for (const [re, en] of FRAG) if (re.test(out)) { re.lastIndex = 0; out = out.replace(re, (_, pre) => pre + en); }
+  for (const [re, en] of RX) { re.lastIndex = 0; out = out.replace(re, en); }
   return out === core ? text : lead + out + tail;
 }
 

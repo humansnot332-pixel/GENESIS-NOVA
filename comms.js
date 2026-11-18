@@ -29,7 +29,7 @@ export async function ensureWork(entity, row) {
   if (!row) return true;
   if (canWork(row)) return true;
   const k = lockOf(row);
-  if (k.other) { toast(`🔒 ${k.holder} is pe kaam kar raha hai — pehle "Request access" karo`, true); return false; }
+  if (k.other) { toast(L(`🔒 ${k.holder} is pe kaam kar raha hai — pehle "Request access" karo`, `🔒 ${k.holder} is working on this — send a "Request access" first`), true); return false; }
   const r = await claim(entity, row.id);
   if (!r.ok) { toast(claimFailMsg(r), true); return false; }
   row.owner_id = S.me.id; row.lock_until = r.until;
@@ -166,7 +166,7 @@ export async function openComposer(opts) {
 
   const tplId = () => +$("#cTpl", m).value || null;
   const showFallback = (url, label) => {
-    $("#cFallback", m).innerHTML = `<div class="banner" style="margin:12px 0 0">Browser ne naya tab block kiya. <a class="btn sm primary" href="${h(url)}" target="_blank" rel="noopener noreferrer">${h(label)} kholo</a></div>`;
+    $("#cFallback", m).innerHTML = `<div class="banner" style="margin:12px 0 0">${L("Browser ne naya tab block kiya.", "Your browser blocked the new tab.")} <a class="btn sm primary" href="${h(url)}" target="_blank" rel="noopener noreferrer">${L(`${h(label)} kholo`, `Open ${h(label)}`)}</a></div>`;
   };
 
   // ---- EMAIL ----
@@ -278,7 +278,7 @@ export async function viewTemplates(el) {
   $$("[data-td]", el).forEach((b) => b.onclick = () => { const t = get(b.dataset.td); templateEditor({ ...t, id: null, name: t.name + " (copy)", is_shared: false, owner_id: S.me.id }, () => viewTemplates(el)); });
   $$("[data-tv]", el).forEach((b) => b.onclick = () => { const t = get(b.dataset.tv); modal({ title: t.name, wide: true, body: `${t.subject ? `<p><b>Subject:</b> ${h(fillTemplate(t.subject, sample))}</p>` : ""}<div class="script" style="background:var(--surface);border:1px solid var(--line)">${mdToHtml(fillTemplate(t.body, sample))}</div><p class="mu" style="font-size:12px">Preview sample data ke saath.</p>` }); });
   $$("[data-tx]", el).forEach((b) => b.onclick = async () => {
-    if (!(await confirmBox(`"${get(b.dataset.tx).name}" delete karna hai?`, "Delete"))) return;
+    if (!(await confirmBox(L(`"${get(b.dataset.tx).name}" delete karna hai?`, `Delete "${get(b.dataset.tx).name}"?`), "Delete"))) return;
     const { error } = await sb.from("message_templates").delete().eq("id", +b.dataset.tx); if (error) return fail(error);
     tplAt = 0; toast("Deleted"); viewTemplates(el);
   });
@@ -424,7 +424,7 @@ async function readMail(id, pane, refresh) {
   pane.innerHTML = `
     <div class="ib-head"><div class="row" style="flex-wrap:nowrap;align-items:flex-start"><div style="min-width:0;flex:1">
       <h3 style="margin:0 0 4px;font-size:16px">${h(r.subject || "(no subject)")}</h3>
-      <div class="mu" style="font-size:13px"><b style="color:var(--tx)">${h(r.counterpart_name || "")}</b> &lt;${h(r.counterpart)}&gt; · ${h(dt(r.created_at))}${!mine ? " · " + h(userName(r.user_id)) + " ko" : ""}</div>
+      <div class="mu" style="font-size:13px"><b style="color:var(--tx)">${h(r.counterpart_name || "")}</b> &lt;${h(r.counterpart)}&gt; · ${h(dt(r.created_at))}${!mine ? " · " + L(h(userName(r.user_id)) + " ko", "to " + h(userName(r.user_id))) : ""}</div>
       <div class="row" style="margin-top:6px;gap:6px">${intentBadge(r.intent)}${lead ? `<a href="#" data-ol="${lead.id}" class="badge info">📋 ${h(lead.company)} · ${h(STATUS[lead.status]?.l || lead.status)}</a>` : ""}${r.rfqs ? `<span class="badge">${h(r.rfqs.rfq_no)}</span>` : ""}</div></div>
       ${r.thread_url ? `<a class="btn sm" href="${h(r.thread_url)}" target="_blank" rel="noopener noreferrer">${r.provider === "outlook" ? "Outlook" : "Gmail"} mein kholo ↗</a>` : ""}</div></div>
     <div class="ib-body">${h(onlyReply(r.body || r.snippet || "")).replace(/\n/g, "<br>")}</div>
@@ -856,7 +856,7 @@ export async function viewRequests(el) {
   const sec = (title, list, mineAsHolder) => `<div class="sec-t" style="margin-top:18px">${title} (${list.length})</div><div class="card">${list.map((r) => `
     <div class="row" style="padding:11px 16px;border-bottom:1px solid var(--line);flex-wrap:nowrap">
       <div style="flex:1;min-width:0"><b>${h(nm(r) || r.entity + " #" + r.entity_id)}</b> <span class="badge">${r.entity === "lead" ? "Lead" : "RFQ"}</span>
-        <div class="mu" style="font-size:12.5px">${mineAsHolder ? h(userName(r.requester)) + " maang raha/rahi hai" : "Holder: " + h(userName(r.holder))}${r.note ? ` — “${h(r.note)}”` : ""} · ${h(ago(r.created_at))}</div></div>
+        <div class="mu" style="font-size:12.5px">${mineAsHolder ? L(h(userName(r.requester)) + " maang raha/rahi hai", h(userName(r.requester)) + " is asking for it") : "Holder: " + h(userName(r.holder))}${r.note ? ` — “${h(r.note)}”` : ""} · ${h(ago(r.created_at))}</div></div>
       ${r.status === "pending" && (mineAsHolder || isMgr()) && r.requester !== S.me.id ? `<button class="btn sm primary" data-ok="1" data-rq="${r.id}">✅ De do</button><button class="btn sm" data-ok="0" data-rq="${r.id}">Mana</button>` : `<span class="badge ${r.status === "approved" ? "good" : r.status === "pending" ? "warn" : ""}">${h(r.status)}</span>`}
     </div>`).join("") || '<div class="empty" style="padding:16px">—</div>'}</div>`;
 
