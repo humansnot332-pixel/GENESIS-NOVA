@@ -10,7 +10,7 @@ import {
 } from "./core.js";
 import {
   openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, toggleNotifications, unreadCounts,
-  requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady, openChip,
+  requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady, openChip, gmailSetup,
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
@@ -1358,7 +1358,7 @@ VIEWS.rfqs = async (el) => {
   el.innerHTML = `
     <div class="toolbar"><div class="chips">${[["open", "Open"], ...RFQ_STATUSES.map(([k, l]) => [k, l]), ["all", "All"]].map(([k, l]) => `<button class="chip ${RF.st === k ? "on" : ""}" data-rs="${k}">${l}</button>`).join("")}</div>
       <input class="input grow" id="rq" placeholder="Search RFQ…" value="${h(RF.q)}" aria-label="Search RFQs">
-      <button class="btn" data-act="rfqHook">🔗 Website form</button>
+      <button class="btn" data-act="rfqHook">🔗 ${L("Enquiry link", "Enquiry link")}</button>
       <button class="btn primary" data-act="newRfq">${ic("plus")} RFQ</button></div>
     <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Koi RFQ nahi</b>IndiaMART / website se naye RFQ apne aap yahan aayenge.</div>` : `
       <table class="tbl"><thead><tr><th>RFQ</th><th>Company</th><th>Requirement</th><th>Due</th><th>Status</th><th>Lock</th><th class="num">Quoted</th><th>Source</th></tr></thead><tbody>
@@ -1380,9 +1380,30 @@ ACT.rfq = async (t) => {
   const { data, error } = await sb.from("rfqs").select("*").eq("id", +t.dataset.id).single();
   if (error) return fail(error); rfqForm(data);
 };
+// ---- public enquiry page (website "Get a Quote" button / WhatsApp link) → RFQs
+const enquiryUrl = (src) => new URL("enquiry.html", location.href.split("#")[0]).href + (src ? "?src=" + src : "");
+function enquiryShareHtml() {
+  const plain = enquiryUrl(""), wa = enquiryUrl("whatsapp"), web = enquiryUrl("website");
+  const btn = `<a href="${web}" target="_blank" rel="noopener" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#0f766e;color:#fff;font:600 15px Arial,sans-serif;text-decoration:none">Get a Quote</a>`;
+  const waText = encodeURIComponent(L("Quotation ke liye apni requirement yahan bhejiye 👇\n", "Send us your requirement for a quotation 👇\n") + wa);
+  return `<div class="row" style="gap:8px;flex-wrap:nowrap;margin-top:6px"><input class="input mono" readonly value="${h(plain)}" style="flex:1;min-width:0" aria-label="Enquiry link"><button class="btn sm primary" type="button" data-eqc="${h(plain)}">📋 Copy</button></div>
+    <div class="row" style="gap:8px;margin-top:8px"><a class="btn sm" href="https://wa.me/?text=${waText}" target="_blank" rel="noopener noreferrer">💬 ${L("WhatsApp pe bhejo", "Share on WhatsApp")}</a><a class="btn sm" href="${h(plain)}" target="_blank" rel="noopener noreferrer">👀 ${L("Page dekho", "Open the page")}</a></div>
+    <label class="f" style="margin-top:12px">${L("Website pe “Get a Quote” button — ye code website banane wale ko do", "“Get a Quote” button for your website — give this code to whoever runs the site")}</label>
+    <pre class="log" style="white-space:pre-wrap;word-break:break-all;max-height:110px;margin:0">${h(btn)}</pre>
+    <button class="btn sm" type="button" data-eqc="${h(btn)}" style="margin-top:6px">📋 ${L("Code copy karo", "Copy code")}</button>`;
+}
+function wireEnquiryShare(root) {
+  root.querySelectorAll("[data-eqc]").forEach((b) => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.eqc); toast(L("Copied ✔", "Copied ✔")); }
+    catch { toast(L("Copy nahi hua — select karke copy karo", "Couldn't copy — select it and copy"), true); }
+  });
+}
 ACT.rfqHook = () => {
   const url = CONFIG.SUPABASE_URL + "/functions/v1/inbound-rfq";
-  modal({ title: L("Website / Google Form se RFQ", "RFQs from your website / Google Form"), wide: true, body: `
+  const m = modal({ title: L("Enquiry link — form bharte hi RFQ", "Enquiry link — every form becomes an RFQ"), wide: true, body: `
+    <p style="margin-top:0">${L("Customer ye form bharta hai → CRM mein turant RFQ + lead ban jaata hai, sabko notification jaata hai. Same customer 3 din mein dobara bhare toh naya RFQ nahi banta.", "The customer fills this form → an RFQ + lead appears in the CRM at once and everyone is notified. The same customer filling it again within 3 days doesn't make a second RFQ.")}</p>
+    ${enquiryShareHtml()}
+    <details style="margin-top:14px"><summary class="mu">${L("Website developer ke liye (apna form / Zapier)", "For the website developer (own form / Zapier)")}</summary>
     <p>${L("Apni website ke enquiry form ko is URL pe <b>POST</b> karo. RFQ + lead apne aap ban jayega aur sabko live notification jayega.", "<b>POST</b> your website's enquiry form to this URL. An RFQ + lead is created automatically and everyone gets a live notification.")}</p>
     <div class="script mono" style="word-break:break-all">${h(url)}</div>
     <p class="mu">Fields: <span class="mono">company*, product*, contact, phone, email, city, qty, details, due_date</span>. ${L('Bot se bachne ke liye ek hidden field <span class="mono">website_url</span> khaali rakho. Website ka domain <span class="mono">ALLOWED_ORIGINS</span> secret mein hona chahiye; server-to-server (Zapier / Apps Script) ke liye header <span class="mono">x-webhook-secret</span> bhejo.', 'To stop bots, keep a hidden field <span class="mono">website_url</span> empty. Your website\'s domain must be in the <span class="mono">ALLOWED_ORIGINS</span> secret; for server-to-server (Zapier / Apps Script) send the header <span class="mono">x-webhook-secret</span>.')}</p>
@@ -1392,7 +1413,8 @@ ACT.rfqHook = () => {
   &lt;textarea name="details"&gt;&lt;/textarea&gt;
   &lt;input name="website_url" style="display:none" tabindex="-1" autocomplete="off"&gt;
   &lt;button&gt;Send enquiry&lt;/button&gt;
-&lt;/form&gt;</pre>` });
+&lt;/form&gt;</pre></details>` });
+  wireEnquiryShare(m);
 };
 function rfqForm(r) {
   const isNew = !r.id;
@@ -2061,6 +2083,16 @@ VIEWS.automation = async (el) => {
     <div class="card kpi"><div class="l">Next auto-run</div><div class="v" style="font-size:20px">${nextRun && c.enabled ? h(nextRun.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })) : "—"}</div></div>
     <div class="card kpi"><div class="l">Last run</div><div class="v" style="font-size:20px">${runs?.[0] ? h(ago(runs[0].started_at)) : "—"}</div><div class="s">${runs?.[0] ? `+${runs[0].leads_added} leads · +${runs[0].rfqs_added} RFQs` : ""}</div></div>
   </div>
+  <div class="card sec" id="rfqSrc"><div class="card-h"><h3>📨 ${L("RFQ apne aap — 4 raaste", "RFQs automatically — 4 ways")}</h3></div><div class="card-b"><div class="grid2">
+    <div><b>1. IndiaMART</b> <span id="imState" class="mu">…</span>
+      ${isAdmin() ? `<div class="row" style="gap:8px;margin-top:8px;flex-wrap:nowrap"><input class="input" id="imKey" type="password" autocomplete="off" placeholder="${L("IndiaMART CRM key yahan paste karo", "Paste the IndiaMART CRM key")}" style="flex:1;min-width:0"><button class="btn sm primary" id="imSave">Save</button></div>` : ""}
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" id="imTest">⚡ ${L("Abhi check karo", "Check now")}</button>${isAdmin() ? `<button class="btn sm ghost" id="imDel">${L("Key hatao", "Remove key")}</button>` : ""}</div>
+      <p class="mu" style="font-size:12px;margin:8px 0 0">${L("Key kahan milegi: IndiaMART seller account → Lead Manager → Settings → <b>CRM Integration / Pull API</b> → Generate key (paid seller plan mein). Key daalte hi har 15 minute nayi enquiries RFQ + lead ban jaati hain.", "Where to get it: IndiaMART seller account → Lead Manager → Settings → <b>CRM Integration / Pull API</b> → Generate key (paid seller plans). Once saved, new enquiries become RFQs + leads every 15 minutes.")}</p></div>
+    <div><b>2. Email</b> <span id="emState" class="mu">…</span>
+      <p class="mu" style="font-size:12px;margin:6px 0 0">${L("IndiaMART / TradeIndia / JustDial ke alert mails aur customers ke “requirement / quotation” mails → apne aap RFQ. Jis mail mein phone number na ho uska RFQ nahi banta — us bande ko notification jaata hai. Har banda apna Gmail code ek baar update kare (Inbox → Gmail setup); Outlook wale bas connect karein.", "IndiaMART / TradeIndia / JustDial alert mails and customers' “requirement / quotation” mails → RFQs by themselves. A mail without a phone number doesn't make an RFQ — that person gets a notification instead. Everyone updates their Gmail code once (Inbox → Gmail setup); Outlook users just connect.")}</p>
+      <button class="btn sm" id="emUpd" style="margin-top:8px">⚙️ ${L("Mera Gmail code update karo", "Update my Gmail code")}</button></div>
+    <div style="grid-column:1/-1;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)"><b>3 + 4. ${L("Website form + WhatsApp link", "Website form + WhatsApp link")}</b> <span class="mu" style="font-size:12.5px">${L("— customer form bharta hai → RFQ", "— the customer fills the form → RFQ")}</span>${enquiryShareHtml()}</div>
+  </div></div></div>
   <div class="cols">
     <div class="card"><div class="card-h"><h3>Settings</h3><span class="sp"></span>${ro ? '<span class="badge">Read-only (Admin edit karega)</span>' : ""}</div><div class="card-b"><fieldset id="af" ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0">
       <label class="check"><input type="checkbox" id="aEn" ${c.enabled ? "checked" : ""}> <b>Auto leads & RFQs ON</b></label>
@@ -2089,6 +2121,39 @@ VIEWS.automation = async (el) => {
     </div>
   </div>`;
   $$(".chip input", el).forEach((x) => x.onchange = () => x.parentElement.classList.toggle("on", x.checked));
+  // ---- RFQ sources card
+  wireEnquiryShare(el);
+  const imShow = async () => {
+    const { data: k } = await sb.rpc("integration_keys");
+    const st = $("#imState", el); if (!st) return;
+    st.innerHTML = k?.indiamart ? `<span class="badge good">✔ ${L("key saved", "key saved")} (…${h(k.indiamart_tail || "")})</span>` : `<span class="badge">${L("key nahi daali", "no key yet")}</span>`;
+  };
+  imShow();
+  $("#imSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const v = $("#imKey", el).value.trim(); if (!v) return toast(L("Pehle key paste karo", "Paste the key first"), true);
+    const { error } = await sb.rpc("set_integration_key", { p_name: "indiamart_crm_key", p_value: v }); if (error) throw error;
+    $("#imKey", el).value = ""; toast(L("✔ IndiaMART key save — ab ⚡ Abhi check karo dabao", "✔ IndiaMART key saved — now press ⚡ Check now")); imShow();
+  }));
+  $("#imDel", el)?.addEventListener("click", (e) => busy(e.target, async () => {
+    if (!(await confirmBox(L("IndiaMART key hata dein? Phir IndiaMART se RFQ aana band ho jayega.", "Remove the IndiaMART key? IndiaMART RFQs will stop.")))) return;
+    const { error } = await sb.rpc("set_integration_key", { p_name: "indiamart_crm_key", p_value: "" }); if (error) throw error;
+    toast(L("Key hata di", "Key removed")); imShow();
+  }));
+  $("#imTest", el)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const { data, error } = await sb.functions.invoke("auto-ingest", { body: { only: "indiamart" } }); if (error) throw error;
+    toast((data?.log || []).join(" · ") || L("Ho gaya", "Done"), data?.status === "error");
+    if (data?.rfqsAdded) softRefresh();
+  }));
+  $("#emUpd", el)?.addEventListener("click", () => gmailSetup(() => VIEWS.automation(el)));
+  Promise.all([sb.rpc("mail_status"), sb.from("mail_enquiry_log").select("result").gte("at", new Date(Date.now() - 7 * 864e5).toISOString()).limit(2000)]).then(([{ data: ms }, { data: lg }]) => {
+    const st = $("#emState", el); if (!st) return;
+    const g = !ms?.connected ? `<span class="badge">Gmail: ${L("connect nahi", "not connected")}</span>`
+      : (ms.script_v || 1) >= 3 ? `<span class="badge good">Gmail ✔</span>` : `<span class="badge warn">Gmail: ${L("purana code", "old code")}</span>`;
+    const o = outlookReady() ? ` <span class="badge ${localStorage.getItem("crm_ol_" + S.me.id) ? "good" : ""}">Outlook${localStorage.getItem("crm_ol_" + S.me.id) ? " ✔" : ""}</span>` : "";
+    const c = (k) => (lg || []).filter((x) => x.result === k).length;
+    st.innerHTML = g + o + ((lg || []).length ? ` <span class="mu" style="font-size:12px">· ${L("7 din", "7 days")}: ${c("rfq")} RFQ, ${c("incomplete")} ${L("adhuri", "incomplete")}</span>` : "");
+  }, () => {});
+
   $("#aSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const queries = $("#aQ", el).value.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
       const [q, category, industry, products] = l.split("|").map((x) => (x || "").trim());

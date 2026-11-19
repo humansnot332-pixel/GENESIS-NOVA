@@ -525,6 +525,7 @@ export async function viewInbox(el, params = {}) {
     <button class="btn sm" id="ibGmail">${msOk ? L("⚙️ Gmail setup", "⚙️ Gmail setup") : "🔗 Gmail connect"}</button>
     ${olReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
   </div></div>
+  ${msOk && (ms.script_v || 1) < 3 ? `<div class="banner" style="margin:0 0 14px">📨 <div><b>${L("Naya: enquiry mails se apne aap RFQ", "New: RFQs straight from enquiry mails")}</b> — <span>${L("IndiaMART / TradeIndia / JustDial alerts aur customers ke “requirement / quotation” mails. Gmail code ek baar update karo (copy → paste → Save).", "IndiaMART / TradeIndia / JustDial alerts and customers' “requirement / quotation” mails. Update your Gmail code once (copy → paste → Save).")}</span></div><button class="btn sm primary right" id="ibUpd">${L("Update", "Update")}</button></div>` : ""}
   <div class="toolbar">
     <div class="chips">${[["replies", "📩 Replies"], ["sent", "📤 Sent"], ["opened", L("👁 Khole gaye", "👁 Opened")], ["due", "⏰ Follow-up due"]].map(([k, l]) => `<button class="chip ${IB.tab === k ? "on" : ""}" data-ibt="${k}">${l}</button>`).join("")}</div>
     ${IB.tab === "replies" ? `<select class="input" id="ibF" style="width:auto">${[["open", "Saare replies"], ["unread", "Unread"], ["action", "Interested / Quote"], ["no", "Not interested"], ["auto", "Auto-reply / Bounce"], ["archived", "Archived"]].map(([k, l]) => `<option value="${k}" ${IB.f === k ? "selected" : ""}>${l}</option>`).join("")}</select>` : ""}
@@ -551,6 +552,7 @@ export async function viewInbox(el, params = {}) {
   $("#ibF", el)?.addEventListener("change", (e) => { IB.f = e.target.value; viewInbox(el); });
   let t; $("#ibQ", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { IB.q = e.target.value; viewInbox(el).then(() => { const i = $("#ibQ", el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 350); };
   $("#ibGmail", el).onclick = () => gmailSetup(() => viewInbox(el));
+  $("#ibUpd", el)?.addEventListener("click", () => gmailSetup(() => viewInbox(el)));
   $("#ibOutlook", el)?.addEventListener("click", (e) => busy(e.target, async () => { await outlookConnect(); viewInbox(el); }));
   $("#ibOutHelp", el)?.addEventListener("click", outlookHelp);
   $$("[data-ib]", el).forEach((d) => d.onclick = () => { $$(".ib-item", el).forEach((x) => x.classList.remove("on")); d.classList.add("on"); d.classList.remove("unread"); history.replaceState(null, "", "#/inbox/" + d.dataset.ib); readMail(+d.dataset.ib, $("#ibRead", el), () => viewInbox(el, { id: d.dataset.ib })); });
@@ -650,6 +652,8 @@ function appsScript(token) {
   return `// Genesis Nova — Gmail for ${S.me.email}
 // 1) CRM mein "Gmail mein kholo" dabate hi aapke Gmail mein draft banata hai — template + team ka banner
 // 2) Sirf un addresses ke replies CRM ko bhejta hai jinko aapne CRM se email kiya hai.
+// 3) Nayi enquiry mails (IndiaMART / TradeIndia / JustDial alerts, "requirement / quotation" wale mails)
+//    CRM ko bhejta hai → CRM mein apne aap RFQ. Dekhi hui mails pe Gmail label "CRM-RFQ" lagta hai.
 const CRM_URL = "${url}";
 const TOKEN = "${token}";   // personal — kisi ke saath share mat karo
 
@@ -665,7 +669,7 @@ function removeSetup() {                 // ▶ sync band karna ho to ye Run kar
 }
 
 function call_(action, payload) {
-  var res = UrlFetchApp.fetch(CRM_URL + "?v=2&action=" + action, {
+  var res = UrlFetchApp.fetch(CRM_URL + "?v=3&action=" + action, {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
@@ -716,8 +720,28 @@ function sendQueuedNow_() {
   return res;
 }
 
+// Gmail search for mails that may be a buyer's enquiry (the CRM decides; anything else is ignored there)
+var ENQ_Q = "in:inbox newer_than:2d -in:sent -label:crm-rfq (from:(indiamart.com OR tradeindia.com OR justdial.com OR exportersindia.com OR sulekha.com)" +
+  " OR subject:(enquiry OR inquiry OR requirement OR required OR quotation OR quote OR rfq OR \"best price\" OR \"price list\" OR need OR purchase))";
+
+function scanEnquiries_() {             // nayi enquiry mails → CRM mein RFQ (har ~5 minute)
+  var props = PropertiesService.getUserProperties();
+  if (Date.now() - Number(props.getProperty("enq_at") || 0) < 4 * 60e3) return;
+  props.setProperty("enq_at", String(Date.now()));
+  var threads = GmailApp.search(ENQ_Q, 0, 20);
+  if (!threads.length) return;
+  var items = threads.map(function (th) {
+    var m = th.getMessages()[0];
+    return { id: m.getId(), from: m.getFrom(), reply_to: m.getReplyTo(), subject: m.getSubject(), date: m.getDate().toISOString(),
+             body: m.getPlainBody().slice(0, 8000), list: !!m.getHeader("List-Unsubscribe"), link: th.getPermalink() };
+  });
+  var r = call_("enquiry", { provider: "gmail", items: items });
+  if (r && r.ok) (GmailApp.getUserLabelByName("CRM-RFQ") || GmailApp.createLabel("CRM-RFQ")).addToThreads(threads);
+}
+
 function syncReplies() {
   sendQueued_();
+  try { scanEnquiries_(); } catch (e) { console.log("enquiries: " + e); }
   var w = call_("watchlist");
   var who = (w.emails || []).concat(w.domains || []);
   if (!who.length) return;
@@ -845,12 +869,12 @@ export async function outlookSync(interactive = false) {
   const { data: w, error } = await sb.functions.invoke("mail-sync?action=watchlist", { body: {} });
   if (error) throw error;
   const who = new Set(w.emails || []), doms = new Set(w.domains || []);
-  if (!who.size && !doms.size) return 0;
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
   // message class tells a read receipt (REPORT.IPM.Note.IPNRN) from a real reply
   const CLS = "&$expand=singleValueExtendedProperties($filter=id eq 'String 0x001A')";
   let url = `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=receivedDateTime ge ${since}&$orderby=receivedDateTime desc&$top=50&$select=id,conversationId,subject,from,receivedDateTime,body,webLink` + CLS;
-  const out = [], receipts = [];
+  const out = [], receipts = [], enq = [];
+  const ENQ = /\b(enquiry|inquiry|requirement|required|quotation|quote|rfq|best price|price list|need|purchase)\b/i, PORTAL = /(^|\.)(indiamart|tradeindia|justdial|exportersindia|sulekha)\.com$/i;
   for (let page = 0; url && page < 8; page++) {
     let r = await fetch(url, { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.body-content-type="text"' } });
     if (!r.ok && page === 0 && url.endsWith(CLS)) { url = url.slice(0, -CLS.length); r = await fetch(url, { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.body-content-type="text"' } }); }
@@ -858,7 +882,12 @@ export async function outlookSync(interactive = false) {
     const j = await r.json();
     for (const msg of j.value || []) {
       const a = (msg.from?.emailAddress?.address || "").toLowerCase();
-      if (!a || !(who.has(a) || doms.has(a.split("@")[1]))) continue;
+      if (!a) continue;
+      if (!(who.has(a) || doms.has(a.split("@")[1]))) {
+        // not someone we mailed: maybe a new buyer's enquiry (the server decides, and keeps nothing else)
+        if (PORTAL.test(a.split("@")[1]) || ENQ.test(msg.subject || "")) enq.push({ id: msg.id, from: `${msg.from.emailAddress.name || ""} <${a}>`, subject: msg.subject || "", date: msg.receivedDateTime, body: (msg.body?.content || "").slice(0, 8000), link: msg.webLink });
+        continue;
+      }
       const cls = msg.singleValueExtendedProperties?.[0]?.value || "";
       if (/IPNNRN$/i.test(cls)) continue;   // "deleted without reading" notice
       if (/IPNRN$/i.test(cls) || (!cls && /^read\s*:/i.test(msg.subject || "") && /\bread\b/i.test(msg.body?.content || ""))) {
@@ -872,6 +901,16 @@ export async function outlookSync(interactive = false) {
   for (let i = 0; i < out.length; i += 100) {
     const { data, error: e2 } = await sb.functions.invoke("mail-sync?action=push", { body: { provider: "outlook", messages: out.slice(i, i + 100) } });
     if (e2) throw e2; n += data?.inserted || 0;
+  }
+  // enquiry mails → RFQs (each mail once)
+  if (enq.length) {
+    const EK = "crm_enq_" + S.me.id; let seen = [];
+    try { seen = JSON.parse(localStorage.getItem(EK) || "[]"); } catch { /* ignore */ }
+    const fresh = enq.filter((x) => !seen.includes(x.id)).slice(0, 30);
+    if (fresh.length) {
+      const { data: er, error: e4 } = await sb.functions.invoke("mail-sync?action=enquiry", { body: { provider: "outlook", items: fresh } });
+      if (!e4 && er?.ok) { seen.push(...fresh.map((x) => x.id)); try { localStorage.setItem(EK, JSON.stringify(seen.slice(-500))); } catch { /* ignore */ } }
+    }
   }
   // read receipts → the mail shows as opened (each receipt once)
   if (receipts.length) {
@@ -932,7 +971,7 @@ export async function unreadCounts() {
 }
 // ---- notifications: grouped by day, like a phone (Aaj / Kal / Monday / 12 Nov) ----
 const N_ICON = { assign: "👤", digest: "📊", lock: "🔒", lock_request: "🙋", payment: "💰", quote_reply: "💬", quote_view: "👀",
-  renewal: "🔁", reply: "✉️", mail_open: "👁", rfq: "📥", ticket: "🎫", mail_stale: "📭", access: "🔑", lock_warn: "⏳", rfq_stuck: "🚨" };
+  renewal: "🔁", reply: "✉️", mail_open: "👁", enquiry_mail: "📧", rfq: "📥", ticket: "🎫", mail_stale: "📭", access: "🔑", lock_warn: "⏳", rfq_stuck: "🚨" };
 function nDay(t) {
   const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);
   const day = new Date(d); day.setHours(0, 0, 0, 0);
