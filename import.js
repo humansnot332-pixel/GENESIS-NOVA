@@ -108,7 +108,7 @@ function readDelimited(text) {
 const F = {
   companies: [
     ["company", "Company *", /^(company|firm|organi[sz]ation|customer|client|party|account|business)( ?name)?$|^name of (company|firm)|^company/i, true],
-    ["contact_name", "Contact person", /contact( ?person| ?name)?$|^person|concern(ed)? person|^name$/i],
+    ["contact_name", "Contact person", /contact( ?person| ?name)?$|^person|concern(ed)? person|^name$|kind ?attn|attention/i],
     ["designation", "Designation", /designation|title|role|post/i],
     ["phone", "Phone / mobile", /^(phone|mobile|mob|cell|contact)( ?(no|number|#))?\.?( ?1)?$|^tel|whatsapp/i],
     ["alt_phone", "Alternate phone", /alt|alternate|other ?phone|phone ?2|landline|mobile ?2/i],
@@ -193,7 +193,11 @@ function autoMap(kind, header) {
 function detectKind(header) {
   let best = "companies", score = -1;
   for (const k of ["quotations", "rfqs", "companies"]) {
-    const m = autoMap(k, header), s = Object.keys(m).length + (k === "quotations" && m.quote_no != null ? 3 : 0) + (k === "rfqs" && (m.rfq_no != null || m.product != null) && m.quote_no == null ? 1 : 0);
+    const m = autoMap(k, header);
+    let s = Object.keys(m).length + (k === "quotations" && m.quote_no != null ? 3 : 0) + (k === "rfqs" && (m.rfq_no != null || m.product != null) && m.quote_no == null ? 1 : 0);
+    // a party list (name, phone, GSTIN, last order date…) is not quotations / RFQs without their key columns
+    if (k === "quotations" && m.quote_no == null && m.item_desc == null && m.unit_price == null && m.grand_total == null) s -= 100;
+    if (k === "rfqs" && m.rfq_no == null && m.product == null) s -= 100;
     if (s > score) { score = s; best = k; }
   }
   return best;
@@ -346,10 +350,11 @@ async function pickStep(el) {
   <div class="card" style="padding:18px;margin-bottom:16px">
     <div class="row"><div style="flex:1;min-width:240px"><h2 style="margin:0 0 4px;font-size:18px">📥 Import Center</h2>
       <div class="mu">${L("Purani quotations, companies aur enquiries ek baar mein laao. Pehle preview dikhega — kuch bhi save hone se pehle. Galti ho toh ek click mein Undo.", "Bring in past quotations, companies and enquiries in one go. You see a full preview before anything is saved — and one-click Undo if needed.")}</div></div></div>
-    <label class="dropzone" id="drop"><input type="file" id="impF" accept=".xlsx,.csv,.txt,.json" class="sr">
+    <label class="dropzone" id="drop"><input type="file" id="impF" accept=".xlsx,.xls,.csv,.txt,.json,.vcf,.xml,.htm,.html" class="sr">
       <div style="font-size:30px">⬆️</div><b>${L("File yahan drop karo ya click karke chuno", "Drop a file here or click to choose")}</b>
-      <div class="mu" style="font-size:12.5px">Excel (.xlsx) · CSV · ${L("purane Calling Desk ka backup (.json)", "old Calling Desk backup (.json)")} — max 15 MB</div></label>
-    <div class="mu" style="font-size:12.5px;margin-top:8px">${L("App khud pehchanega ki file mein companies hain, quotations ya RFQs. Excel .xls (purana format) ho toh pehle Excel mein \"Save As → .xlsx\" karo.", "The app detects whether the file has companies, quotations or RFQs. For old .xls files, first use \"Save As → .xlsx\" in Excel.")}</div>
+      <div class="mu" style="font-size:12.5px">Excel (.xlsx / .xls) · CSV · ${L("phone contacts (.vcf)", "phone contacts (.vcf)")} · Tally (.xml) · ${L("purane Calling Desk ka backup (.json)", "old Calling Desk backup (.json)")} — max 15 MB</div></label>
+    <div class="mu" style="font-size:12.5px;margin-top:8px">${L("App khud pehchanega ki file mein companies hain, quotations ya RFQs.", "The app detects whether the file has companies, quotations or RFQs.")}<br>
+      ${L("<b>Tally se:</b> Gateway of Tally → Export → Masters → Ledgers → Format: XML. <b>Phone contacts:</b> Contacts app → Export → .vcf file.", "<b>From Tally:</b> Gateway of Tally → Export → Masters → Ledgers → Format: XML. <b>Phone contacts:</b> Contacts app → Export → .vcf file.")}</div>
   </div>
   <div class="kpis">${Object.entries(KIND).filter(([k]) => k !== "erp_backup").map(([k, [i, t, d]]) => `<div class="card kpi"><div style="font-size:22px">${i}</div><b>${h(t)}</b><div class="s">${h(d)}</div>
     <button class="btn sm" style="margin-top:8px" data-sample="${k}">${ic("download")} ${L("Sample file", "Sample file")}</button></div>`).join("")}
@@ -369,7 +374,8 @@ async function pickStep(el) {
 }
 
 async function loadFile(f, el) {
-  if (f.size > 15e6) return toast(L("File 15 MB se badi hai", "File is larger than 15 MB"), true);
+  const maxMb = /\.(xml|vcf)$/i.test(f.name) ? 40 : 15;   // Tally XML is UTF-16 → twice the size
+  if (f.size > maxMb * 1e6) return toast(L(`File ${maxMb} MB se badi hai — 2 file mein tod do`, `File is larger than ${maxMb} MB — split it into 2 files`), true);
   try {
     el.innerHTML = `<div class="empty">${L("File padh rahe hain…", "Reading file…")}</div>`;
     IM.file = f.name;
@@ -379,11 +385,21 @@ async function loadFile(f, el) {
       IM.kind = "erp_backup"; IM.erp = fromErpBackup(j);
       await prepareErp(); IM.step = "review"; return viewImport(el);
     }
-    if (/\.xlsx$/i.test(f.name)) {
+    // go by what is inside the file, not its name (".xls" is often an HTML table, xlsx gets renamed, …)
+    const buf = await f.arrayBuffer(), b = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
+    if (b[0] === 0x50 && b[1] === 0x4b) {
       if (!window.DecompressionStream) throw new Error(L("Ye browser purana hai — Chrome / Edge latest use karo, ya CSV upload karo", "This browser is too old — use the latest Chrome / Edge, or upload a CSV"));
-      IM.sheets = await readXlsx(await f.arrayBuffer());
-    } else if (/\.xls$/i.test(f.name)) throw new Error(L("Purana .xls format — Excel mein \"Save As → .xlsx\" karke upload karo", "Old .xls format — use \"Save As → .xlsx\" in Excel and upload again"));
-    else IM.sheets = readDelimited(await f.text());
+      IM.sheets = await readXlsx(buf);
+    } else if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) IM.sheets = (await import("./legacy.js")).readXls(buf);
+    else {
+      const X = await import("./legacy.js"), text = X.decodeText(buf), head = text.slice(0, 3000);
+      if (/^\s*BEGIN:VCARD/i.test(head) || /\.vcf$/i.test(f.name)) IM.sheets = X.readVcf(text);
+      else if (/<ENVELOPE|<TALLYMESSAGE|<TALLYREQUEST/i.test(head)) IM.sheets = X.readTally(text);
+      else if (/urn:schemas-microsoft-com:office:spreadsheet/i.test(head)) IM.sheets = X.readSpreadsheetML(text);
+      else if (/<(table|html)[\s>]/i.test(text.slice(0, 20000))) IM.sheets = X.readHtmlTables(text);
+      else if (/^\s*</.test(head)) throw new Error(L("Ye XML file pehchani nahi — Tally ke liye: Export → Masters → Ledgers (XML) chuno", "This XML file isn't recognised — for Tally choose Export → Masters → Ledgers (XML)"));
+      else IM.sheets = readDelimited(text);
+    }
     IM.sheets = IM.sheets.filter((s) => s.rows.length > 1);
     if (!IM.sheets.length) throw new Error(L("File mein data nahi mila", "No data found in the file"));
     // pick the sheet whose header matches best
