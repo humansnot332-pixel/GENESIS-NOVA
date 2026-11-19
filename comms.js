@@ -115,7 +115,10 @@ const signatureBlock = () => `\n\nBest Regards,\n\n${S.me.full_name}\n${S.me.des
 // ---------------------------------------------------------------------
 export async function openComposer(opts) {
   const { channel, lead, rfq, bulk, reply } = opts;
-  const all = (await loadTemplates()).filter((t) => t.channel === channel && (t.use_for === "any" || t.use_for === (rfq ? "rfq" : "lead")));
+  // the admin may have switched the team banner since this tab loaded → always use the current one
+  const freshBanner = channel === "email" ? sb.from("settings").select("value").eq("key", "email_banner").maybeSingle().then(({ data }) => { if (data?.value) S.settings.email_banner = data.value; }, () => {}) : null;
+  const [allT] = await Promise.all([loadTemplates(), freshBanner]);
+  const all = allT.filter((t) => t.channel === channel && (t.use_for === "any" || t.use_for === (rfq ? "rfq" : "lead")));
   // current-language templates first (auto-picked), the other language still selectable
   const list = [...all.filter((t) => (t.lang || "en") === getLang()), ...all.filter((t) => (t.lang || "en") !== getLang())];
   const stage = opts.stage || pickStage({ channel, lead, rfq, reply });
