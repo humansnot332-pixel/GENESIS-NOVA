@@ -207,6 +207,8 @@ const D = [
   // ---------- business suite (server texts) ----------
   ["🛠 Ticket aapko assign hua:", "🛠 Ticket assigned to you:"], ["👁 Quotation kholi gayi:", "👁 Quotation opened:"],
   ["Pehli baar dekhi — abhi call karne ka sahi time hai!", "Opened for the first time — great moment to call!"], ["Dobara dekhi:", "Viewed again:"],
+  ["👁 Mail khola:", "👁 Mail opened:"], ["🔗 Mail ka link khola:", "🔗 Clicked a link in the mail:"], ["Pehli baar khola — abhi call karne ka sahi time hai!", "Opened for the first time — great moment to call!"],
+  ["Dobara khola:", "Opened again:"], ["👁 Customer ne mail khola:", "👁 Customer opened the mail:"],
   ["✅ Quotation ACCEPT hui:", "✅ Quotation ACCEPTED:"], ["✏️ Customer ne changes maange:", "✏️ Customer requested changes:"],
   ["🔁 Renewal aaj:", "🔁 Renewal today:"], ["din mein:", "days:"], ["📊 Aaj ka report", "📊 Today's report"],
   ["👁 Customer ne quotation online dekhi:", "👁 Customer viewed quotation online:"], ["✅ Customer ne quotation online accept ki:", "✅ Customer accepted quotation online:"],

@@ -403,7 +403,7 @@ export const bannerCfg = () => {
 };
 export const bannerUrl = () => bannerCfg().url || new URL("email-banner.png", location.href.split("#")[0]).href;
 export const bannerOn = () => bannerCfg().on !== false;
-export const bannerHtml = () => `<a href="${h(bannerCfg().link || "#")}" target="_blank" rel="noopener noreferrer"><img src="${h(bannerUrl())}" alt="Geninfo — Genesis Infoserve" width="600" style="display:block;width:600px;max-width:100%;height:auto;border:0;margin-top:14px"></a>`;
+export const bannerHtml = (src) => `<a href="${h(bannerCfg().link || "#")}" target="_blank" rel="noopener noreferrer"><img src="${h(src || bannerUrl())}" alt="Geninfo — Genesis Infoserve" width="600" style="display:block;width:600px;max-width:100%;height:auto;border:0;margin-top:14px"></a>`;
 export async function copyRich(md, { banner = false } = {}) {
   const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">${mdToHtml(md)}${banner ? bannerHtml() : ""}</div>`;
   try {

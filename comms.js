@@ -39,6 +39,30 @@ export async function ensureWork(entity, row) {
 }
 
 // ---------------------------------------------------------------------
+//  Mail open tracking: an invisible 1×1 image + tracked links in every mail
+//  made from the CRM (→ edge function mail-open → popup for the sender)
+// ---------------------------------------------------------------------
+const TRACK_URL = () => String(CONFIG.SUPABASE_URL || "").replace(/\/$/, "") + "/functions/v1/mail-open";
+const trackOn = () => (S.settings?.mail_track || {}).on !== false;
+const receiptOn = () => (S.settings?.mail_track || {}).receipt !== false;
+function trackToken() {
+  const b = crypto.getRandomValues(new Uint8Array(24));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+export function trackMail(html) {
+  if (!trackOn()) return { html, token: null, links: null };
+  const token = trackToken(), links = [], base = TRACK_URL();
+  html = html.replace(/(<a\b[^>]*?\bhref=")(https?:\/\/[^"]+)(")/gi, (all, a, url, b) => {
+    if (links.length >= 20) return all;
+    links.push(url.replace(/&amp;/g, "&"));
+    return `${a}${base}?t=${token}&amp;l=${links.length}${b}`;
+  });
+  html += `<img src="${base}?t=${token}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">`;
+  return { html, token, links: links.length ? links : null };
+}
+const NO_TRACK = (html) => ({ html, token: null, links: null });
+
+// ---------------------------------------------------------------------
 //  Gmail draft with the team banner (made by the person's Gmail script)
 // ---------------------------------------------------------------------
 function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m }) {
@@ -47,11 +71,12 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
   try { w.document.title = "Gmail draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Gmail draft ban raha hai…", "Making your Gmail draft…")}</b><br><span style="color:#667">${S.me.mail_webapp ? L("Template + Geninfo banner ke saath. Bas 2-3 second…", "With the template + Geninfo banner. Just 2-3 seconds…") : L("Template + Geninfo banner ke saath. ~30 second, ye tab apne aap khul jayega.", "With the template + Geninfo banner. ~30 seconds, this tab opens it automatically.")}</span></div>`; } catch { /* ignore */ }
   const plainUrl = composeUrl("gmail", parts);
   const go = (url) => { if (w && !w.closed) w.location.href = url; else if (!openTab(url)) toastAction(L("Gmail draft ready", "Gmail draft ready"), L("Kholo", "Open"), () => openTab(url), 20000); };
-  const html = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerHtml()}</div>`;
+  const html0 = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerHtml()}</div>`;
+  const tr = bulk ? NO_TRACK(html0) : trackMail(html0), html = tr.html;   // one draft to many (BCC) can't tell who opened
   sb.from("email_outbox").insert({ kind: "draft", to_addr: parts.to, cc: parts.cc || null, bcc: parts.bcc || null, subject: parts.subject, html, body: parts.body,
     lead_id: !bulk && lead && canWork(lead) ? lead.id : null }).select("id").single().then(async ({ data: row, error }) => {
     if (error) { go(plainUrl); return fail(error); }
-    logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu }).catch(fail);
+    logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu, track: tr }).catch(fail);
     const draftUrl = (d) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id || d.msg_id)}`;
     if (S.me.mail_webapp) {
       try {
@@ -73,6 +98,67 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
     go(plainUrl);
   });
   closeModal();
+}
+
+// ---------------------------------------------------------------------
+//  Outlook draft (Microsoft Graph): template + banner (inside the mail, so
+//  Outlook shows it without "download pictures") + open tracking + read receipt
+// ---------------------------------------------------------------------
+async function bannerB64() {
+  try {
+    const r = await fetch(bannerUrl(), { cache: "force-cache" }); if (!r.ok) return null;
+    const b = await r.blob(); if (!b.size || b.size > 1.5e6) return null;
+    const data = await new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(",")[1] || ""); f.onerror = no; f.readAsDataURL(b); });
+    return data ? { type: (b.type || "image/png").split(";")[0], data } : null;
+  } catch { return null; }
+}
+const graphAddrs = (s) => String(s || "").split(/[,;\s]+/).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).map((address) => ({ emailAddress: { address } }));
+function openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId, fu }) {
+  // open the tab now (inside the click) — a tab opened later would be blocked
+  const w = window.open("", "_blank");
+  try { w.document.title = "Outlook draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Outlook draft ban raha hai…", "Making your Outlook draft…")}</b><br><span style="color:#667">${L("Template + banner + open tracking ke saath. Bas 2-3 second…", "With the template, the banner and open tracking. Just 2-3 seconds…")}</span></div>`; } catch { /* ignore */ }
+  const plainUrl = composeUrl("outlook", parts);
+  const go = (url) => { if (w && !w.closed) w.location.href = url; else if (!openTab(url)) toastAction(L("Outlook draft ready", "Outlook draft ready"), L("Kholo", "Open"), () => openTab(url), 20000); };
+  const log = (track) => logEmail({ provider: "outlook", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu, track }).catch(fail);
+  closeModal();
+  (async () => {
+    let token;
+    try { token = await graphToken(false, MAIL_RW); }
+    catch {
+      go(plainUrl); log(null);
+      toastAction(L("Outlook mein banner + open tracking ke liye ek baar permission do", "Allow Outlook once for the banner and open tracking"), L("Allow", "Allow"),
+        () => graphToken(true, MAIL_RW).then(() => toast(L("✔ Ho gaya — agle mail se banner + tracking", "✔ Done — from the next mail: banner + tracking")), fail), 20000);
+      return;
+    }
+    const img = bannerOn() ? await bannerB64() : null;
+    const html0 = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerOn() ? bannerHtml(img ? "cid:gnbanner" : null) : ""}</div>`;
+    const tr = bulk ? NO_TRACK(html0) : trackMail(html0);
+    const msg = {
+      subject: parts.subject, body: { contentType: "HTML", content: tr.html },
+      toRecipients: graphAddrs(parts.to), ccRecipients: graphAddrs(parts.cc), bccRecipients: graphAddrs(parts.bcc),
+      isReadReceiptRequested: !!tr.token && receiptOn(),
+    };
+    if (img) msg.attachments = [{ "@odata.type": "#microsoft.graph.fileAttachment", name: "geninfo-banner." + (img.type.split("/")[1] || "png"), contentType: img.type, contentBytes: img.data, isInline: true, contentId: "gnbanner" }];
+    try {
+      const r = await fetch("https://graph.microsoft.com/v1.0/me/messages", { method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify(msg) });
+      if (!r.ok) throw new Error("Outlook " + r.status);
+      const d = await r.json();
+      if (!d.webLink) throw new Error("Outlook: no draft link");
+      go(d.webLink); log(tr);
+    } catch {
+      go(plainUrl); log(null);
+      toast(L("Outlook draft nahi bana — bina banner ke Outlook khola", "Couldn't make the Outlook draft — opened Outlook without the banner"), true);
+    }
+  })();
+}
+function outlookTip(m) {
+  const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
+  const t = box.querySelector("span"); box.querySelector("button")?.remove();
+  if (outlookReady() && outlookConnected()) { box.classList.add("ok"); t.textContent = L("⚡ Outlook mein kholo — draft template + banner + open tracking ke saath turant khulega.", "⚡ Open in Outlook — the draft opens instantly with the template, the banner and open tracking."); return; }
+  if (!outlookReady()) { t.innerHTML = L("Outlook mein banner + open tracking ke liye Admin ek baar <b>Outlook setup</b> kare (Company settings).", "For the banner and open tracking in Outlook, an Admin does the <b>Outlook setup</b> once (Company settings)."); return; }
+  t.innerHTML = L("Banner + open tracking ke liye <b>Outlook ek baar connect karo</b>.", "For the banner and open tracking, <b>connect Outlook once</b>.");
+  const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = L("Connect", "Connect");
+  b.onclick = (e) => busy(e.target, async () => { await outlookConnect(); outlookTip(m); }); box.append(b);
 }
 
 // ---------------------------------------------------------------------
@@ -207,6 +293,7 @@ export async function openComposer(opts) {
   let draftOk = false;
   if (isEmail) sb.rpc("mail_status").then(({ data: ms }) => {
     draftOk = !!ms?.draft_ok;
+    if ((S.me.mail_provider || "gmail") === "outlook") return outlookTip(m);
     const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
     const t = box.querySelector("span");
     if (draftOk && S.me.mail_webapp) { box.classList.add("ok"); t.textContent = L("⚡ Gmail mein kholo — draft template + Geninfo banner ke saath turant khulega.", "⚡ Open in Gmail — the draft opens instantly with the template + the Geninfo banner."); return; }
@@ -241,6 +328,11 @@ export async function openComposer(opts) {
     const parts = { to: bulk ? S.me.email : toList.join(","), cc: cc.join(","), bcc, subject, body: mdToPlain(text) };
     // Gmail + banner + script ready → the script makes a real Gmail draft (template + banner) and we open it
     if (provider === "gmail" && bannerOn() && draftOk) return openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, m });
+    // Outlook connected → a real Outlook draft (template + banner + open tracking + read receipt)
+    if (provider === "outlook" && outlookReady() && outlookConnected()) {
+      if (S.me.mail_provider !== "outlook") { S.me.mail_provider = "outlook"; sb.from("profiles").update({ mail_provider: "outlook" }).eq("id", S.me.id).then(() => {}, () => {}); }
+      return openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId: tplId(), fu: $("#cFu", m)?.checked });
+    }
     let url = composeUrl(provider, parts), copied = false;
     if (url.length > URL_LIMIT[provider]) { url = composeUrl(provider, { ...parts, body: "" }); copyRich(text); copied = true; }
     if (!openTab(url)) showFallback(url, PROVIDERS.find((p) => p[0] === provider)[1]);
@@ -266,13 +358,14 @@ export async function openComposer(opts) {
   }));
 }
 
-async function logEmail({ provider, subject, text, toList, cc, opts, tplId, bulkList, fu }) {
+async function logEmail({ provider, subject, text, toList, cc, opts, tplId, bulkList, fu, track }) {
   const { lead, rfq, bulk, reply } = opts;
   let rows;
   if (bulk) rows = bulkList.map((l) => ({ direction: "out", lead_id: l.id, counterpart: l.email, subject, body: text, provider, template_id: tplId, bulk: true }));
   else rows = [{
     direction: "out", lead_id: lead?.id || reply?.lead_id || null, rfq_id: rfq?.id || reply?.rfq_id || null,
     counterpart: toList.join(", "), cc: cc.join(", ") || null, subject, body: text, provider, template_id: tplId,
+    ...(track?.token ? { track_token: track.token, track_links: track.links } : {}),
   }];
   // keep lead/RFQ links only where this user may work on them (RLS would reject otherwise)
   for (const r of rows) {
@@ -378,6 +471,14 @@ function templateEditor(t, done) {
 //  INBOX (replies) + SENT + FOLLOW-UP DUE
 // ---------------------------------------------------------------------
 const IB = { tab: "replies", f: "open", team: false, q: "" };
+// 👁 opened 2× · 3 h ago (✔ = Outlook read receipt, 🔗 = clicked a link)
+function openChip(r) {
+  if (!r.track_token && !r.opened_at) return "";
+  if (!r.opened_at) return `<span class="badge" title="${h(L("Tracking chalu hai — customer ne abhi nahi khola (ya uske mail mein images band hain)", "Tracking is on — not opened yet (or images are blocked in their mail)"))}">📭 ${L("Nahi khola", "Not opened")}</span> `;
+  const via = r.open_via === "receipt" ? "Outlook read receipt" : r.open_via === "image" ? "" : r.open_via || "";
+  const tip = `${L("Pehli baar", "First")}: ${dt(r.opened_at)}${via ? " · " + via : ""}${r.click_count ? ` · ${r.click_count} link click` : ""}`;
+  return `<span class="badge info" title="${h(tip)}">👁 ${L("Khola", "Opened")} ${r.open_count || 1}× · ${h(ago(r.last_open_at))}${r.receipt_at ? " ✔" : ""}${r.click_count ? " 🔗" : ""}</span> `;
+}
 export async function viewInbox(el, params = {}) {
   const team = IB.team && isMgr();
   const { data: ms } = await sb.rpc("mail_status");
@@ -394,8 +495,9 @@ export async function viewInbox(el, params = {}) {
     if (IB.f === "open") q = q.not("intent", "in", "(auto_reply,bounce)");
     const { data, error } = await q; if (error) throw error; rows = data || [];
   } else {
-    let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, subject, created_at, bulk, direction, leads(company, status, owner_id, reply_count, last_reply_at)")
-      .eq("direction", "out").order("created_at", { ascending: false }).limit(400);
+    let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, subject, created_at, bulk, direction, track_token, open_count, click_count, opened_at, last_open_at, open_via, receipt_at, leads(company, status, owner_id, reply_count, last_reply_at)")
+      .eq("direction", "out");
+    q = IB.tab === "opened" ? q.not("opened_at", "is", null).order("last_open_at", { ascending: false }).limit(200) : q.order("created_at", { ascending: false }).limit(400);
     if (!team) q = q.eq("user_id", S.me.id);
     const { data, error } = await q; if (error) throw error;
     const { data: ins } = await sb.from("email_messages").select("counterpart, created_at").eq("direction", "in").gte("created_at", new Date(Date.now() - 120 * 864e5).toISOString()).limit(2000);
@@ -424,7 +526,7 @@ export async function viewInbox(el, params = {}) {
     ${olReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
   </div></div>
   <div class="toolbar">
-    <div class="chips">${[["replies", "📩 Replies"], ["sent", "📤 Sent"], ["due", "⏰ Follow-up due"]].map(([k, l]) => `<button class="chip ${IB.tab === k ? "on" : ""}" data-ibt="${k}">${l}</button>`).join("")}</div>
+    <div class="chips">${[["replies", "📩 Replies"], ["sent", "📤 Sent"], ["opened", L("👁 Khole gaye", "👁 Opened")], ["due", "⏰ Follow-up due"]].map(([k, l]) => `<button class="chip ${IB.tab === k ? "on" : ""}" data-ibt="${k}">${l}</button>`).join("")}</div>
     ${IB.tab === "replies" ? `<select class="input" id="ibF" style="width:auto">${[["open", "Saare replies"], ["unread", "Unread"], ["action", "Interested / Quote"], ["no", "Not interested"], ["auto", "Auto-reply / Bounce"], ["archived", "Archived"]].map(([k, l]) => `<option value="${k}" ${IB.f === k ? "selected" : ""}>${l}</option>`).join("")}</select>` : ""}
     <input class="input grow" id="ibQ" placeholder="Search company, email, subject…" value="${h(IB.q)}">
     ${isMgr() ? `<div class="chips"><button class="chip ${team ? "" : "on"}" data-ibm="0">Mere</button><button class="chip ${team ? "on" : ""}" data-ibm="1">Team</button></div>` : ""}
@@ -439,9 +541,9 @@ export async function viewInbox(el, params = {}) {
     <div class="card ib-read" id="ibRead"><div class="empty">← Koi reply select karo</div></div></div>`
   : `<div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>To</th><th>Subject</th><th>Bheja</th><th>Status</th>${team ? "<th>By</th>" : ""}<th></th></tr></thead><tbody>
     ${sentRows.map((r) => `<tr data-lid="${r.lead_id || ""}"><td class="co">${h(r.leads?.company || "—")}${r.bulk ? ' <span class="badge">bulk</span>' : ""}</td><td class="sub">${h(r.counterpart)}</td><td>${h(r.subject || "")}</td><td class="sub">${h(ago(r.created_at))}</td>
-      <td>${r.replied ? '<span class="badge good">✅ Reply aaya</span>' : r.age >= 3 ? `<span class="badge warn">⏳ ${Math.floor(r.age)} din, no reply</span>` : '<span class="badge">Waiting</span>'}</td>
+      <td>${openChip(r)}${r.replied ? '<span class="badge good">✅ Reply aaya</span>' : r.age >= 3 ? `<span class="badge warn">⏳ ${Math.floor(r.age)} din, no reply</span>` : '<span class="badge">Waiting</span>'}</td>
       ${team ? `<td class="sub">${h(userName(r.user_id))}</td>` : ""}
-      <td>${r.lead_id && !r.replied ? `<button class="btn sm" data-fu="${r.lead_id}">Follow-up bhejo</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">${IB.tab === "due" ? "Koi pending follow-up nahi 🎉" : "Abhi tak CRM se koi email nahi gaya"}</td></tr>`}
+      <td>${r.lead_id && !r.replied ? `<button class="btn sm" data-fu="${r.lead_id}">Follow-up bhejo</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">${IB.tab === "due" ? "Koi pending follow-up nahi 🎉" : IB.tab === "opened" ? L("Abhi kisi customer ne CRM mail nahi khola (ya tracking wale mail abhi gaye nahi)", "No customer has opened a CRM mail yet (or no tracked mail has gone out yet)") : "Abhi tak CRM se koi email nahi gaya"}</td></tr>`}
     </tbody></table></div></div>`}`;
 
   $$("[data-ibt]", el).forEach((b) => b.onclick = () => { IB.tab = b.dataset.ibt; viewInbox(el); });
@@ -720,12 +822,17 @@ async function msal() {
   await pca.initialize(); pcaId = c.id + c.tenant;
   return pca;
 }
-async function graphToken(interactive) {
-  const p = await msal(), req = { scopes: ["Mail.Read"] };
+const MAIL_READ = ["Mail.Read"], MAIL_RW = ["Mail.ReadWrite"];
+async function graphToken(interactive, scopes = MAIL_READ) {
+  const p = await msal(), req = { scopes };
   const mine = olAccount(), acc = mine && p.getAllAccounts().find((a) => a.homeAccountId === mine);
-  if (acc) { try { return (await p.acquireTokenSilent({ ...req, account: acc })).accessToken; } catch (e) { if (!interactive) throw e; } }
+  if (acc) {
+    try { return (await p.acquireTokenSilent({ ...req, account: acc })).accessToken; }
+    catch (e) { if (!interactive) throw e; return (await p.acquireTokenPopup({ ...req, account: acc })).accessToken; }   // e.g. drafts permission not given yet
+  }
   if (!interactive) throw new Error("Outlook login chahiye");
-  const r = await p.loginPopup({ ...req, loginHint: S.me.email, prompt: "select_account" });
+  // one sign-in asks for both: read customer replies + make drafts
+  const r = await p.loginPopup({ scopes: ["Mail.Read", "Mail.ReadWrite"], loginHint: S.me.email, prompt: "select_account" });
   try { localStorage.setItem(OLK(), r.account.homeAccountId); } catch { /* ignore */ }
   return (await p.acquireTokenSilent({ ...req, account: r.account })).accessToken;
 }
@@ -740,15 +847,23 @@ export async function outlookSync(interactive = false) {
   const who = new Set(w.emails || []), doms = new Set(w.domains || []);
   if (!who.size && !doms.size) return 0;
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
-  let url = `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=receivedDateTime ge ${since}&$orderby=receivedDateTime desc&$top=50&$select=id,conversationId,subject,from,receivedDateTime,body,webLink`;
-  const out = [];
+  // message class tells a read receipt (REPORT.IPM.Note.IPNRN) from a real reply
+  const CLS = "&$expand=singleValueExtendedProperties($filter=id eq 'String 0x001A')";
+  let url = `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=receivedDateTime ge ${since}&$orderby=receivedDateTime desc&$top=50&$select=id,conversationId,subject,from,receivedDateTime,body,webLink` + CLS;
+  const out = [], receipts = [];
   for (let page = 0; url && page < 8; page++) {
-    const r = await fetch(url, { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.body-content-type="text"' } });
+    let r = await fetch(url, { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.body-content-type="text"' } });
+    if (!r.ok && page === 0 && url.endsWith(CLS)) { url = url.slice(0, -CLS.length); r = await fetch(url, { headers: { Authorization: "Bearer " + token, Prefer: 'outlook.body-content-type="text"' } }); }
     if (!r.ok) throw new Error("Outlook " + r.status);
     const j = await r.json();
     for (const msg of j.value || []) {
       const a = (msg.from?.emailAddress?.address || "").toLowerCase();
       if (!a || !(who.has(a) || doms.has(a.split("@")[1]))) continue;
+      const cls = msg.singleValueExtendedProperties?.[0]?.value || "";
+      if (/IPNNRN$/i.test(cls)) continue;   // "deleted without reading" notice
+      if (/IPNRN$/i.test(cls) || (!cls && /^read\s*:/i.test(msg.subject || "") && /\bread\b/i.test(msg.body?.content || ""))) {
+        receipts.push({ id: msg.id, from: a, subject: msg.subject || "", at: msg.receivedDateTime }); continue;
+      }
       out.push({ id: msg.id, thread_id: msg.conversationId, thread_url: msg.webLink, from: `${msg.from.emailAddress.name || ""} <${a}>`, subject: msg.subject, date: msg.receivedDateTime, body: (msg.body?.content || "").slice(0, 15000) });
     }
     url = j["@odata.nextLink"];
@@ -757,6 +872,17 @@ export async function outlookSync(interactive = false) {
   for (let i = 0; i < out.length; i += 100) {
     const { data, error: e2 } = await sb.functions.invoke("mail-sync?action=push", { body: { provider: "outlook", messages: out.slice(i, i + 100) } });
     if (e2) throw e2; n += data?.inserted || 0;
+  }
+  // read receipts → the mail shows as opened (each receipt once)
+  if (receipts.length) {
+    const RK = "crm_rcpt_" + S.me.id; let done = [];
+    try { done = JSON.parse(localStorage.getItem(RK) || "[]"); } catch { /* ignore */ }
+    for (const rc of receipts) {
+      if (done.includes(rc.id)) continue;
+      const { error: e3 } = await sb.rpc("mail_receipt", { p_from: rc.from, p_subject: rc.subject, p_at: rc.at });
+      if (!e3) done.push(rc.id);
+    }
+    try { localStorage.setItem(RK, JSON.stringify(done.slice(-300))); } catch { /* ignore */ }
   }
   return n;
 }
@@ -806,7 +932,7 @@ export async function unreadCounts() {
 }
 // ---- notifications: grouped by day, like a phone (Aaj / Kal / Monday / 12 Nov) ----
 const N_ICON = { assign: "👤", digest: "📊", lock: "🔒", lock_request: "🙋", payment: "💰", quote_reply: "💬", quote_view: "👀",
-  renewal: "🔁", reply: "✉️", rfq: "📥", ticket: "🎫", mail_stale: "📭", access: "🔑", lock_warn: "⏳", rfq_stuck: "🚨" };
+  renewal: "🔁", reply: "✉️", mail_open: "👁", rfq: "📥", ticket: "🎫", mail_stale: "📭", access: "🔑", lock_warn: "⏳", rfq_stuck: "🚨" };
 function nDay(t) {
   const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);
   const day = new Date(d); day.setHours(0, 0, 0, 0);

@@ -534,6 +534,7 @@ function subscribeRealtime() {
       toast(p.new.title + (p.new.body ? " — " + p.new.body : ""));
       badgesSoon(300);
       if (p.new.kind === "access") reloadMe(true);
+      if (p.new.kind === "mail_open" && S.route === "inbox") liveRefresh(300);
       if (S.route === "requests" && p.new.kind === "lock_request") softRefresh();
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "email_messages", filter: `user_id=eq.${S.me.id}` }, () => {
@@ -1805,6 +1806,26 @@ const CO_FIELDS = [
 // ---- email banners: Admin keeps up to 5 and picks the one the whole team uses ----
 const MAX_BANNERS = 5;
 const bannerList = () => { const v = S.settings.email_banner || {}; return v.list?.length ? v.list : [{ id: "b1", name: "Geninfo", url: bannerUrl(), link: bannerCfg().link }]; };
+// ---- mail open tracking switches (settings key "mail_track")
+function trackCard(v, ro) {
+  return `<div class="card sec" style="max-width:860px" id="mtCard"><div class="card-h"><h3>👁 ${L("Mail open tracking", "Mail open tracking")}</h3></div>
+    <div class="card-b">
+      <p class="mu" style="font-size:12.5px;margin-top:0">${L("CRM se gaye har mail mein ek chhoti invisible image aur tracked links jaate hain. Customer mail kholega toh bhejne wale ko popup aayega, lead pe 👁 line aayegi aur 10 minute mein call ka follow-up lag jayega. List: Inbox → 👁 Khole gaye.", "Every CRM mail carries a tiny invisible image and tracked links. When the customer opens it, the sender gets a popup, the lead gets a 👁 line and a call follow-up in 10 minutes. List: Inbox → 👁 Opened.")}</p>
+      <label class="check"><input type="checkbox" id="mtOn" ${v.on !== false ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("Mail open tracking chalu", "Mail open tracking on")}</label>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="mtRc" ${v.receipt !== false ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("Outlook se bheje mail mein <b>read receipt</b> bhi maango — classic Outlook images band rakhta hai, receipt se pakka pata chalta hai", "Also ask for a <b>read receipt</b> on mails sent from Outlook — classic Outlook blocks images, the receipt confirms the read")}</label>
+      <p class="mu" style="font-size:12px;margin:10px 0 0">${L("Dhyan: Outlook desktop / company mail images block kar sakte hain → wahan read receipt ya link click se hi pata chalega. iPhone Mail images khud load karta hai → kabhi bina padhe bhi 'khola' dikh sakta hai.", "Note: Outlook desktop / company mail may block images → there only a read receipt or a link click tells you. iPhone Mail loads images by itself → it can show 'opened' without a real read.")}</p>
+    </div></div>`;
+}
+function wireTrackCard(el) {
+  const save = (patch, msg) => busy(null, async () => {
+    const v = { on: true, receipt: true, ...(S.settings.mail_track || {}), ...patch };
+    const { error } = await sb.from("settings").upsert({ key: "mail_track", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    S.settings.mail_track = v; toast(msg);
+  });
+  $("#mtOn", el)?.addEventListener("change", (e) => save({ on: e.target.checked }, e.target.checked ? L("✔ Mail open tracking ON", "✔ Mail open tracking ON") : L("Mail open tracking OFF", "Mail open tracking OFF")));
+  $("#mtRc", el)?.addEventListener("change", (e) => save({ receipt: e.target.checked }, e.target.checked ? L("✔ Outlook read receipt ON", "✔ Outlook read receipt ON") : L("Outlook read receipt OFF", "Outlook read receipt OFF")));
+}
 function bannerCard(ro) {
   const v = S.settings.email_banner || {}, list = bannerList(), act = v.active || list[0]?.id;
   return `<div class="card sec" style="max-width:860px" id="ebCard"><div class="card-h"><h3>📧 ${L("Email banners", "Email banners")} <span class="mu" style="font-weight:500">(${list.length}/${MAX_BANNERS})</span></h3><span class="sp"></span>
@@ -1916,7 +1937,7 @@ function outlookCard(o, ro) {
       <li>${L("Kholo", "Open")} <a href="https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/CreateApplicationBlade" target="_blank" rel="noopener noreferrer"><b>Entra → App registrations → New registration</b></a> ${L("(office admin account se)", "(with the office admin account)")}</li>
       <li>Name: <span class="mono">Genesis CRM</span> ${cp("Genesis CRM")} · ${L("Supported accounts", "Supported accounts")}: <b>Accounts in this organizational directory only</b></li>
       <li>Redirect URI → <b>Single-page application (SPA)</b> → <span class="mono" style="word-break:break-all">${h(redirectUrl())}</span> ${cp(redirectUrl())} → <b>Register</b></li>
-      <li><b>API permissions → Add a permission → Microsoft Graph → Delegated → Mail.Read</b> → Add → <b>Grant admin consent</b> ${L("(isse kisi user ko alag permission nahi deni padegi)", "(so no user is asked for permission)")}</li>
+      <li><b>API permissions → Add a permission → Microsoft Graph → Delegated → Mail.Read + Mail.ReadWrite</b> → Add → <b>Grant admin consent</b> ${L("(isse kisi user ko alag permission nahi deni padegi)", "(so no user is asked for permission)")}</li>
       <li>${L("Overview page se dono IDs copy karke yahan paste karo aur Save:", "Copy both IDs from the Overview page, paste them here and Save:")}</li></ol>
     <fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
       <div><label class="f">Application (client) ID</label><input class="input mono" id="olId" value="${h(o.client_id || "")}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" maxlength="36"></div>
@@ -1982,9 +2003,10 @@ async function wireBackupCard(el) {
   });
 }
 VIEWS.company = async (el) => {
-  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding", "email_banner"]);
+  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding", "email_banner", "mail_track"]);
   const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
   if (m.email_banner) S.settings.email_banner = m.email_banner;
+  if (m.mail_track) S.settings.mail_track = m.mail_track;
   const c = m.company || {}, ro = !isAdmin();
   el.innerHTML = `<div class="card" style="max-width:860px"><div class="card-h"><h3>🏢 ${L("Company details", "Company details")}</h3><span class="sp"></span>${ro ? `<span class="badge">${L("Read-only (Admin edit karega)", "Read-only (Admin edits)")}</span>` : ""}</div>
     <div class="card-b"><fieldset ${ro ? "disabled" : ""} style="border:0;padding:0;margin:0"><div class="grid2">
@@ -1992,6 +2014,7 @@ VIEWS.company = async (el) => {
       <div><label class="f">${L("Payment terms (din) — invoice due date ke liye", "Payment terms (days) — for invoice due dates")}</label><input class="input" type="number" min="0" max="365" id="coTerms" value="${h(m.payment_terms_days ?? 30)}"></div>
     </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
     ${bannerCard(ro)}
+    ${trackCard(m.mail_track || {}, ro)}
     ${brandCard(m.branding || {}, ro)}
     ${outlookCard(m.outlook || {}, ro)}
     ${isAdmin() ? `<div class="card" style="max-width:860px" id="bkCard"><div class="card-h"><h3>💾 ${L("Backup", "Backup")}</h3><span class="sp"></span>
@@ -2001,7 +2024,7 @@ VIEWS.company = async (el) => {
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Ye details quotation print, customer ke online quotation page aur invoices pe aati hain. Customer ka state aapke state se alag ho toh IGST, warna CGST+SGST apne aap lagta hai.", "These details appear on printed quotations, the customer's online quotation page and invoices. IGST applies automatically when the customer's state differs from yours, otherwise CGST+SGST."))}</p>`;
   wireOutlookCard(el, m.outlook || {});
   wireBrandCard(el, m.branding || {});
-  if (!ro) wireBannerCard(el);
+  if (!ro) { wireBannerCard(el); wireTrackCard(el); }
   if (isAdmin()) wireBackupCard(el);
   $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
