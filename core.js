@@ -9,11 +9,13 @@ if (!window.supabase) throw new Error("supabase-js failed to load");
 // every successful delete / bulk change the user makes is announced, so the app can offer "↩ Undo"
 const UNDO_TABLES = /\/rest\/v1\/(leads|rfqs|quotations|products|renewals|orders|invoices|payments|tickets|tasks|message_templates|email_messages|announcements)\?/;
 const UNDO_RPC = /\/rest\/v1\/rpc\/(merge_leads|assign_leads|undo_import)\b/;
+// look-ups sent as POST: they are not "my change", so they must not hide a teammate's live update
+const READ_RPC = /\/rest\/v1\/rpc\/(mail_status|dashboard_stats|calls_report|stale_locks|recent_changes|public_branding|product_costs|lock_bans|lead_quality|lead_cities|heartbeat|find_duplicates|email_report|daily_report|banner_team_status|badge_counts)\b/;
 async function crmFetch(input, init = {}) {
   const res = await fetch(input, init);
   try {
     const url = typeof input === "string" ? input : input.url, m = String(init.method || "GET").toUpperCase();
-    if (m !== "GET" && m !== "HEAD" && /\/rest\/v1\//.test(url)) window.__crmWriteAt = Date.now();
+    if (m !== "GET" && m !== "HEAD" && /\/rest\/v1\//.test(url) && !READ_RPC.test(url)) window.__crmWriteAt = Date.now();
     if (res.ok && ((m === "DELETE" && UNDO_TABLES.test(url)) || (m === "POST" && UNDO_RPC.test(url))))
       dispatchEvent(new CustomEvent("crm:undoable", { detail: { kind: m === "DELETE" ? "delete" : (url.match(UNDO_RPC) || [])[1] } }));
   } catch { /* never break a request */ }

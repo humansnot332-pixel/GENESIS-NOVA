@@ -168,21 +168,28 @@ function renderPending() {
 //  App lifecycle
 // ---------------------------------------------------------------------
 let timers = [], channel = null, started = false;
+let bootRest = null;   // team + settings, asked for together with my profile (one round trip instead of three)
+const teamAndSettings = () => Promise.all([loadTeam().then(() => null, (e) => e), sb.from("settings").select("key, value")]);
 function stopApp() {
+  bootRest = null;
   timers.forEach(clearInterval); timers = [];
   if (channel) { sb.removeChannel(channel); channel = null; }
   started = false; closeModal(); closeDrawer();
 }
 
+const ME_COLS = "id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp";
 async function start() {
   fx?.stop(); fx = null;
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
   S.session = session;
-  const { data: me, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp")
+  // my profile, the team and the settings in one round trip (they used to load one after the other);
+  // a second start() running at the same time shares the same request
+  if (!started && bootRest?.uid !== session.user.id) bootRest = { uid: session.user.id, p: teamAndSettings() };
+  const { data: me, error } = await sb.from("profiles").select(ME_COLS)
     .eq("id", session.user.id).single();
-  if (error || !me) return renderLogin("login", "Profile load nahi hua: " + (error?.message || ""));
-  if (!me.active) return renderPending();
+  if (error || !me) { bootRest = null; return renderLogin("login", "Profile load nahi hua: " + (error?.message || "")); }
+  if (!me.active) { bootRest = null; return renderPending(); }
   S.me = me;
   // language: an explicit choice on this device wins (and is saved); otherwise follow the profile
   let chosen = null; try { chosen = localStorage.getItem("crm_lang"); } catch { /* ignore */ }
@@ -190,8 +197,10 @@ async function start() {
   else if (!chosen && me.lang && me.lang !== getLang()) setLang(me.lang);
   if (started) return;
   started = true;
-  try { await loadTeam(); } catch (e) { fail(e); }
-  const { data: st } = await sb.from("settings").select("key, value");
+  const rest = bootRest?.uid === me.id ? bootRest.p : teamAndSettings();
+  bootRest = null;
+  const [teamErr, { data: st }] = await rest;
+  if (teamErr) fail(teamErr);
   S.settings = Object.fromEntries((st || []).map((r) => [r.key, r.value]));
   renderShell();
   route();
@@ -291,7 +300,7 @@ async function reloadMe(force = false) {
   if (!S.me || (!force && Date.now() - meAt < 30000)) return;
   if (meP) return meP;
   meP = (async () => {
-    const { data: me } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp").eq("id", S.me.id).maybeSingle();
+    const { data: me } = await sb.from("profiles").select(ME_COLS).eq("id", S.me.id).maybeSingle();
     if (!me) return;
     if (!me.active) return renderPending();
     const key = (x) => JSON.stringify([x.role, x.pages, x.categories, x.daily_target, x.full_name]);
@@ -465,8 +474,26 @@ const GONE = {
 function fadeOut(row) { row.classList.add("rt-gone"); setTimeout(() => row.parentNode && row.parentNode.removeChild(row), 320); }
 // a change I just made in this tab comes back over realtime ~1 s later — don't redraw a second time
 const myEcho = () => Date.now() - (window.__crmWriteAt || 0) < 2500;
+// ---- realtime pacing: with the whole team working, changes arrive every few seconds.
+// My own change shows at once; a teammate's change redraws only what it touches; summary pages
+// (dashboard, pipeline) redraw at most every 20 s; nothing runs while the tab is in the background.
+let bgDirty = false, lazyT = null, lazyAt = 0, badgeT = null;
+function badgesSoon(ms = 1500) {
+  if (document.hidden) { bgDirty = true; return; }
+  if (!badgeT) badgeT = setTimeout(() => { badgeT = null; refreshBadges(); }, ms);
+}
+function lazyRefresh(gap = 20000) {
+  if (document.hidden) { bgDirty = true; return; }
+  if (lazyT) return;
+  lazyT = setTimeout(() => { lazyT = null; lazyAt = Date.now(); softRefresh(0); }, Math.max(1500, gap - (Date.now() - lazyAt)));
+}
+function liveRefresh(ms) { if (document.hidden) { bgDirty = true; return; } softRefresh(ms); }
+const onScreen = (table, id) => id != null && !!GONE[table] && !!document.querySelector(GONE[table](id));
+const BADGE_TABLES = new Set(["rfqs", "lock_requests", "tickets", "renewals"]);
+const SUMMARY = new Set(["dashboard", "pipeline", "daily", "reports"]);
+addEventListener("visibilitychange", () => { if (!document.hidden && bgDirty) { bgDirty = false; softRefresh(150); refreshBadges(); } });
 function onLive(table, routes, p) {
-  if (p.eventType !== "DELETE" && myEcho()) { refreshBadges(); return; }
+  if (p.eventType !== "DELETE" && myEcho()) { badgesSoon(400); return; }
   if (p.eventType === "DELETE") {
     const id = p.old?.id;
     const sel = id == null ? null : GONE[table]?.(id);
@@ -477,38 +504,41 @@ function onLive(table, routes, p) {
     const d = document.querySelector(".drawer");
     if (table === "leads" && d && id != null && +d.dataset.id === id) { closeDrawer(); toast(L("🗑 Ye lead delete ho gaya", "🗑 This lead was deleted")); }
     if (table === "quotations" && document.querySelector(`[data-modal] [data-act="delQuote"][data-id="${id}"]`)) { closeModal(); toast(L("🗑 Ye quotation delete ho gayi", "🗑 This quotation was deleted")); }
-    if (table === "leads" && ["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) softRefresh(450);
+    if (table === "leads" && ["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) liveRefresh(450);
   }
-  if (routes.includes(S.route)) softRefresh(450);
-  refreshBadges();
+  if (routes.includes(S.route)) { if (SUMMARY.has(S.route)) lazyRefresh(); else liveRefresh(600); }
+  if (BADGE_TABLES.has(table) || table === "leads") badgesSoon();
 }
 function subscribeRealtime() {
   channel = sb.channel("crm")
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "rfqs" }, (p) => {
-      toast(`📨 Naya RFQ: ${p.new.company} — ${p.new.product || ""}`); refreshBadges();
-      if (["rfqs", "dashboard"].includes(S.route)) softRefresh();
+      toast(`📨 Naya RFQ: ${p.new.company} — ${p.new.product || ""}`); badgesSoon(300);
+      if (["rfqs", "dashboard"].includes(S.route)) liveRefresh(300);
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, (p) => {
       const d = document.querySelector(".drawer");
-      if (myEcho()) { refreshBadges(); return; }     // my own change coming back: already on screen
+      if (myEcho()) { badgesSoon(400); return; }     // my own change coming back: already on screen
       // someone else took / released the lead that is open on my screen → refresh it
       if (p.eventType === "UPDATE" && d && +d.dataset.id === p.new.id && p.old && "owner_id" in p.old && p.old.owner_id !== p.new.owner_id
           && !document.activeElement?.matches(".drawer input, .drawer textarea") && !document.querySelector("[data-modal]")) {
         if (p.new.owner_id && p.new.owner_id !== S.me.id) toast(`🔒 ${userName(p.new.owner_id)} ne ye lead lock kar liya`);
         openLead(p.new.id, { queue: d.dataset.queue === "1" });
       }
-      if (["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) softRefresh();
-      refreshBadges();
+      // mine (now or before) → redraw at once; a teammate's → only if it is on my screen, summaries every 20 s
+      const id = p.new?.id ?? p.old?.id, mine = [p.new?.owner_id, p.old?.owner_id].includes(S.me.id);
+      if (mine) { badgesSoon(); if (["leads", "today", "pipeline", "dashboard", "tasks"].includes(S.route)) liveRefresh(300); return; }
+      if (SUMMARY.has(S.route)) lazyRefresh();
+      else if (["leads", "today", "tasks"].includes(S.route) && (onScreen("leads", id) || (S.route === "leads" && p.eventType === "INSERT"))) liveRefresh(1500);
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${S.me.id}` }, (p) => {
       toast(p.new.title + (p.new.body ? " — " + p.new.body : ""));
-      refreshBadges();
+      badgesSoon(300);
       if (p.new.kind === "access") reloadMe(true);
       if (S.route === "requests" && p.new.kind === "lock_request") softRefresh();
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "email_messages", filter: `user_id=eq.${S.me.id}` }, () => {
-      if (["inbox", "dashboard"].includes(S.route)) softRefresh();
-      refreshBadges();
+      if (["inbox", "dashboard"].includes(S.route)) liveRefresh(300);
+      badgesSoon(300);
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => loadAnnouncement())
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "email_outbox", filter: `user_id=eq.${S.me.id}` }, (p) => {
@@ -1127,7 +1157,7 @@ VIEWS.leads = async (el, soft) => {
     $("#lq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { LF.q = e.target.value; LF.page = 0; drawLeads(el); }, 300); };
     [["#lst", "status"], ["#lcat", "category"], ["#lcity", "city"], ["#lsrc", "source"], ["#lown", "owner"]].forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); drawLeads(el); }; });
     // City list (with lead counts) — filled after the page shows
-    sb.rpc("lead_cities").then(({ data }) => {
+    loadCities().then(({ data }) => {
       const x = $("#lcity", el); if (!x || !data) return;
       x.innerHTML = `<option value="">${L("Sab cities", "All cities")}</option>` + data.map((c) =>
         `<option value="${h(c.city)}" ${LF.city.toLowerCase() === c.city.toLowerCase() ? "selected" : ""}>${h(c.city)} (${num(c.n)})</option>`).join("");
@@ -1135,9 +1165,15 @@ VIEWS.leads = async (el, soft) => {
   }
   await drawLeads(el);
 };
+let citiesAt = 0, citiesData = null;
+const loadCities = () => (citiesData && Date.now() - citiesAt < 300e3 ? Promise.resolve({ data: citiesData })
+  : sb.rpc("lead_cities").then((r) => { if (r.data) { citiesData = r.data; citiesAt = Date.now(); } return r; }));
+let drawSeq = 0;
 async function drawLeads(el) {
+  const my = ++drawSeq;
   const { data, count, error } = await leadQuery("id, company, contact_name, phone, email, city, area, category, status, score, owner_id, lock_until, next_follow_up, last_contacted, deal_value, source, created_at, email_count, reply_count", true)
     .order(LF.sort, { ascending: LF.asc, nullsFirst: false }).order("id", { ascending: false }).range(LF.page * PAGE, LF.page * PAGE + PAGE - 1);
+  if (my !== drawSeq) return;   // a newer search / filter already asked again
   if (error) return fail(error);
   if (!$("#ltb", el)) return;   // user already moved to another page while this was loading
   const th = (k, l, cls = "") => `<th class="${cls}" data-sort="${k}" aria-sort="${LF.sort === k ? (LF.asc ? "ascending" : "descending") : "none"}">${l}${LF.sort === k ? (LF.asc ? " ↑" : " ↓") : ""}</th>`;
