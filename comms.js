@@ -472,7 +472,7 @@ function templateEditor(t, done) {
 // ---------------------------------------------------------------------
 const IB = { tab: "replies", f: "open", team: false, q: "" };
 // 👁 opened 2× · 3 h ago (✔ = Outlook read receipt, 🔗 = clicked a link)
-function openChip(r) {
+export function openChip(r) {
   if (!r.track_token && !r.opened_at) return "";
   if (!r.opened_at) return `<span class="badge" title="${h(L("Tracking chalu hai — customer ne abhi nahi khola (ya uske mail mein images band hain)", "Tracking is on — not opened yet (or images are blocked in their mail)"))}">📭 ${L("Nahi khola", "Not opened")}</span> `;
   const via = r.open_via === "receipt" ? "Outlook read receipt" : r.open_via === "image" ? "" : r.open_via || "";
@@ -495,7 +495,7 @@ export async function viewInbox(el, params = {}) {
     if (IB.f === "open") q = q.not("intent", "in", "(auto_reply,bounce)");
     const { data, error } = await q; if (error) throw error; rows = data || [];
   } else {
-    let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, subject, created_at, bulk, direction, track_token, open_count, click_count, opened_at, last_open_at, open_via, receipt_at, leads(company, status, owner_id, reply_count, last_reply_at)")
+    let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, subject, created_at, bulk, direction, track_token, open_count, click_count, opened_at, last_open_at, open_via, receipt_at, leads(company, status, owner_id, reply_count, last_reply_at), rfqs(rfq_no, company)")
       .eq("direction", "out");
     q = IB.tab === "opened" ? q.not("opened_at", "is", null).order("last_open_at", { ascending: false }).limit(200) : q.order("created_at", { ascending: false }).limit(400);
     if (!team) q = q.eq("user_id", S.me.id);
@@ -513,7 +513,7 @@ export async function viewInbox(el, params = {}) {
     }
   }
   const s = IB.q.toLowerCase();
-  if (s) { rows = rows.filter((r) => [r.counterpart, r.counterpart_name, r.subject, r.snippet, r.leads?.company].join(" ").toLowerCase().includes(s)); sentRows = sentRows.filter((r) => [r.counterpart, r.subject, r.leads?.company].join(" ").toLowerCase().includes(s)); }
+  if (s) { rows = rows.filter((r) => [r.counterpart, r.counterpart_name, r.subject, r.snippet, r.leads?.company].join(" ").toLowerCase().includes(s)); sentRows = sentRows.filter((r) => [r.counterpart, r.subject, r.leads?.company, r.rfqs?.company, r.rfqs?.rfq_no].join(" ").toLowerCase().includes(s)); }
   const msOk = ms?.connected, olReady = outlookReady();
   el.innerHTML = `
   <div class="card" style="padding:12px 16px;margin-bottom:14px"><div class="row">
@@ -540,7 +540,7 @@ export async function viewInbox(el, params = {}) {
       </div>`).join("") || `<div class="empty"><b>Abhi koi reply nahi</b>${msOk || outlookConnected() ? "Jin companies ko CRM se mail kiya hai, unke reply yahan aayenge." : "Pehle upar se Gmail / Outlook connect karo."}</div>`}</div>
     <div class="card ib-read" id="ibRead"><div class="empty">← Koi reply select karo</div></div></div>`
   : `<div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Company</th><th>To</th><th>Subject</th><th>Bheja</th><th>Status</th>${team ? "<th>By</th>" : ""}<th></th></tr></thead><tbody>
-    ${sentRows.map((r) => `<tr data-lid="${r.lead_id || ""}"><td class="co">${h(r.leads?.company || "—")}${r.bulk ? ' <span class="badge">bulk</span>' : ""}</td><td class="sub">${h(r.counterpart)}</td><td>${h(r.subject || "")}</td><td class="sub">${h(ago(r.created_at))}</td>
+    ${sentRows.map((r) => `<tr data-lid="${r.lead_id || ""}" data-rid="${r.rfq_id || ""}"><td class="co">${h(r.leads?.company || r.rfqs?.company || "—")}${r.rfqs?.rfq_no ? ` <span class="badge info">${h(r.rfqs.rfq_no)}</span>` : ""}${r.bulk ? ' <span class="badge">bulk</span>' : ""}</td><td class="sub">${h(r.counterpart)}</td><td>${h(r.subject || "")}</td><td class="sub">${h(ago(r.created_at))}</td>
       <td>${openChip(r)}${r.replied ? '<span class="badge good">✅ Reply aaya</span>' : r.age >= 3 ? `<span class="badge warn">⏳ ${Math.floor(r.age)} din, no reply</span>` : '<span class="badge">Waiting</span>'}</td>
       ${team ? `<td class="sub">${h(userName(r.user_id))}</td>` : ""}
       <td>${r.lead_id && !r.replied ? `<button class="btn sm" data-fu="${r.lead_id}">Follow-up bhejo</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">${IB.tab === "due" ? "Koi pending follow-up nahi 🎉" : IB.tab === "opened" ? L("Abhi kisi customer ne CRM mail nahi khola (ya tracking wale mail abhi gaye nahi)", "No customer has opened a CRM mail yet (or no tracked mail has gone out yet)") : "Abhi tak CRM se koi email nahi gaya"}</td></tr>`}
@@ -555,7 +555,7 @@ export async function viewInbox(el, params = {}) {
   $("#ibOutHelp", el)?.addEventListener("click", outlookHelp);
   $$("[data-ib]", el).forEach((d) => d.onclick = () => { $$(".ib-item", el).forEach((x) => x.classList.remove("on")); d.classList.add("on"); d.classList.remove("unread"); history.replaceState(null, "", "#/inbox/" + d.dataset.ib); readMail(+d.dataset.ib, $("#ibRead", el), () => viewInbox(el, { id: d.dataset.ib })); });
   $$("[data-fu]", el).forEach((b) => b.onclick = async (e) => { e.stopPropagation(); await followupFor(+b.dataset.fu); });
-  $$("tr[data-lid]", el).forEach((tr) => tr.onclick = () => tr.dataset.lid && HOOK.openLead(+tr.dataset.lid));
+  $$("tr[data-lid]", el).forEach((tr) => tr.onclick = () => (tr.dataset.lid ? HOOK.openLead(+tr.dataset.lid) : tr.dataset.rid && HOOK.go("#/rfqs/" + tr.dataset.rid)));
   if (params.id && IB.tab === "replies" && rows.some((r) => String(r.id) === String(params.id))) readMail(+params.id, $("#ibRead", el), () => viewInbox(el, params));
 }
 

@@ -10,7 +10,7 @@ import {
 } from "./core.js";
 import {
   openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, toggleNotifications, unreadCounts,
-  requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady,
+  requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady, openChip,
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
@@ -1402,6 +1402,7 @@ function rfqForm(r) {
     body: `${isNew ? "" : lk.mine ? `<div class="lockbar mine" style="margin-top:12px">🔒 <div><b>Ye RFQ aapke paas hai</b><small>Lock till ${h(dt(lk.until))}</small></div><button type="button" class="btn sm" id="rfRel">🔓 Release</button></div>`
       : lk.other ? `<div class="lockbar other" style="margin-top:12px">🔒 <div><b>${h(lk.holder)} is RFQ pe kaam kar raha/rahi hai</b><small>${L(`Aap dekh sakte ho, edit / quote / email sirf ${h(lk.holder)} karega.`, `You can view it, but only ${h(lk.holder)} can edit / quote / email.`)}</small></div>${isMgr() ? `<button type="button" class="btn sm" id="rfRel">Force release</button>` : `<button type="button" class="btn sm primary" id="rfReq">🙋 Request access</button>`}</div>`
       : `<div class="lockbar free" style="margin-top:12px">🔓 <div><b>Free RFQ</b><small>Lock karo — phir sirf aap is pe kaam karoge.</small></div><button type="button" class="btn sm primary" id="rfClaim">🔒 Lock karo</button></div>`}
+    ${isNew ? "" : '<div id="rfMails"></div>'}
     <form id="rf"><fieldset ${work ? "" : "disabled"} style="border:0;padding:0;margin:0"><div class="grid2">
       <div><label class="f">Company *</label><input class="input" name="company" required maxlength="200" value="${h(r.company || "")}"></div>
       <div><label class="f">Contact</label><input class="input" name="contact" maxlength="120" value="${h(r.contact || "")}"></div>
@@ -1435,6 +1436,12 @@ function rfqForm(r) {
     e.target.querySelector(".card-b").innerHTML = lockHistoryHtml(data);
   });
   const outreach = async (channel) => { if (!(await ensureWork("rfq", r))) return; openComposer({ channel, rfq: r, onSent: () => S.route === "rfqs" && softRefresh() }); };
+  // last mails sent for this RFQ — and whether the customer opened them
+  if (!isNew) sb.from("email_messages").select("id, subject, created_at, track_token, open_count, click_count, opened_at, last_open_at, open_via, receipt_at")
+    .eq("rfq_id", r.id).eq("direction", "out").order("created_at", { ascending: false }).limit(3).then(({ data }) => {
+      const box = $("#rfMails", m); if (!box || !data?.length) return;
+      box.innerHTML = `<div class="card" style="padding:8px 12px;margin:10px 0 0">${data.map((e) => `<div class="row" style="gap:6px;font-size:12.5px;padding:3px 0;flex-wrap:nowrap">📧 <span class="mu" style="white-space:nowrap">${h(ago(e.created_at))}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(e.subject || "")}</span>${openChip(e) || `<span class="badge">${L("Bheja", "Sent")}</span>`}</div>`).join("")}</div>`;
+    }, () => {});
   $("#rfMail", m)?.addEventListener("click", () => outreach("email"));
   $("#rfWa", m)?.addEventListener("click", () => outreach("whatsapp"));
   $("#rfLead", m)?.addEventListener("click", () => { closeModal(); openLead(r.lead_id); });
