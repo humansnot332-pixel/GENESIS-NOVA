@@ -26,7 +26,17 @@
   textarea { width:100%; min-height:90px; font:inherit; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--ink); margin-top:10px }
   .note { padding:12px 14px; border-radius:10px; margin-top:16px; font-weight:500 } .note.ok { background:color-mix(in srgb, var(--good) 14%, transparent) } .note.w { background:color-mix(in srgb, var(--warn) 16%, transparent) }
   .center { text-align:center; padding:80px 16px } pre { white-space:pre-wrap; font:inherit; margin:0 }
-  @media print { body { background:#fff; color:#000 } .actions, #resp { display:none } .card { border:0; box-shadow:none; padding:0 } }
+  .blk { margin-top:18px } .blk > b.t { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.4px; color:var(--mu); margin-bottom:6px }
+  .rich { font-size:13.5px; line-height:1.55; overflow-wrap:break-word } .rich > :first-child { margin-top:0 } .rich p { margin:0 0 6px } .rich ol, .rich ul { margin:0 0 6px; padding-left:22px } .rich li { margin:2px 0 }
+  .rich h3 { font-size:16px; margin:10px 0 6px } .rich h4 { font-size:14px; margin:8px 0 4px } .rich blockquote { margin:0 0 6px 24px }
+  .rich table { min-width:0; margin:6px 0 10px } .rich th, .rich td { border:1px solid var(--line); padding:6px 8px; text-transform:none; letter-spacing:0; font-size:inherit; color:inherit }
+  .rich th { background:color-mix(in srgb, var(--mu) 10%, transparent); font-weight:600 } .rich hr { border:0; border-top:1px solid var(--line) } .rich a { color:var(--acc) }
+  @media (prefers-color-scheme: dark) { .rich { background:#fff; color:#111827; padding:12px 14px; border-radius:10px } .rich th, .rich td { border-color:#c9ced6 } .rich th { background:#f1f3f6 } .rich a { color:#0f766e } }
+  .annex { margin-top:16px }
+  .optbox table th:first-child { width:34px } .optbox input[type=checkbox] { width:18px; height:18px; accent-color:var(--good); cursor:pointer; margin:0 }
+  .optbox tr.on td { background:color-mix(in srgb, var(--good) 10%, transparent) }
+  .optsum { margin-top:8px; padding:10px 12px; border-radius:10px; background:color-mix(in srgb, var(--good) 13%, transparent); font-weight:600 }
+  @media print { body { background:#fff; color:#000 } .actions, #resp { display:none } .card { border:0; box-shadow:none; padding:0 } .annex { break-before:page; margin-top:0 } .rich { background:none; padding:0 } .optbox input, .optbox .hint, .optsum { display:none } }
 </style>
 <script type="module" src="quote.js"></script>
 </head>

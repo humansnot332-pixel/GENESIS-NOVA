@@ -453,7 +453,7 @@ export async function invoiceForm(i, done) {
     if (!(+f.amount > 0)) return toast(L("Amount daalo", "Enter the amount"), true);
     const L0 = lead || (await leadsById([lead_id])).get(lead_id) || {};
     const row = { lead_id, source: f.source, invoice_date: f.invoice_date, due_date: f.due_date, amount: +f.amount, notes: f.notes, order_id: i.order_id || null,
-      to_party: q?.to_party || { name: L0.company, address: L0.address, state: L0.state, gstin: L0.gstin }, items: q?.items || [], subtotal: q?.subtotal || 0, tax_total: q?.tax_total || 0 };
+      to_party: q?.to_party || { name: L0.company, address: L0.address, state: L0.state, gstin: L0.gstin }, items: (q?.items || []).filter((x) => !x.opt), subtotal: q?.subtotal || 0, tax_total: q?.tax_total || 0 };
     if (f.source !== "crm") row.invoice_no = f.invoice_no;
     const res = i.id ? await sb.from("invoices").update(row).eq("id", i.id).select("*").single() : await sb.from("invoices").insert(row).select("*").single();
     if (res.error) throw /duplicate key/.test(res.error.message) ? new Error(L("Ye invoice number pehle se hai", "This invoice number already exists")) : res.error;
@@ -517,7 +517,7 @@ export async function shareQuote(q, channel) {
   let lead = q.lead_id ? await fullLead(q.lead_id) : null;
   if (lead && !(await ensureWork("lead", lead))) return;
   if (!lead) lead = { company: q.to_party?.name || "", contact_name: q.to_party?.contact || "", email: q.to_party?.email || "", products: [] };
-  const prod = (q.items || []).map((i) => String(i.desc || "").split("\n")[0]).filter(Boolean).slice(0, 2).join(", ");
+  const prod = (q.items || []).filter((i) => !i.opt).map((i) => String(i.desc || "").split("\n")[0]).filter(Boolean).slice(0, 2).join(", ");
   openComposer({ channel, lead, to: q.to_party?.email, stage: "quote", vars: { quote_link: link, quote_link_en: ` You can also view & accept it online: ${link}`, quote_link_hi: ` Online dekhein / accept karein: ${link}`, quote_no: q.quote_no, ...(prod ? { product: prod } : {}) } });
   return link;
 }
@@ -526,6 +526,7 @@ export function quoteTrackHtml(q) {
   const resp = q.customer_response === "accepted" ? `<span class="badge good">✅ ${L("Customer ne accept ki", "Accepted by customer")} · ${h(ago(q.customer_response_at))}</span>`
     : q.customer_response === "changes" ? `<span class="badge warn">✏️ ${L("Changes maange", "Changes requested")} · ${h(ago(q.customer_response_at))}</span>` : "";
   return `<div class="qtrack">${q.share_token ? (q.view_count ? `👁 <b>${q.view_count}×</b> ${L("dekhi", "viewed")} · ${L("pehli baar", "first")} ${h(ago(q.first_viewed_at))} · ${L("last", "last")} ${h(ago(q.last_viewed_at))}` : `🔗 ${L("Link bheja — customer ne abhi kholi nahi", "Link shared — not opened yet")}`) : `🔗 ${L("Online link banao — customer kab kholta hai wo pata chalega", "Create an online link — you'll know when the customer opens it")}`} ${resp}
+    ${q.customer_options?.length ? `<div style="margin-top:4px">➕ ${L("Customer ne online ye optional items jode (total mein jud gaye)", "The customer added these optional items online (now in the total)")}: <b>${h(q.customer_options.map((o) => o.d).join(", "))}</b></div>` : ""}
     ${q.customer_note ? `<div class="mu" style="margin-top:4px">“${h(q.customer_note)}”</div>` : ""}</div>`;
 }
 export async function orderFromQuote(q, done) {

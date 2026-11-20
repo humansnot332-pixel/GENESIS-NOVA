@@ -601,3 +601,61 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .eb-item.on { border-color: var(--accent); background: var(--accent-soft); }
 .eb-item .eb-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .eb-item img { display: block; width: 100%; max-width: 600px; height: auto; border-radius: 4px; background: #fff; border: 1px solid var(--line); margin-bottom: 6px; }
+
+/* ---------- quotation: notes, terms & annexure (rich text) ---------- */
+.lbl-hint { font-weight: 400; color: var(--mu); }
+.qth { display: flex; align-items: center; gap: 2px; min-height: 30px; }
+.qth label.f { margin: 0 6px 0 0; }
+.qth .qtauto { margin-left: 6px; }
+.qth .qtundo { margin-left: auto; }
+.qtbox > select.input { margin-top: 4px; }
+.qtpl { margin-top: 14px; border-color: var(--accent); }
+.qtdef { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+.rte { margin-top: 8px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface); overflow: hidden; }
+.rte:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.rte-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 1px; padding: 4px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.rte-b { min-width: 28px; height: 28px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--tx); font: 600 13px/1 Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+.rte-b:hover, .rte-sel:hover { background: var(--hover); }
+.rte-b:focus-visible, .rte-sel:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.rte-sel { -webkit-appearance: none; appearance: none; height: 28px; width: auto; border: 0; border-radius: 6px; background: transparent none; color: var(--tx); font: 500 12.5px Inter, system-ui, sans-serif; padding: 0 7px; cursor: pointer; }
+.rte-sel option { color: #111827; background: #fff; }
+.rte-sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 4px; }
+.rte-body { min-height: 190px; max-height: 340px; overflow-y: auto; resize: vertical; padding: 10px 12px; background: #fff; color: #111827; outline: none; }
+.rte-body:empty::before { content: attr(data-ph); color: #8a93a0; pointer-events: none; }
+.rte.max { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; margin: 0; border-radius: 0; }
+.rte.max .rte-body { flex: 1; max-height: none; resize: none; }
+.modal.rte-max { transform: none; left: 0; top: 0; width: 100vw; height: 100vh; max-height: none; border-radius: 0; animation: none; }
+.rich { font-size: 13px; line-height: 1.5; overflow-wrap: break-word; }
+.rich > :first-child { margin-top: 0; }
+.rich p { margin: 0 0 6px; }
+.rich ol, .rich ul { margin: 0 0 6px; padding-left: 22px; }
+.rich li { margin: 2px 0; }
+.rich h3 { font-size: 15px; margin: 10px 0 6px; }
+.rich h4 { font-size: 13.5px; margin: 8px 0 4px; }
+.rich blockquote { margin: 0 0 6px 24px; padding: 0; border: 0; }
+.rich table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; }
+.rich th, .rich td { border: 1px solid #c9ced6; padding: 5px 8px; text-align: left; vertical-align: top; min-width: 40px; }
+.rich th { background: #f1f3f6; font-weight: 600; }
+.rich hr { border: 0; border-top: 1px solid #c9ced6; margin: 10px 0; }
+.rich a { color: #0f766e; }
+.qdoc .rich { font-size: 12px; }
+.qdoc .rich table { margin-top: 6px; }
+.qdoc .qsec h4 { margin: 14px 0 6px; font-size: 13px; }
+@media print { html, body { background: #fff !important; } }
+.qdoc .hd > div:last-child { white-space: nowrap; }
+.qdoc .qannex { break-before: page; page-break-before: always; padding-top: 4px; }
+.qdoc .qannex .hd2 { display: flex; justify-content: space-between; gap: 12px; border-bottom: 2px solid #0f766e; padding-bottom: 8px; margin-bottom: 12px; font-size: 13px; }
+.rte-sel[data-s="color"] { width: 46px; } .rte-sel[data-s="block"] { width: 70px; } .rte-sel[data-s="size"] { width: 62px; }
+
+/* ---------- quotation: tick = item counts in the total ---------- */
+#qi .qchk { width: 36px; text-align: center; padding-left: 6px; padding-right: 6px; }
+.qchk input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; margin: 0; }
+#qi tr.opt td:not(.qchk):not(:last-child) { opacity: .55; }
+.opt-tag { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; font-weight: 650; background: var(--warn-soft); color: var(--warn); }
+.qtickhint { font-size: 12px; margin: 8px 0 0; }
+.qso { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; font-size: 12.5px; color: var(--tx-2); cursor: pointer; }
+.qso input { margin-top: 2px; accent-color: var(--accent); }
+.opt-sum { font-size: 12.5px; margin: 6px 0 0; color: var(--warn); font-weight: 600; }
+.qdoc .qopt h4 { margin: 14px 0 2px; font-size: 13px; }
+.qdoc .qopt h4 span { font-weight: 400; color: #555; font-size: 11.5px; }
+.qdoc .qopt table { margin-top: 6px; }

@@ -14,12 +14,13 @@ import {
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
-  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct,
+  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct, prodLabel,
   marginHtml, shareQuote, quoteTrackHtml, orderFromQuote,
 } from "./biz.js";
 import { CONFIG } from "./config.js";
 import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
+import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 // ---------- brand ----------
@@ -1528,16 +1529,16 @@ function taskForm(t, done) {
 //  QUOTATIONS (GST)
 // ---------------------------------------------------------------------
 const r2 = (n) => Math.round((+n + Number.EPSILON) * 100) / 100;
-function qCalc(q) {
-  const co = S.settings.company || {}; let sub = 0; const base = {};
-  (q.items || []).forEach((it) => { const t = r2((+it.qty || 0) * (+it.price || 0)); sub += t; base[+it.tax || 0] = (base[+it.tax || 0] || 0) + t; });
+function qCalc(q) {          // only ticked items count; unticked ones ("opt") are optional
+  const co = S.settings.company || {}; let sub = 0, optSub = 0, optN = 0; const base = {};
+  (q.items || []).forEach((it) => { const t = r2((+it.qty || 0) * (+it.price || 0)); if (it.opt) { optSub += t; optN++; return; } sub += t; base[+it.tax || 0] = (base[+it.tax || 0] || 0) + t; });
   const a = String(co.state || "").trim().toLowerCase(), b = String(q.to_party?.state || "").trim().toLowerCase();
   const inter = !!(a && b && a !== b); const lines = []; let tax = 0;
   Object.keys(base).map(Number).sort((x, y) => x - y).forEach((rt) => {
     if (!rt) return; const t = r2(base[rt] * rt / 100); tax += t;
     if (inter) lines.push([`IGST ${rt}%`, t]); else { const c = r2(t / 2); lines.push([`CGST ${rt / 2}%`, c], [`SGST ${rt / 2}%`, r2(t - c)]); }
   });
-  return { sub: r2(sub), tax: r2(tax), grand: r2(sub + tax), lines, inter };
+  return { sub: r2(sub), tax: r2(tax), grand: r2(sub + tax), lines, inter, optSub: r2(optSub), optN };
 }
 const W1 = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"], W2 = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
 const w2 = (n) => n < 20 ? W1[n] : W2[Math.floor(n / 10)] + (n % 10 ? " " + W1[n % 10] : "");
@@ -1567,8 +1568,42 @@ ACT.delQuote = async (t) => {
 };
 ACT.quote = async (t) => { const { data, error } = await sb.from("quotations").select("*").eq("id", +t.dataset.id).single(); if (error) return fail(error); quoteEditor(data); };
 
+// ---- quotation Terms & Conditions / Annexure templates (migration 050)
+let QTPL = null, QTPL_AT = 0;
+async function loadQTpl(force = false) {
+  if (QTPL && !force && Date.now() - QTPL_AT < 300000) return QTPL;
+  const { data, error } = await sb.from("quote_templates").select("id, kind, name, body, categories, keywords, is_default, sort").eq("active", true).order("sort").order("name");
+  if (error) throw error;
+  QTPL = data || []; QTPL_AT = Date.now(); return QTPL;
+}
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const kwRe = (kws) => (kws || []).length ? new RegExp("(^|[^a-z0-9])(" + kws.map(reEsc).join("|") + ")(?=$|[^a-z0-9])", "i") : null;
+// the template that fits the products of a quotation best: keyword in an item = 2 points, product category = 1
+function pickTpl(kind, items) {
+  const list = (QTPL || []).filter((t) => t.kind === kind);
+  const rows = (items || []).map((it) => { const p = findProduct(it.desc); return { text: [it.desc, p && prodLabel(p)].filter(Boolean).join(" ").toLowerCase(), cat: (p?.category || "").toLowerCase() }; }).filter((r) => r.text.trim());
+  let best = null, top = 0;
+  for (const t of list) {
+    const re = kwRe(t.keywords), cats = (t.categories || []).map((c) => c.toLowerCase());
+    const sc = rows.reduce((a, r) => a + (r.cat && cats.includes(r.cat) ? 1 : 0) + (re && re.test(r.text) ? 2 : 0), 0);
+    if (sc > top) { best = t; top = sc; }
+  }
+  return best || (kind === "terms" ? list.find((t) => t.is_default) || null : null);
+}
+const qtOptions = (kind, sel) => `<option value="">${kind === "terms" ? L("— Koi T&C nahi —", "— No terms —") : L("— Koi annexure nahi —", "— No annexure —")}</option>` +
+  (QTPL || []).filter((t) => t.kind === kind).map((t) => `<option value="${t.id}"${t.id === sel ? " selected" : ""}>${h(t.name)}</option>`).join("");
+function qtBox(kind, q) {
+  const isT = kind === "terms", sel = +(isT ? q.terms_tpl : q.annexure_tpl) || 0;
+  return `<div class="qtbox" data-qk="${kind}">
+    <div class="qth"><label class="f" for="qt_${kind}">${isT ? "Terms &amp; Conditions" : "Annexure"}</label>
+      ${isMgr() ? `<button type="button" class="btn ghost icon sm" data-tnew="${kind}" title="${L("Naya template banao", "New template")}" aria-label="${L("Naya template banao", "New template")}">${ic("plus")}</button><button type="button" class="btn ghost icon sm" data-tedit="${kind}" title="${L("Chuna hua template edit karo", "Edit the selected template")}" aria-label="${L("Template edit karo", "Edit template")}">${ic("edit")}</button>` : ""}
+      <span class="badge info qtauto" hidden title="${L("Quotation ke products dekh ke apne aap chuna", "Picked automatically from the products in this quotation")}">✨ Auto</span></div>
+    <select class="input" id="qt_${kind}" aria-label="${isT ? "Terms & Conditions template" : "Annexure template"}">${qtOptions(kind, sel)}</select>
+    <div class="rte-host" id="qe_${kind}"></div></div>`;
+}
+
 async function quoteEditor(q0) {
-  await loadProducts().catch(() => {});
+  await Promise.all([loadProducts().catch(() => {}), loadQTpl().catch(() => {})]);
   const q = structuredClone(q0); q.items = q.items?.length ? q.items : [{ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }]; q.to_party ||= {};
   const tp = q.to_party;
   const m = modal({
@@ -1581,42 +1616,166 @@ async function quoteEditor(q0) {
       <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60"></div>
       <div><label class="f">GSTIN</label><input class="input" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="15"></div></div>
     ${quoteTrackHtml(q)}${productDatalist()}
-    <div class="sec tbl-wrap"><table class="tbl" id="qi"><thead><tr><th>Description</th><th style="width:100px">HSN/SAC</th><th style="width:80px">Qty</th><th style="width:120px">Rate ₹</th><th style="width:96px">GST %</th><th class="num" style="width:110px">Amount</th><th></th></tr></thead><tbody></tbody></table>
-      <button class="btn sm" id="qadd" style="margin-top:8px">${ic("plus")} Item</button></div>
-    <div class="grid2 sec"><div><label class="f">Notes / terms</label><textarea class="input" id="qn" maxlength="3000">${h(q.notes || "Payment: 100% advance\nDelivery: 7-10 working days\nPrices valid for 7 days")}</textarea>
-      <label class="f">Status</label><select class="input" id="qs">${["draft", "sent", "won", "lost"].map((s) => `<option ${s === (q.status || "draft") ? "selected" : ""}>${s}</option>`).join("")}</select></div>
-      <div id="qt" style="padding-top:28px"></div></div>`,
+    <div class="sec tbl-wrap"><table class="tbl" id="qi"><thead><tr><th class="qchk"><input type="checkbox" id="qall" title="${h(L("Sab items total mein", "All items in the total"))}" aria-label="${h(L("Sab items total mein", "All items in the total"))}"></th><th>Description</th><th style="width:100px">HSN/SAC</th><th style="width:80px">Qty</th><th style="width:120px">Rate ₹</th><th style="width:96px">GST %</th><th class="num" style="width:110px">Amount</th><th></th></tr></thead><tbody></tbody></table>
+      <button class="btn sm" id="qadd" style="margin-top:8px">${ic("plus")} Item</button>
+      <p class="qtickhint mu">✓ ${L("Sirf tick kiye items total mein judte hain. Untick = Optional (total mein nahi).", "Only ticked items make the total. Unticked = Optional (not in the total).")}</p>
+      <label class="qso" id="qsoW" hidden><input type="checkbox" id="qso"${q.show_optional === false ? "" : " checked"}> ${L("Optional items quotation pe alag dikhao — customer online link pe tick karke jod sakta hai", "Show optional items on the quotation — the customer can tick and add them on the online link")}</label></div>
+    <div class="grid2 sec"><div><label class="f" for="qs">Status</label><select class="input" id="qs">${["draft", "sent", "won", "lost"].map((x) => `<option ${x === (q.status || "draft") ? "selected" : ""}>${x}</option>`).join("")}</select></div>
+      <div id="qt" style="padding-top:28px"></div></div>
+    <div class="grid2 sec">
+      <div><label class="f" for="qnc">Customer note <span class="lbl-hint">— ${L("quotation pe print hoga", "printed on the quotation")}</span></label><textarea class="input" id="qnc" maxlength="3000" rows="3" placeholder="${h(L("Jaise: Delivery 2 din mein · Prices 1 saal ke liye", "e.g. Delivery in 2 days · Prices are for 1 year"))}">${h(q.note_customer || "")}</textarea></div>
+      <div><label class="f" for="qni">Internal note <span class="lbl-hint">🔒 ${L("sirf team — kabhi print nahi hota", "team only — never printed")}</span></label><textarea class="input" id="qni" maxlength="3000" rows="3" placeholder="${h(L("Jaise: discount approve hua · vendor price · follow-up", "e.g. discount approved · vendor price · follow-up"))}">${h(q.note_internal || "")}</textarea></div></div>
+    <div class="grid2 sec qtc">${qtBox("annexure", q)}${qtBox("terms", q)}</div>
+    <div id="qtplEd"></div>`,
     foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button>${q.status !== "lost" ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
   });
+  const hooks = { items: () => {} };
+  const amtHtml = (it) => inr(r2((+it.qty || 0) * (+it.price || 0))) + (it.opt ? `<div class="opt-tag">Optional</div>` : "");
+  const syncTicks = () => {
+    const n = q.items.filter((x) => !x.opt).length, all = $("#qall", m);
+    all.checked = n === q.items.length; all.indeterminate = n > 0 && n < q.items.length;
+    $("#qsoW", m).hidden = n === q.items.length;
+  };
   const drawItems = () => {
-    $("#qi tbody", m).innerHTML = q.items.map((it, i) => `<tr style="cursor:default">
+    $("#qi tbody", m).innerHTML = q.items.map((it, i) => `<tr style="cursor:default"${it.opt ? ' class="opt"' : ""}>
+      <td class="qchk"><input type="checkbox" data-inc data-i="${i}"${it.opt ? "" : " checked"} title="${h(L("Total mein shamil", "Included in the total"))}" aria-label="${h(L("Total mein shamil: ", "Included in the total: ") + (it.desc || "item " + (i + 1)))}"></td>
       <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400" list="prodDL" placeholder="${h(L("Product list se chuno ya likho…", "Pick from product list or type…"))}"></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="12"></td>
       <td><input class="input" type="number" min="0" data-i="${i}" data-k="qty" value="${h(it.qty)}"></td><td><input class="input" type="number" min="0" data-i="${i}" data-k="price" value="${h(it.price)}"></td>
       <td><select class="input" data-i="${i}" data-k="tax">${[0, 5, 12, 18, 28].map((t) => `<option ${+it.tax === t ? "selected" : ""}>${t}</option>`).join("")}</select></td>
-      <td class="num">${inr(r2((+it.qty || 0) * (+it.price || 0)))}</td><td><button class="btn ghost icon sm" data-rm="${i}" aria-label="Remove">${ic("x")}</button></td></tr>`).join("");
-    drawTotals();
+      <td class="num qamt">${amtHtml(it)}</td><td><button class="btn ghost icon sm" data-rm="${i}" aria-label="Remove">${ic("x")}</button></td></tr>`).join("");
+    syncTicks(); drawTotals(); hooks.items();
   };
   const drawTotals = () => {
     const c = qCalc(q);
-    $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>${marginHtml(q.items)}`;
+    $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>${c.optN ? `<p class="opt-sum">➕ ${c.optN} optional item${c.optN > 1 ? "s" : ""} · ${inr(c.optSub)} + GST <span class="mu">${L("— total mein nahi", "— not in the total")}</span></p>` : ""}${marginHtml(q.items.filter((x) => !x.opt))}`;
   };
   m.addEventListener("input", (e) => {
     const t = e.target;
     if (t.dataset.tp) { tp[t.dataset.tp] = t.value; if (t.dataset.tp === "state") drawTotals(); }
-    if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (t.dataset.k !== "desc" && t.dataset.k !== "hsn") { const row = t.closest("tr"); const it = q.items[+t.dataset.i]; row.cells[5].textContent = inr(r2((+it.qty || 0) * (+it.price || 0))); drawTotals(); } }
+    if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (t.dataset.k !== "desc" && t.dataset.k !== "hsn") { const it = q.items[+t.dataset.i]; t.closest("tr").querySelector(".qamt").innerHTML = amtHtml(it); drawTotals(); } }
   });
   m.addEventListener("change", (e) => {
+    if (e.target.matches("[data-inc]")) {           // tick / untick one item
+      const it = q.items[+e.target.dataset.i], row = e.target.closest("tr");
+      if (e.target.checked) delete it.opt; else it.opt = true;
+      row.classList.toggle("opt", !!it.opt); row.querySelector(".qamt").innerHTML = amtHtml(it);
+      syncTicks(); drawTotals(); hooks.items(); return;
+    }
+    if (e.target.id === "qall") { const on = e.target.checked; q.items.forEach((x) => { if (on) delete x.opt; else x.opt = true; }); drawItems(); return; }
     if (e.target.dataset.k === "tax") { q.items[+e.target.dataset.i].tax = +e.target.value; drawTotals(); }
     if (e.target.dataset.k === "desc") {      // picked from the product list → fill HSN, GST and price
       const it = q.items[+e.target.dataset.i], p = findProduct(e.target.value);
       if (p && (it._pid !== p.id)) { it._pid = p.id; if (!it.hsn) it.hsn = p.hsn || ""; it.tax = +p.gst_rate; if (!+it.price && p.sell_price != null) it.price = +p.sell_price; setTimeout(drawItems, 0); }
-      else drawTotals();
+      else { drawTotals(); hooks.items(); }
     }
   });
   m.addEventListener("click", (e) => { const r = e.target.closest("[data-rm]"); if (r) { q.items.splice(+r.dataset.rm, 1); if (!q.items.length) q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); } });
   $("#qadd", m).onclick = () => { q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); };
   drawItems();
-  $("#qp", m)?.addEventListener("click", () => printQuote(q));
+
+  // ---- customer note, internal note, annexure, terms & conditions
+  const coName = S.settings.company?.name || CONFIG.COMPANY || "";
+  const fill = (body) => String(body || "").replaceAll("{{company}}", h(coName)).replaceAll("{{customer}}", h(tp.name || "the customer"));
+  const KINDS = ["annexure", "terms"];
+  const auto = { terms: !q.id && !q.terms_html, annexure: !q.id && !q.annexure_html };   // a new quotation follows its products
+  const ed = {}, applied = {}, picked = {};
+  const showAuto = (k) => { const b = $(`[data-qk="${k}"] .qtauto`, m); if (b) b.hidden = !auto[k]; };
+  for (const k of KINDS) {
+    ed[k] = richEditor($(`#qe_${k}`, m), {
+      html: k === "terms" ? (q.terms_html || textToHtml(q.notes)) : (q.annexure_html || ""),
+      label: k === "terms" ? "Terms & Conditions" : "Annexure",
+      placeholder: k === "terms" ? L("Terms & conditions yahan likho, ya upar list se template chuno", "Type the terms here, or pick a template from the list above")
+        : L("Scope of work, licence details, equipment list… — upar list se template chuno", "Scope of work, licence details, equipment list… — pick a template from the list above"),
+      onInput: () => { if (auto[k]) { auto[k] = false; showAuto(k); } },
+    });
+    applied[k] = ed[k].html; picked[k] = $(`#qt_${k}`, m).value;
+  }
+  const tplOf = (id) => (QTPL || []).find((t) => t.id === +id) || null;
+  const offerUndo = (k, prev) => {
+    const bar = $(`[data-qk="${k}"] .qth`, m); bar.querySelector(".qtundo")?.remove();
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn ghost sm qtundo"; b.textContent = "↩ " + L("Pehle wala text", "Undo");
+    b.onclick = () => { $(`#qt_${k}`, m).value = picked[k] = prev.id; ed[k].html = prev.html; applied[k] = prev.html; auto[k] = false; showAuto(k); b.remove(); };
+    bar.append(b); setTimeout(() => b.remove(), 15000);
+  };
+  const applyTpl = (k, t, isAuto) => {
+    const sel = $(`#qt_${k}`, m), prev = { html: ed[k].html, id: picked[k] };     // (the list already shows the new choice)
+    sel.value = picked[k] = t ? String(t.id) : "";
+    ed[k].html = t ? fill(t.body) : "";
+    applied[k] = ed[k].html; auto[k] = !!isAuto; showAuto(k);
+    if (!isAuto && prev.html && prev.html !== applied[k]) offerUndo(k, prev);
+  };
+  hooks.items = () => { const main = q.items.some((x) => !x.opt) ? q.items.filter((x) => !x.opt) : q.items; for (const k of KINDS) if (auto[k]) { const t = pickTpl(k, main); if ((t?.id || 0) !== (+$(`#qt_${k}`, m).value || 0)) applyTpl(k, t, true); } };
+  hooks.items();
+  KINDS.forEach(showAuto);
+  for (const k of KINDS) $(`#qt_${k}`, m).addEventListener("change", (e) => applyTpl(k, tplOf(e.target.value), false));
+
+  // ---- Admin / Manager: add or edit the shared templates right here
+  const tplEd = async (kind, t) => {
+    const box = $("#qtplEd", m), isT = kind === "terms";
+    const prods = await loadProducts().catch(() => []);
+    const cats = [...new Set([...(prods || []).map((p) => p.category), ...(QTPL || []).flatMap((x) => x.categories || [])].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const on = new Set(t?.categories || []);
+    box.innerHTML = `<div class="card qtpl"><div class="card-h"><h3>${t ? "✏️ " + L("Template edit karo", "Edit template") : "➕ " + L("Naya template", "New template")} — ${isT ? "Terms &amp; Conditions" : "Annexure"}</h3><span class="sp"></span><button type="button" class="btn ghost icon sm" data-tpx aria-label="Close">${ic("x")}</button></div><div class="card-b">
+      <label class="f" for="tpN">${L("Template ka naam", "Template name")} *</label><input class="input" id="tpN" maxlength="120" value="${h(t?.name || "")}" placeholder="${h(isT ? L("Jaise: Software Licence — Terms", "e.g. Software Licence — Terms") : L("Jaise: AMC — Services covered", "e.g. AMC — Services covered"))}">
+      <label class="f">${L("Kin products pe apne aap lage", "Pick it automatically for these products")}</label>
+      <div class="chips" id="tpC">${cats.map((c) => `<button type="button" class="chip${on.has(c) ? " on" : ""}" data-cat="${h(c)}" aria-pressed="${on.has(c)}">${h(c)}</button>`).join("") || `<span class="mu">${L("Products mein category daalo", "Add categories to your products")}</span>`}</div>
+      <input class="input" id="tpK" style="margin-top:8px" maxlength="1500" value="${h((t?.keywords || []).join(", "))}" placeholder="${h(L("Aur keywords, comma se alag — jaise: autocad, revit, laptop", "More keywords, comma separated — e.g. autocad, revit, laptop"))}" aria-label="Keywords">
+      ${isT ? `<label class="qtdef"><input type="checkbox" id="tpD"${t?.is_default ? " checked" : ""}> ${L("Default — jab koi product match na kare", "Default — used when no product matches")}</label>` : ""}
+      <label class="f">Text <span class="lbl-hint">— {{company}} = ${L("company ka naam", "company name")}, {{customer}} = ${L("customer ka naam", "customer name")}</span></label>
+      <div class="rte-host" id="tpE"></div>
+      <div class="row" style="margin-top:12px"><button type="button" class="btn primary" id="tpSave">${L("Template save karo", "Save template")}</button><button type="button" class="btn" data-tpx>Cancel</button>${t ? `<span class="sp" style="flex:1"></span><button type="button" class="btn danger" id="tpDel">${ic("trash")} ${L("Template delete karo", "Delete template")}</button>` : ""}</div>
+    </div></div>`;
+    const te = richEditor($("#tpE", box), { html: t?.body || "", label: L("Template ka text", "Template text") });
+    $("#tpC", box).onclick = (e) => { const c = e.target.closest("[data-cat]"); if (!c) return; c.classList.toggle("on"); c.setAttribute("aria-pressed", String(c.classList.contains("on"))); };
+    box.querySelectorAll("[data-tpx]").forEach((b) => b.onclick = () => { box.innerHTML = ""; });
+    box.scrollIntoView({ block: "start", behavior: "smooth" }); $("#tpN", box).focus({ preventScroll: true });
+    $("#tpSave", box).onclick = (e) => busy(e.target, async () => {
+      const row = { kind, name: $("#tpN", box).value.trim(), body: te.html,
+        categories: $$("#tpC .chip.on", box).map((c) => c.dataset.cat),
+        keywords: $("#tpK", box).value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 80),
+        is_default: isT && !!$("#tpD", box)?.checked };
+      if (!row.name) { $("#tpN", box).focus(); return toast(L("Template ka naam daalo", "Give the template a name"), true); }
+      if (!row.body) return toast(L("Template ka text khali hai", "The template text is empty"), true);
+      if (row.body.length > RICH_MAX) return toast(L("Text bahut lamba hai", "The text is too long"), true);
+      if (row.is_default) { const { error } = await sb.from("quote_templates").update({ is_default: false }).eq("kind", kind).eq("is_default", true).neq("id", t?.id || 0); if (error) throw error; }
+      const res = t ? await sb.from("quote_templates").update(row).eq("id", t.id).select("id").single() : await sb.from("quote_templates").insert(row).select("id").single();
+      if (res.error) { if (res.error.code === "23505") return toast(L("Is naam ka template pehle se hai", "A template with this name already exists"), true); throw res.error; }
+      await loadQTpl(true);
+      const sel = $(`#qt_${kind}`, m), cur = +sel.value || 0;
+      sel.innerHTML = qtOptions(kind, cur); picked[kind] = sel.value;
+      // a new template is used right away; an edited one refreshes this quotation if its text was not changed here
+      if (!t) applyTpl(kind, tplOf(res.data.id), false);
+      else if (cur === t.id && ed[kind].html === applied[kind]) applyTpl(kind, tplOf(t.id), auto[kind]);
+      box.innerHTML = ""; toast(L("✔ Template save ho gaya — sabki quotations ke liye", "✔ Template saved for everyone's quotations"));
+    });
+    $("#tpDel", box)?.addEventListener("click", (e) => {
+      const b = e.currentTarget;
+      if (!b.dataset.sure) {
+        b.dataset.sure = "1"; b.textContent = L("Pakka? Dobara dabao", "Sure? Click again");
+        setTimeout(() => { if (b.isConnected && b.dataset.sure) { delete b.dataset.sure; b.innerHTML = `${ic("trash")} ${L("Template delete karo", "Delete template")}`; } }, 4000);
+        return;
+      }
+      busy(b, async () => {
+        const { error } = await sb.from("quote_templates").delete().eq("id", t.id); if (error) throw error;
+        await loadQTpl(true);
+        const sel = $(`#qt_${kind}`, m), cur = +sel.value || 0;
+        sel.innerHTML = qtOptions(kind, cur === t.id ? 0 : cur); picked[kind] = sel.value;
+        box.innerHTML = ""; toast(L("Template delete ho gaya", "Template deleted"));
+      });
+    });
+  };
+  m.addEventListener("click", (e) => {
+    const n = e.target.closest("[data-tnew]"), te = e.target.closest("[data-tedit]");
+    if (n) tplEd(n.dataset.tnew, null);
+    if (te) { const t = tplOf($(`#qt_${te.dataset.tedit}`, m).value); if (!t) return toast(L("Pehle list se template chuno", "Pick a template in the list first"), true); tplEd(te.dataset.tedit, t); }
+  });
+  const syncNotes = () => {
+    q.note_customer = $("#qnc", m).value.trim() || null; q.note_internal = $("#qni", m).value.trim() || null;
+    q.terms_html = ed.terms.html || null; q.annexure_html = ed.annexure.html || null;
+    q.show_optional = $("#qso", m).checked;
+  };
+
+  $("#qp", m)?.addEventListener("click", () => { syncNotes(); printQuote(q); });
   const shared = async (ch) => {
     const link = await shareQuote(q, ch);
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
@@ -1627,8 +1786,13 @@ async function quoteEditor(q0) {
   $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
   $("#qsave", m).onclick = (e) => busy(e.target, async () => {
     if (!tp.name) return toast("Customer naam daalo", true);
+    syncNotes();
+    if ((q.terms_html || "").length > RICH_MAX || (q.annexure_html || "").length > RICH_MAX) return toast(L("T&C / Annexure bahut lamba hai — thoda chhota karo", "Terms / annexure are too long — please shorten them"), true);
     const c = qCalc(q);
-    const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0 })), notes: $("#qn", m).value, status: $("#qs", m).value, subtotal: c.sub, tax_total: c.tax, grand_total: c.grand, lead_id: q.lead_id || null, rfq_id: q.rfq_id || null };
+    const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0, ...(i.opt ? { opt: true } : {}) })),
+      show_optional: q.show_optional, notes: null, note_customer: q.note_customer, note_internal: q.note_internal, terms_html: q.terms_html, annexure_html: q.annexure_html,
+      terms_tpl: +$("#qt_terms", m).value || null, annexure_tpl: +$("#qt_annexure", m).value || null,
+      status: $("#qs", m).value, subtotal: c.sub, tax_total: c.tax, grand_total: c.grand, lead_id: q.lead_id || null, rfq_id: q.rfq_id || null };
     const res = q.id ? await sb.from("quotations").update(row).eq("id", q.id).select("*").single() : await sb.from("quotations").insert(row).select("*").single();
     if (res.error) throw res.error;
     if (q.rfq_id && !q.id) await sb.from("rfqs").update({ status: "quoted", quoted_value: c.grand }).eq("id", q.rfq_id);
@@ -1639,6 +1803,8 @@ async function quoteEditor(q0) {
 }
 function printQuote(q) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
+  const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
+  const rowHtml = (it, i) => `<tr><td>${i + 1}</td><td>${h(it.desc)}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2(it.qty * it.price))}</td></tr>`;
   let pr = document.getElementById("printRoot");
   if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
   pr.innerHTML = `<div class="qdoc">
@@ -1646,13 +1812,19 @@ function printQuote(q) {
       <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(dOnly(q.created_at || new Date()))}</div></div></div>
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}</p>
     <table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>
-    ${(q.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${h(it.desc)}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2(it.qty * it.price))}</td></tr>`).join("")}
+    ${inc.map(rowHtml).join("")}
     <tr><td colspan="6" class="r">Subtotal</td><td class="r">${inr(c.sub)}</td></tr>${c.lines.map(([l, v]) => `<tr><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
     <tr><th colspan="6" class="r">Grand Total</th><th class="r">${inr(c.grand)}</th></tr></tbody></table>
     <p><b>Amount in words:</b> ${h(rupeesWords(c.grand))}</p>
-    <p style="white-space:pre-wrap"><b>Terms:</b>\n${h(q.notes || "")}</p>
+    ${opt.length ? `<div class="qopt"><h4>Optional items <span>— not included in the total above; tell us to add any of them</span></h4><table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>${opt.map(rowHtml).join("")}</tbody></table></div>` : ""}
+    ${q.note_customer ? `<p style="white-space:pre-wrap"><b>Note:</b> ${h(q.note_customer)}</p>` : ""}
+    <div class="qsec" data-pr="terms"><h4>Terms &amp; Conditions</h4><div class="rich"></div></div>
     <p><b>Bank:</b> ${h(co.bank || "")} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>
-    <p>For <b>${h(co.name || "")}</b><br><br>Authorised Signatory<br><span style="font-size:11px">Contact: ${h(co.contact || "")} ${h(co.mobile || "")} · ${h(co.email || "")}</span></p></div>`;
+    <p>For <b>${h(co.name || "")}</b><br><br>Authorised Signatory<br><span style="font-size:11px">Contact: ${h(co.contact || "")} ${h(co.mobile || "")} · ${h(co.email || "")}</span></p>
+    <div class="qannex" data-pr="annex"><div class="hd2"><b>ANNEXURE</b><span>Quotation No. ${h(q.quote_no || "")} · ${h(dOnly(q.created_at || new Date()))}</span></div><div class="rich"></div></div></div>`;
+  const put = (k, html) => { const b = $(`[data-pr="${k}"]`, pr); if (html) renderRich($(".rich", b), html); else b.remove(); };
+  put("terms", q.terms_html || textToHtml(q.notes));
+  put("annex", q.annexure_html);
   window.print();
 }
 
