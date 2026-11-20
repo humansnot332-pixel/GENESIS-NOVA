@@ -748,3 +748,5 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .obl .input.need { border-color: var(--warn); background: var(--warn-soft); }
 .obl-calc, .obl-cn { margin-top: 10px; font-size: 13px; color: var(--tx-2); }
 @media (max-width: 760px) { .obl { grid-template-columns: 1fr; gap: 6px; } .obl-n { padding: 0; } }
+.qth { flex-wrap: wrap; row-gap: 4px; }
+.qth .qtauto { white-space: normal; text-align: left; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
