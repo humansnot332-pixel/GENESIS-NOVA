@@ -31,9 +31,22 @@ function calc(q, items) {
     if (!rt) return; const t = r2(base[rt] * rt / 100); tax += t;
     if (inter) lines.push([`IGST ${rt}%`, t]); else { const c = r2(t / 2); lines.push([`CGST ${rt / 2}%`, c], [`SGST ${rt / 2}%`, r2(t - c)]); }
   });
-  return { sub: r2(sub), tax: r2(tax), grand: r2(sub + tax), lines };
+  const raw = r2(r2(sub) + r2(tax));
+  return { sub: r2(sub), tax: r2(tax), grand: q.round_off === false ? raw : Math.round(raw), lines };
 }
-const rowHtml = (it, i) => `<td>${i + 1}</td><td><pre>${h(it.desc)}</pre></td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2((+it.qty || 0) * (+it.price || 0)))}</td>`;
+const niceDay = (s) => s ? new Date(String(s).slice(0, 10) + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+const plusDays = (s, n) => { const d = new Date(String(s).slice(0, 10) + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+function termRows(q) {
+  const rows = [["Valid till", q.date ? niceDay(plusDays(q.date, +q.validity_days || 7)) : ""], ["Payment terms", q.payment_terms], ["Delivery", q.delivery], ["Your reference", q.ref]];
+  const a = q.amc;
+  if (a?.start) {
+    const e = new Date(a.start + "T00:00:00"); e.setMonth(e.getMonth() + (+a.months || 12)); e.setDate(e.getDate() - 1);
+    rows.push(["AMC period", `${niceDay(a.start)} – ${niceDay(e.toISOString().slice(0, 10))} (${+a.months || 12} months)`], ["Coverage", a.coverage], ["Preventive visits", a.pm], ["Standby", a.standby],
+      ["Billing", (a.billing || "") + (/monthly|quarterly/i.test(a.billing || "") && a.bill_day ? `, bill on day ${a.bill_day}` : "")]);
+  }
+  return rows.filter(([, v]) => v);
+}
+const rowHtml = (it, i) => `<td>${i + 1}</td><td><pre>${h(it.desc)}</pre>${it.details ? `<pre class="mu dt">${h(it.details)}</pre>` : ""}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2((+it.qty || 0) * (+it.price || 0)))}</td>`;
 
 function respBox(q) {
   if (q.response === "accepted") return `<div class="note ok">✅ You accepted this quotation on ${h(dt(q.response_at))}${q.options_added ? ` (including ${q.options_added} optional item${q.options_added > 1 ? "s" : ""} you added)` : ""}. Our team will contact you shortly with the next steps. Thank you!</div>`;
@@ -54,10 +67,12 @@ function render(q) {
     <div class="hd"><div><h1>${h(co.name || "")}</h1><div class="mu">${h(co.address || "")}</div><div class="mu">${co.gstin ? "GSTIN: " + h(co.gstin) : ""}${co.pan ? " · PAN: " + h(co.pan) : ""}</div></div>
       <div class="r"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no)}</b></div><div class="mu">Date: ${h(dt(q.date))}</div></div></div>
     <div><b>To:</b> ${h(to.name || "")}${to.address ? "<br>" + h(to.address) : ""}${to.state ? ", " + h(to.state) : ""}${to.gstin ? "<br>GSTIN: " + h(to.gstin) : ""}${to.contact ? "<br>Kind Attn: " + h(to.contact) : ""}</div>
+    ${q.site?.address ? `<div style="margin-top:6px"><b>Delivery / site:</b> ${h(q.site.address)}</div>` : ""}
+    ${termRows(q).length ? `<div class="terms">${termRows(q).map(([k, v]) => `<div><span class="mu">${h(k)}</span><b>${h(v)}</b></div>`).join("")}</div>` : ""}
     <div class="tw"><table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>
       ${inc.map((it, i) => `<tr>${rowHtml(it, i)}</tr>`).join("")}
       <tr class="tot"><td colspan="6" class="r">Subtotal</td><td class="r">${inr(q.subtotal)}</td></tr>
-      ${calc(q, inc).lines.map(([l, v]) => `<tr class="tot"><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
+      ${calc(q, inc).lines.concat(+q.round_amt ? [["Round off", +q.round_amt]] : []).map(([l, v]) => `<tr class="tot"><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
       <tr class="grand"><td colspan="6" class="r">Grand Total</td><td class="r">${inr(q.grand_total)}</td></tr></tbody></table></div>
     ${opt.length ? `<div class="blk optbox"><b class="t">Optional items — not included in the total</b>
       ${canPick ? `<p class="mu hint" style="margin:0 0 4px">Tick any item you would like to add — the new total shows below. Accepting the quotation adds them to your order.</p>` : ""}

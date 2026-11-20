@@ -21,6 +21,7 @@ import { CONFIG } from "./config.js";
 import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
+import { viewObf, openObf } from "./obf.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 // ---------- brand ----------
@@ -250,6 +251,7 @@ const NAV = [
   ["inbox", "Inbox (replies)", "mail"],
   ["tasks", "Follow-ups & tasks", "check"],
   ["quotes", "Quotations", "file"],
+  ["obf", "OBF (order booking)", "check", () => canSee("quotes")],   // follows quotation access
   ["orders", "Orders & payments", "rupee"],
   ["renewals", "Renewals / AMC", "refresh"],
   ["support", "Support tickets", "tool"],
@@ -289,7 +291,7 @@ const navHtml = () => NAV.map((n) => {
           if (n.length <= 2 && typeof n[0] === "string" && !n[2]) return (n[1] && !n[1]()) ? "" : `<div class="nav-h">${h(n[0])}</div>`;
           if (n[3] && !n[3]()) return "";
           if (!canSee(n[0])) return "";
-          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}${n[0] === "support" ? '<span class="badge warn" id="tktBadge" hidden></span>' : ""}${n[0] === "renewals" ? '<span class="badge bad" id="renBadge" hidden></span>' : ""}</a>`;
+          return `<a href="#/${n[0]}" data-r="${n[0]}">${ic(n[2])}<span>${h(n[1])}</span>${n[0] === "rfqs" ? '<span class="badge info" id="rfqBadge" hidden></span>' : ""}${n[0] === "today" ? '<span class="badge warn" id="dueBadge" hidden></span>' : ""}${n[0] === "inbox" ? '<span class="badge acc" id="inboxBadge" hidden></span>' : ""}${n[0] === "requests" ? '<span class="badge warn" id="reqBadge" hidden></span>' : ""}${n[0] === "support" ? '<span class="badge warn" id="tktBadge" hidden></span>' : ""}${n[0] === "renewals" ? '<span class="badge bad" id="renBadge" hidden></span>' : ""}${n[0] === "obf" ? '<span class="badge warn" id="obfBadge" hidden></span>' : ""}</a>`;
         }).join("");
 function tidyNav() {
   $$(".nav .nav-h").forEach((hd) => { hd.hidden = false; const nx = hd.nextElementSibling; if (!nx || nx.classList.contains("nav-h")) hd.hidden = true; });
@@ -368,7 +370,7 @@ async function refreshBadges(force = true) {
     if (error || !data) return;
     const set = (id, n) => { const b = $(id); if (b) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n || ""; } };
     set("#rfqBadge", data.rfqs); set("#dueBadge", data.due); set("#inboxBadge", data.replies); set("#bellBadge", data.notif);
-    set("#reqBadge", data.requests); set("#tktBadge", data.tickets); set("#renBadge", data.renewals);
+    set("#reqBadge", data.requests); set("#tktBadge", data.tickets); set("#renBadge", data.renewals); set("#obfBadge", data.obf);
     const c = $("#lockChip");
     if (c) {
       c.hidden = !data.locks && !data.expiring; c.querySelector("b").textContent = data.locks || 0; c.querySelector("span").textContent = "/" + (data.lock_max || 150);
@@ -423,6 +425,7 @@ function route() {
     if (S.params.id && S.route === "leads") openLead(+S.params.id);
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
     if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
+    if (S.params.id && S.route === "obf") openObf(+S.params.id);
   }).catch((e) => { page.classList.remove("stale"); if (cached && page.isConnected) page.innerHTML = `<div class="empty">—</div>`; fail(e); });
 }
 addEventListener("hashchange", route);
@@ -674,6 +677,7 @@ VIEWS.requests = (el) => viewRequests(el);
 VIEWS.products = (el) => viewProducts(el);
 VIEWS.renewals = (el) => viewRenewals(el);
 VIEWS.orders = (el) => viewOrders(el);
+VIEWS.obf = (el) => viewObf(el);
 VIEWS.support = (el, soft, params) => viewSupport(el, soft, params);
 VIEWS.daily = (el) => viewDaily(el);
 VIEWS.duplicates = (el) => viewDuplicates(el);
@@ -1538,7 +1542,29 @@ function qCalc(q) {          // only ticked items count; unticked ones ("opt") a
     if (!rt) return; const t = r2(base[rt] * rt / 100); tax += t;
     if (inter) lines.push([`IGST ${rt}%`, t]); else { const c = r2(t / 2); lines.push([`CGST ${rt / 2}%`, c], [`SGST ${rt / 2}%`, r2(t - c)]); }
   });
-  return { sub: r2(sub), tax: r2(tax), grand: r2(sub + tax), lines, inter, optSub: r2(optSub), optN };
+  const raw = r2(r2(sub) + r2(tax)), grand = q.round_off === false ? raw : Math.round(raw);
+  return { sub: r2(sub), tax: r2(tax), grand, round: r2(grand - raw), lines, inter, optSub: r2(optSub), optN };
+}
+// ---- quotation helpers: payment / delivery presets, valid-till, AMC wording
+const PAY_TERMS = ["100% advance", "50% advance, 50% on delivery", "Against delivery", "Within 7 days", "Within 15 days", "Within 30 days", "Within 45 days", "Within 60 days"];
+const DELIVERY = ["Immediate", "2–5 working days (electronic delivery)", "3–5 working days", "7–10 working days", "2–3 weeks", "As per the AMC schedule", "As per schedule", "Open order (as and when required)"];
+const AMC_PM = ["Quarterly", "Monthly", "Half-yearly", "Yearly", "On call only"];
+const AMC_BILL = ["Yearly in advance", "Half-yearly in advance", "Quarterly in advance", "Monthly in advance", "Quarterly in arrears", "Monthly in arrears"];
+const AMC_COVER = ["Comprehensive — spares + labour", "Non-comprehensive — labour only"];
+const isoDay = (d = new Date()) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+const niceDay = (s) => s ? new Date(s + (String(s).length === 10 ? "T00:00:00" : "")).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
+const addDaysIso = (s, n) => { const d = new Date((s || isoDay()) + "T00:00:00"); d.setDate(d.getDate() + n); return isoDay(d); };
+const amcEnd = (a) => { if (!a?.start) return ""; const d = new Date(a.start + "T00:00:00"); d.setMonth(d.getMonth() + (+a.months || 12)); d.setDate(d.getDate() - 1); return isoDay(d); };
+const isAmcText = (t) => /(^|[^a-z])(amc|annual maintenance|maintenance contract|fms|facility management|resident engineer)([^a-z]|$)/i.test(t || "");
+// the commercial terms box (print + online page use the same rows)
+function quoteTermRows(q) {
+  const rows = [["Quotation date", niceDay(q.quote_date || isoDay(new Date(q.created_at || Date.now())))],
+    ["Valid till", niceDay(addDaysIso(q.quote_date || isoDay(new Date(q.created_at || Date.now())), +q.validity_days || 7))],
+    ["Payment terms", q.payment_terms], ["Delivery", q.delivery], ["Your reference", q.ref]];
+  if (q.amc?.start) rows.push(["AMC period", `${niceDay(q.amc.start)} – ${niceDay(amcEnd(q.amc))} (${+q.amc.months || 12} months)`],
+    ["Coverage", q.amc.coverage], ["Preventive visits", q.amc.pm], ["Standby", q.amc.standby],
+    ["Billing", q.amc.billing + (/monthly|quarterly/i.test(q.amc.billing || "") && q.amc.bill_day ? `, bill on day ${q.amc.bill_day}` : "")]);
+  return rows.filter(([, v]) => v);
 }
 const W1 = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"], W2 = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
 const w2 = (n) => n < 20 ? W1[n] : W2[Math.floor(n / 10)] + (n % 10 ? " " + W1[n % 10] : "");
@@ -1608,16 +1634,35 @@ async function quoteEditor(q0) {
   const tp = q.to_party;
   const m = modal({
     title: q.id ? `Quotation ${q.quote_no}` : "Nayi quotation", wide: true,
-    body: `<div class="grid3">
-      <div><label class="f">Customer *</label><input class="input" data-tp="name" value="${h(tp.name || "")}" maxlength="200"></div>
-      <div><label class="f">Contact</label><input class="input" data-tp="contact" value="${h(tp.contact || "")}" maxlength="120"></div>
+    body: `<div class="grid3 qcust">
+      <div class="qcs"><label class="f" for="qcn">Customer * <span class="lbl-hint" id="qlinked">${q.lead_id ? "🔗 " + L("customer record se juda", "linked to the customer record") : L("— naam, phone ya GSTIN likho", "— type a name, phone or GSTIN")}</span></label>
+        <input class="input" id="qcn" data-tp="name" value="${h(tp.name || "")}" maxlength="200" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="qcsL"><div class="qcs-list" id="qcsL" role="listbox" hidden></div></div>
+      <div><label class="f">Contact person</label><input class="input" data-tp="contact" value="${h(tp.contact || "")}" maxlength="120"></div>
+      <div><label class="f">Phone</label><input class="input" data-tp="phone" value="${h(tp.phone || "")}" maxlength="40" inputmode="tel"></div>
       <div><label class="f">Email</label><input class="input" data-tp="email" value="${h(tp.email || "")}" maxlength="200"></div>
-      <div><label class="f">Address</label><input class="input" data-tp="address" value="${h(tp.address || "")}" maxlength="300"></div>
+      <div><label class="f">Billing address</label><input class="input" data-tp="address" value="${h(tp.address || "")}" maxlength="300"></div>
       <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60"></div>
-      <div><label class="f">GSTIN</label><input class="input" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="15"></div></div>
+      <div><label class="f">GSTIN</label><input class="input" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="15"></div>
+      <div class="qsite"><label class="f" for="qsite">Delivery / site address <span class="lbl-hint">— ${L("khali = billing address", "empty = same as billing")}</span></label><input class="input" id="qsite" value="${h(q.site?.address || "")}" maxlength="300"></div></div>
+    <div class="qbar sec">
+      <div><label class="f" for="qdate">Date</label><input class="input" type="date" id="qdate" value="${h(q.quote_date || isoDay())}"></div>
+      <div><label class="f" for="qval">Validity <span class="lbl-hint" id="qvt"></span></label><div class="qval"><input class="input" type="number" id="qval" min="1" max="365" value="${h(q.validity_days || 7)}"><span class="qval-d">${L("din", "days")}</span>${[7, 15, 30].map((d) => `<button type="button" class="chip" data-val="${d}">${d}</button>`).join("")}</div></div>
+      <div><label class="f" for="qpay">Payment terms</label><input class="input" id="qpay" list="payDL" value="${h(q.payment_terms || "")}" maxlength="200" autocomplete="off"></div>
+      <div><label class="f" for="qdel">Delivery</label><input class="input" id="qdel" list="delDL" value="${h(q.delivery || "")}" maxlength="200" autocomplete="off"></div>
+      <div><label class="f" for="qref">Customer ref / PO</label><input class="input" id="qref" value="${h(q.ref || "")}" maxlength="200" placeholder="${h(L("Enquiry / RFQ / PO no.", "Enquiry / RFQ / PO no."))}"></div></div>
+    <datalist id="payDL">${PAY_TERMS.map((x) => `<option value="${h(x)}"></option>`).join("")}</datalist><datalist id="delDL">${DELIVERY.map((x) => `<option value="${h(x)}"></option>`).join("")}</datalist>
+    <div class="qamc sec" id="qamc" hidden><div class="qamc-h">🛠 AMC details <span class="lbl-hint">— ${L("quotation, OBF aur renewal reminder mein apne aap jaate hain", "go to the quotation, the OBF and the renewal reminder by themselves")}</span></div>
+      <div class="qamc-g">
+        <div><label class="f" for="amS">Start</label><input class="input" type="date" id="amS"></div>
+        <div><label class="f" for="amM">Period <span class="lbl-hint" id="amE"></span></label><select class="input" id="amM">${[3, 6, 12, 24, 36].map((n) => `<option value="${n}">${n} ${L("mahine", "months")}</option>`).join("")}</select></div>
+        <div><label class="f" for="amC">Coverage</label><select class="input" id="amC">${AMC_COVER.map((x) => `<option>${h(x)}</option>`).join("")}</select></div>
+        <div><label class="f" for="amP">Preventive visits</label><select class="input" id="amP">${AMC_PM.map((x) => `<option>${h(x)}</option>`).join("")}</select></div>
+        <div><label class="f" for="amSb">Standby</label><select class="input" id="amSb"><option>Not applicable</option><option>Standby unit during repair</option></select></div>
+        <div><label class="f" for="amB">Billing</label><select class="input" id="amB">${AMC_BILL.map((x) => `<option>${h(x)}</option>`).join("")}</select></div>
+        <div id="amDW"><label class="f" for="amD">Bill on day</label><input class="input" type="number" id="amD" min="1" max="28" value="1"></div></div></div>
     ${quoteTrackHtml(q)}${productDatalist()}
     <div class="sec tbl-wrap"><table class="tbl" id="qi"><thead><tr><th class="qchk"><input type="checkbox" id="qall" title="${h(L("Sab items total mein", "All items in the total"))}" aria-label="${h(L("Sab items total mein", "All items in the total"))}"></th><th>Description</th><th style="width:100px">HSN/SAC</th><th style="width:80px">Qty</th><th style="width:120px">Rate ₹</th><th style="width:96px">GST %</th><th class="num" style="width:110px">Amount</th><th></th></tr></thead><tbody></tbody></table>
-      <button class="btn sm" id="qadd" style="margin-top:8px">${ic("plus")} Item</button>
+      <div class="qadd-row"><button class="btn sm" id="qadd">${ic("plus")} Item</button>${["Transportation", "Courier charges", "Installation"].map((c) => `<button type="button" class="btn sm ghost" data-chg="${c}">＋ ${c}</button>`).join("")}</div>
       <p class="qtickhint mu">✓ ${L("Sirf tick kiye items total mein judte hain. Untick = Optional (total mein nahi).", "Only ticked items make the total. Unticked = Optional (not in the total).")}</p>
       <label class="qso" id="qsoW" hidden><input type="checkbox" id="qso"${q.show_optional === false ? "" : " checked"}> ${L("Optional items quotation pe alag dikhao — customer online link pe tick karke jod sakta hai", "Show optional items on the quotation — the customer can tick and add them on the online link")}</label></div>
     <div class="grid2 sec"><div><label class="f" for="qs">Status</label><select class="input" id="qs">${["draft", "sent", "won", "lost"].map((x) => `<option ${x === (q.status || "draft") ? "selected" : ""}>${x}</option>`).join("")}</select></div>
@@ -1627,7 +1672,7 @@ async function quoteEditor(q0) {
       <div><label class="f" for="qni">Internal note <span class="lbl-hint">🔒 ${L("sirf team — kabhi print nahi hota", "team only — never printed")}</span></label><textarea class="input" id="qni" maxlength="3000" rows="3" placeholder="${h(L("Jaise: discount approve hua · vendor price · follow-up", "e.g. discount approved · vendor price · follow-up"))}">${h(q.note_internal || "")}</textarea></div></div>
     <div class="grid2 sec qtc">${qtBox("annexure", q)}${qtBox("terms", q)}</div>
     <div id="qtplEd"></div>`,
-    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button>${q.status !== "lost" ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
+    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button><button class="btn" id="qcopy" title="${h(L("Isi jaisi nayi quotation", "A new quotation like this one"))}">📄 Copy</button>${q.status !== "lost" ? `<button class="btn" id="qobf" title="${h(L("Customer ne approve kiya → Order Booking Form", "Customer approved → Order Booking Form"))}">📋 OBF</button>` : ""}${q.status !== "lost" && isMgr() ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
   });
   const hooks = { items: () => {} };
   const amtHtml = (it) => inr(r2((+it.qty || 0) * (+it.price || 0))) + (it.opt ? `<div class="opt-tag">Optional</div>` : "");
@@ -1639,7 +1684,9 @@ async function quoteEditor(q0) {
   const drawItems = () => {
     $("#qi tbody", m).innerHTML = q.items.map((it, i) => `<tr style="cursor:default"${it.opt ? ' class="opt"' : ""}>
       <td class="qchk"><input type="checkbox" data-inc data-i="${i}"${it.opt ? "" : " checked"} title="${h(L("Total mein shamil", "Included in the total"))}" aria-label="${h(L("Total mein shamil: ", "Included in the total: ") + (it.desc || "item " + (i + 1)))}"></td>
-      <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400" list="prodDL" placeholder="${h(L("Product list se chuno ya likho…", "Pick from product list or type…"))}"></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="12"></td>
+      <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400" list="prodDL" placeholder="${h(L("Product list se chuno ya likho…", "Pick from product list or type…"))}">
+        <div class="qdet"${it.details ? "" : " hidden"}><textarea class="input" data-i="${i}" data-k="details" rows="${Math.max(2, Math.min(6, String(it.details || "").split("\n").length))}" maxlength="1000" placeholder="${h(L("Specs / configuration — product ke neeche chhapega", "Specs / configuration — printed under the product"))}">${h(it.details || "")}</textarea></div>
+        <div class="qrow-x"><button type="button" class="linkbtn" data-det="${i}"${it.details ? " hidden" : ""}>＋ ${L("details / specs", "details / specs")}</button>${it._hint ? `<span class="qhint">↺ ${h(it._hint)}</span>` : ""}</div></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="12"></td>
       <td><input class="input" type="number" min="0" data-i="${i}" data-k="qty" value="${h(it.qty)}"></td><td><input class="input" type="number" min="0" data-i="${i}" data-k="price" value="${h(it.price)}"></td>
       <td><select class="input" data-i="${i}" data-k="tax">${[0, 5, 12, 18, 28].map((t) => `<option ${+it.tax === t ? "selected" : ""}>${t}</option>`).join("")}</select></td>
       <td class="num qamt">${amtHtml(it)}</td><td><button class="btn ghost icon sm" data-rm="${i}" aria-label="Remove">${ic("x")}</button></td></tr>`).join("");
@@ -1647,12 +1694,12 @@ async function quoteEditor(q0) {
   };
   const drawTotals = () => {
     const c = qCalc(q);
-    $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>${c.optN ? `<p class="opt-sum">➕ ${c.optN} optional item${c.optN > 1 ? "s" : ""} · ${inr(c.optSub)} + GST <span class="mu">${L("— total mein nahi", "— not in the total")}</span></p>` : ""}${marginHtml(q.items.filter((x) => !x.opt))}`;
+    $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><label class="qro"><input type="checkbox" id="qro"${q.round_off === false ? "" : " checked"}> Round off</label></dt><dd>${c.round ? (c.round > 0 ? "+" : "−") + Math.abs(c.round).toFixed(2) : "0.00"}</dd><dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>${c.optN ? `<p class="opt-sum">➕ ${c.optN} optional item${c.optN > 1 ? "s" : ""} · ${inr(c.optSub)} + GST <span class="mu">${L("— total mein nahi", "— not in the total")}</span></p>` : ""}${marginHtml(q.items.filter((x) => !x.opt))}`;
   };
   m.addEventListener("input", (e) => {
     const t = e.target;
     if (t.dataset.tp) { tp[t.dataset.tp] = t.value; if (t.dataset.tp === "state") drawTotals(); }
-    if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (t.dataset.k !== "desc" && t.dataset.k !== "hsn") { const it = q.items[+t.dataset.i]; t.closest("tr").querySelector(".qamt").innerHTML = amtHtml(it); drawTotals(); } }
+    if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (!["desc", "hsn", "details"].includes(t.dataset.k)) { const it = q.items[+t.dataset.i]; t.closest("tr").querySelector(".qamt").innerHTML = amtHtml(it); drawTotals(); } }
   });
   m.addEventListener("change", (e) => {
     if (e.target.matches("[data-inc]")) {           // tick / untick one item
@@ -1661,15 +1708,26 @@ async function quoteEditor(q0) {
       row.classList.toggle("opt", !!it.opt); row.querySelector(".qamt").innerHTML = amtHtml(it);
       syncTicks(); drawTotals(); hooks.items(); return;
     }
+    if (e.target.id === "qro") { q.round_off = e.target.checked; drawTotals(); return; }
     if (e.target.id === "qall") { const on = e.target.checked; q.items.forEach((x) => { if (on) delete x.opt; else x.opt = true; }); drawItems(); return; }
     if (e.target.dataset.k === "tax") { q.items[+e.target.dataset.i].tax = +e.target.value; drawTotals(); }
     if (e.target.dataset.k === "desc") {      // picked from the product list → fill HSN, GST and price
       const it = q.items[+e.target.dataset.i], p = findProduct(e.target.value);
-      if (p && (it._pid !== p.id)) { it._pid = p.id; if (!it.hsn) it.hsn = p.hsn || ""; it.tax = +p.gst_rate; if (!+it.price && p.sell_price != null) it.price = +p.sell_price; setTimeout(drawItems, 0); }
+      if (p && (it._pid !== p.id)) {
+        it._pid = p.id; if (!it.hsn) it.hsn = p.hsn || ""; it.tax = +p.gst_rate; it.unit = p.unit || it.unit || "";
+        if (!it.details && p.notes) it.details = p.notes;
+        const last = lastPrice(it.desc);                 // what this customer was quoted before wins over the list price
+        if (last) { it._hint = `${L("pichhli baar", "last quoted")} ${inr(last.price)} · ${last.no} · ${niceDay(isoDay(new Date(last.at)))}`; if (!+it.price) it.price = last.price; }
+        if (!+it.price && p.sell_price != null) it.price = +p.sell_price;
+        setTimeout(drawItems, 0);
+      }
       else { drawTotals(); hooks.items(); }
     }
   });
-  m.addEventListener("click", (e) => { const r = e.target.closest("[data-rm]"); if (r) { q.items.splice(+r.dataset.rm, 1); if (!q.items.length) q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); } });
+  m.addEventListener("click", (e) => {
+    const dt = e.target.closest("[data-det]"); if (dt) { const td = dt.closest("td"); td.querySelector(".qdet").hidden = false; dt.hidden = true; td.querySelector("textarea").focus(); return; }
+    const cg = e.target.closest("[data-chg]"); if (cg) { q.items.push({ desc: cg.dataset.chg, hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); $(`[data-i="${q.items.length - 1}"][data-k="price"]`, m)?.focus(); return; }
+    const r = e.target.closest("[data-rm]"); if (r) { q.items.splice(+r.dataset.rm, 1); if (!q.items.length) q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); } });
   $("#qadd", m).onclick = () => { q.items.push({ desc: "", hsn: "", qty: 1, price: 0, tax: 18 }); drawItems(); };
   drawItems();
 
@@ -1769,13 +1827,109 @@ async function quoteEditor(q0) {
     if (n) tplEd(n.dataset.tnew, null);
     if (te) { const t = tplOf($(`#qt_${te.dataset.tedit}`, m).value); if (!t) return toast(L("Pehle list se template chuno", "Pick a template in the list first"), true); tplEd(te.dataset.tedit, t); }
   });
+  // ---- customer search: type a name / phone / GSTIN → pick → contact, address, GST state, GSTIN fill themselves
+  let PAST = [], csT = 0, csRows = [];
+  const lastPrice = (desc) => {
+    const d = String(desc || "").trim().toLowerCase(); if (!d) return null;
+    for (const x of PAST) { const it = (x.items || []).find((i) => String(i.desc || "").trim().toLowerCase() === d && +i.price > 0); if (it) return { price: +it.price, no: x.quote_no, at: x.created_at }; }
+    return null;
+  };
+  const touched = { pay: !!q.payment_terms, del: !!q.delivery, val: !!q.id };
+  const loadPast = async () => {
+    if (!q.lead_id) { PAST = []; return; }
+    const { data } = await sb.from("quotations").select("id, quote_no, created_at, items, payment_terms").eq("lead_id", q.lead_id).neq("id", q.id || 0).order("created_at", { ascending: false }).limit(20);
+    PAST = data || [];
+    const lp = PAST.find((x) => x.payment_terms);          // this customer's usual payment terms
+    if (lp && !touched.pay) { $("#qpay", m).value = lp.payment_terms; touched.pay = true; }
+  };
+  const csList = $("#qcsL", m), csIn = $("#qcn", m);
+  const csClose = () => { csList.hidden = true; csIn.setAttribute("aria-expanded", "false"); };
+  const pickLead = (l) => {
+    q.lead_id = l.id;
+    Object.assign(tp, { name: l.company || tp.name, contact: l.contact_name || "", phone: l.phone || "", email: l.email || "",
+      address: l.address || [l.area, l.city].filter(Boolean).join(", "), state: l.state || tp.state || "Maharashtra", gstin: l.gstin || "" });
+    for (const k of ["name", "contact", "phone", "email", "address", "state", "gstin"]) { const el = $(`[data-tp="${k}"]`, m); if (el) el.value = tp[k] || ""; }
+    $("#qlinked", m).textContent = "🔗 " + L("customer record se juda", "linked to the customer record");
+    csClose(); drawTotals(); loadPast().catch(() => {});
+  };
+  csIn.addEventListener("input", () => {
+    clearTimeout(csT); const t = csIn.value.trim();
+    if (t.length < 2) return csClose();
+    csT = setTimeout(async () => {
+      const s2 = t.replace(/[,()*%\\.:"']/g, " ").trim(), d = t.replace(/\D/g, "");
+      const ors = [`company.ilike.*${s2}*`, ...(d.length >= 4 ? [`phone_norm.ilike.*${d.slice(-10)}*`] : []), ...(/^[0-9a-z]{5,15}$/i.test(t) ? [`gstin.ilike.*${t}*`] : [])];
+      const { data } = await sb.from("leads").select("id, company, contact_name, phone, email, address, area, city, state, gstin").or(ors.join(",")).order("updated_at", { ascending: false }).limit(8);
+      if (csIn.value.trim() !== t) return;
+      csRows = data || [];
+      csList.innerHTML = csRows.map((l) => `<button type="button" class="qcs-i" role="option" data-lid="${l.id}"><b>${h(l.company)}</b><span>${h([l.contact_name, l.city || l.area, l.phone, l.gstin].filter(Boolean).join(" · "))}</span></button>`).join("")
+        || `<div class="qcs-e">${L("Koi customer nahi mila — naya naam likh do, chalega", "No customer found — just type the new name")}</div>`;
+      csList.hidden = false; csIn.setAttribute("aria-expanded", "true");
+    }, 220);
+  });
+  csList.addEventListener("mousedown", (e) => { const b = e.target.closest("[data-lid]"); if (!b) return; e.preventDefault(); pickLead(csRows.find((x) => x.id === +b.dataset.lid)); });
+  csIn.addEventListener("keydown", (e) => { if (e.key === "Escape") csClose(); if (e.key === "Enter" && !csList.hidden && csRows.length) { e.preventDefault(); pickLead(csRows[0]); } });
+  csIn.addEventListener("blur", () => setTimeout(csClose, 150));
+  if (q.lead_id) loadPast().catch(() => {});
+
+  // ---- validity, payment, delivery: sensible defaults by product type until the person changes them
+  const vtShow = () => { $("#qvt", m).textContent = "→ " + niceDay(addDaysIso($("#qdate", m).value, +$("#qval", m).value || 0)); };
+  $("#qval", m).addEventListener("input", () => { touched.val = true; vtShow(); });
+  $("#qdate", m).addEventListener("input", vtShow);
+  $$("[data-val]", m).forEach((b) => b.onclick = () => { $("#qval", m).value = b.dataset.val; touched.val = true; vtShow(); });
+  $("#qpay", m).addEventListener("input", () => { touched.pay = true; });
+  $("#qdel", m).addEventListener("input", () => { touched.del = true; });
+  const DEL_BY = { Software: DELIVERY[1], Hardware: DELIVERY[3], AMC: DELIVERY[5], Networking: DELIVERY[3], Services: DELIVERY[6] };
+  const amcOn = () => !!q.amc || /^AMC/i.test(tplOf($("#qt_terms", m).value)?.name || "") || q.items.some((it) => !it.opt && (isAmcText(it.desc) || /amc|facility/i.test(findProduct(it.desc)?.category || "")));
+  const amcFill = () => {
+    const a = q.amc || {}, nm = new Date(); nm.setMonth(nm.getMonth() + 1, 1);
+    $("#amS", m).value = a.start || isoDay(nm); $("#amM", m).value = String(a.months || 12);
+    $("#amC", m).value = a.coverage || AMC_COVER[0]; $("#amP", m).value = a.pm || AMC_PM[0];
+    $("#amSb", m).value = a.standby || "Not applicable"; $("#amB", m).value = a.billing || AMC_BILL[0]; $("#amD", m).value = a.bill_day || 1;
+  };
+  const amcShow = () => {
+    $("#amE", m).textContent = "→ " + niceDay(amcEnd({ start: $("#amS", m).value, months: +$("#amM", m).value }));
+    $("#amDW", m).hidden = !/monthly|quarterly/i.test($("#amB", m).value);
+  };
+  amcFill(); amcShow();
+  $("#qamc", m).addEventListener("input", amcShow); $("#qamc", m).addEventListener("change", amcShow);
+  const syncAuto = () => {
+    const amc = amcOn(); $("#qamc", m).hidden = !amc;
+    const kind = (tplOf($("#qt_terms", m).value)?.name || "").split(/[ ,—]/)[0];
+    if (!touched.del) $("#qdel", m).value = amc ? DELIVERY[5] : DEL_BY[kind] || DELIVERY[3];
+    if (!touched.val) { $("#qval", m).value = amc ? 30 : 7; }
+    if (!touched.pay && !$("#qpay", m).value) $("#qpay", m).value = PAY_TERMS[0];
+    vtShow();
+  };
+  const tcItems = hooks.items; hooks.items = () => { tcItems(); syncAuto(); };
+  $("#qt_terms", m).addEventListener("change", syncAuto);
+  syncAuto();
+
+  const syncAll = () => {
+    syncNotes();
+    q.quote_date = $("#qdate", m).value || null; q.validity_days = Math.max(1, Math.min(365, Math.round(+$("#qval", m).value) || 7));
+    q.payment_terms = $("#qpay", m).value.trim() || null; q.delivery = $("#qdel", m).value.trim() || null; q.ref = $("#qref", m).value.trim() || null;
+    const sa = $("#qsite", m).value.trim(); q.site = sa ? { address: sa } : null;
+    q.amc = $("#qamc", m).hidden ? null : { start: $("#amS", m).value, months: +$("#amM", m).value, coverage: $("#amC", m).value, pm: $("#amP", m).value,
+      standby: $("#amSb", m).value, billing: $("#amB", m).value, ...(!$("#amDW", m).hidden ? { bill_day: Math.max(1, Math.min(28, +$("#amD", m).value || 1)) } : {}) };
+  };
+  $("#qcopy", m)?.addEventListener("click", () => {
+    syncAll();
+    const c = structuredClone(q);
+    for (const k of ["id", "quote_no", "share_token", "view_count", "first_viewed_at", "last_viewed_at", "customer_response", "customer_note", "customer_response_at", "customer_options", "created_at", "updated_at", "owner_id", "status", "quote_date", "rfq_id", "version", "import_batch"]) delete c[k];
+    c.items = c.items.map(({ _pid, _hint, ...it }) => it);
+    quoteEditor(c); toast(L("📄 Copy ban gayi — customer / items badlo aur Save karo", "📄 Copy ready — change the customer / items and Save"));
+  });
+  $("#qobf", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const { data: id, error } = await sb.rpc("obf_from_quote", { p_quote: q.id }); if (error) throw error;
+    openObf(id);
+  }));
   const syncNotes = () => {
     q.note_customer = $("#qnc", m).value.trim() || null; q.note_internal = $("#qni", m).value.trim() || null;
     q.terms_html = ed.terms.html || null; q.annexure_html = ed.annexure.html || null;
     q.show_optional = $("#qso", m).checked;
   };
 
-  $("#qp", m)?.addEventListener("click", () => { syncNotes(); printQuote(q); });
+  $("#qp", m)?.addEventListener("click", () => { syncAll(); printQuote(q); });
   const shared = async (ch) => {
     const link = await shareQuote(q, ch);
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
@@ -1786,11 +1940,12 @@ async function quoteEditor(q0) {
   $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
   $("#qsave", m).onclick = (e) => busy(e.target, async () => {
     if (!tp.name) return toast("Customer naam daalo", true);
-    syncNotes();
+    syncAll();
     if ((q.terms_html || "").length > RICH_MAX || (q.annexure_html || "").length > RICH_MAX) return toast(L("T&C / Annexure bahut lamba hai — thoda chhota karo", "Terms / annexure are too long — please shorten them"), true);
     const c = qCalc(q);
-    const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0, ...(i.opt ? { opt: true } : {}) })),
-      show_optional: q.show_optional, notes: null, note_customer: q.note_customer, note_internal: q.note_internal, terms_html: q.terms_html, annexure_html: q.annexure_html,
+    const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0, ...(i.opt ? { opt: true } : {}), ...(i.details ? { details: String(i.details).slice(0, 1000) } : {}), ...(i.unit ? { unit: String(i.unit).slice(0, 20) } : {}) })),
+      show_optional: q.show_optional, notes: null, quote_date: q.quote_date, validity_days: q.validity_days, payment_terms: q.payment_terms, delivery: q.delivery,
+      ref: q.ref, site: q.site, amc: q.amc, round_off: q.round_off !== false, round_amt: c.round, note_customer: q.note_customer, note_internal: q.note_internal, terms_html: q.terms_html, annexure_html: q.annexure_html,
       terms_tpl: +$("#qt_terms", m).value || null, annexure_tpl: +$("#qt_annexure", m).value || null,
       status: $("#qs", m).value, subtotal: c.sub, tax_total: c.tax, grand_total: c.grand, lead_id: q.lead_id || null, rfq_id: q.rfq_id || null };
     const res = q.id ? await sb.from("quotations").update(row).eq("id", q.id).select("*").single() : await sb.from("quotations").insert(row).select("*").single();
@@ -1804,16 +1959,19 @@ async function quoteEditor(q0) {
 function printQuote(q) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
   const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
-  const rowHtml = (it, i) => `<tr><td>${i + 1}</td><td>${h(it.desc)}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2(it.qty * it.price))}</td></tr>`;
+  const rowHtml = (it, i) => `<tr><td>${i + 1}</td><td>${h(it.desc)}${it.details ? `<div class="qdt">${h(it.details)}</div>` : ""}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2(it.qty * it.price))}</td></tr>`;
   let pr = document.getElementById("printRoot");
   if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
   pr.innerHTML = `<div class="qdoc">
     <div class="hd"><div><h2>${h(co.name || CONFIG.COMPANY)}</h2><div>${h(co.address || "")}</div><div>GSTIN: ${h(co.gstin || "")} · PAN: ${h(co.pan || "")}</div></div>
-      <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(dOnly(q.created_at || new Date()))}</div></div></div>
-    <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}</p>
+      <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(q.quote_date ? niceDay(q.quote_date) : dOnly(q.created_at || new Date()))}</div></div></div>
+    <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
+    ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
+    <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>
     ${inc.map(rowHtml).join("")}
     <tr><td colspan="6" class="r">Subtotal</td><td class="r">${inr(c.sub)}</td></tr>${c.lines.map(([l, v]) => `<tr><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
+    ${c.round ? `<tr><td colspan="6" class="r">Round off</td><td class="r">${c.round > 0 ? "+" : "−"}${Math.abs(c.round).toFixed(2)}</td></tr>` : ""}
     <tr><th colspan="6" class="r">Grand Total</th><th class="r">${inr(c.grand)}</th></tr></tbody></table>
     <p><b>Amount in words:</b> ${h(rupeesWords(c.grand))}</p>
     ${opt.length ? `<div class="qopt"><h4>Optional items <span>— not included in the total above; tell us to add any of them</span></h4><table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>${opt.map(rowHtml).join("")}</tbody></table></div>` : ""}

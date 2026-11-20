@@ -33,6 +33,9 @@
   .rich th { background:color-mix(in srgb, var(--mu) 10%, transparent); font-weight:600 } .rich hr { border:0; border-top:1px solid var(--line) } .rich a { color:var(--acc) }
   @media (prefers-color-scheme: dark) { .rich { background:#fff; color:#111827; padding:12px 14px; border-radius:10px } .rich th, .rich td { border-color:#c9ced6 } .rich th { background:#f1f3f6 } .rich a { color:#0f766e } }
   .annex { margin-top:16px }
+  .terms { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:8px 16px; margin-top:14px; padding:12px 14px; border:1px solid var(--line); border-radius:12px }
+  .terms div { display:flex; flex-direction:column; font-size:13.5px } .terms span { font-size:11.5px; text-transform:uppercase; letter-spacing:.4px }
+  pre.dt { font-size:12.5px; margin-top:2px }
   .optbox table th:first-child { width:34px } .optbox input[type=checkbox] { width:18px; height:18px; accent-color:var(--good); cursor:pointer; margin:0 }
   .optbox tr.on td { background:color-mix(in srgb, var(--good) 10%, transparent) }
   .optsum { margin-top:8px; padding:10px 12px; border-radius:10px; background:color-mix(in srgb, var(--good) 13%, transparent); font-weight:600 }
