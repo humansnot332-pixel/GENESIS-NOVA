@@ -10,6 +10,7 @@ import {
 } from "./core.js";
 import { L, isEn, getLang } from "./i18n.js";
 import { CONFIG } from "./config.js";
+import { filesHtml, wireFiles, loadFiles } from "./files.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -484,7 +485,7 @@ export async function viewInbox(el, params = {}) {
   const { data: ms } = await sb.rpc("mail_status");
   let rows = [], sentRows = [];
   if (IB.tab === "replies") {
-    let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, counterpart_name, subject, snippet, intent, is_read, archived, created_at, thread_url, provider, leads(company, status, owner_id)")
+    let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, counterpart_name, subject, snippet, intent, is_read, archived, created_at, thread_url, provider, files, leads(company, status, owner_id)")
       .eq("direction", "in").order("created_at", { ascending: false }).limit(300);
     if (!team) q = q.eq("user_id", S.me.id);
     if (IB.f === "archived") q = q.eq("archived", true); else q = q.eq("archived", false);
@@ -525,7 +526,7 @@ export async function viewInbox(el, params = {}) {
     <button class="btn sm" id="ibGmail">${msOk ? L("⚙️ Gmail setup", "⚙️ Gmail setup") : "🔗 Gmail connect"}</button>
     ${olReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
   </div></div>
-  ${msOk && (ms.script_v || 1) < 3 ? `<div class="banner" style="margin:0 0 14px">📨 <div><b>${L("Naya: enquiry mails se apne aap RFQ", "New: RFQs straight from enquiry mails")}</b> — <span>${L("IndiaMART / TradeIndia / JustDial alerts aur customers ke “requirement / quotation” mails. Gmail code ek baar update karo (copy → paste → Save).", "IndiaMART / TradeIndia / JustDial alerts and customers' “requirement / quotation” mails. Update your Gmail code once (copy → paste → Save).")}</span></div><button class="btn sm primary right" id="ibUpd">${L("Update", "Update")}</button></div>` : ""}
+  ${msOk && (ms.script_v || 1) < 4 ? `<div class="banner" style="margin:0 0 14px">📎 <div><b>${L("Naya: mail ki photos aur files bhi CRM mein", "New: the pictures and files of mails come into the CRM too")}</b> — <span>${L("Customer ki photo / screenshot / PDF yahan dikhegi aur ticket ke saath engineer tak jaayegi (pichhle 30 din ki mails ki bhi). Gmail code ek baar update karo: <b>Naya code banao</b> → Apps Script mein paste → Save → <b>setup</b> Run.", "Customers' photos / screenshots / PDFs show here and go with the ticket to the engineer (also for the last 30 days). Update your Gmail code once: <b>Make a new code</b> → paste in Apps Script → Save → Run <b>setup</b>.")}</span></div><button class="btn sm primary right" id="ibUpd">${L("Update", "Update")}</button></div>` : ""}
   <div class="toolbar">
     <div class="chips">${[["replies", "📩 Replies"], ["sent", "📤 Sent"], ["opened", L("👁 Khole gaye", "👁 Opened")], ["due", "⏰ Follow-up due"]].map(([k, l]) => `<button class="chip ${IB.tab === k ? "on" : ""}" data-ibt="${k}">${l}</button>`).join("")}</div>
     ${IB.tab === "replies" ? `<select class="input" id="ibF" style="width:auto">${[["open", "Saare replies"], ["unread", "Unread"], ["action", "Interested / Quote"], ["no", "Not interested"], ["auto", "Auto-reply / Bounce"], ["archived", "Archived"]].map(([k, l]) => `<option value="${k}" ${IB.f === k ? "selected" : ""}>${l}</option>`).join("")}</select>` : ""}
@@ -535,7 +536,7 @@ export async function viewInbox(el, params = {}) {
   ${IB.tab === "replies" ? `<div class="inbox"><div class="card ib-list" id="ibList">${rows.map((r) => `
       <div class="ib-item ${r.is_read ? "" : "unread"} ${String(r.id) === String(params.id) ? "on" : ""}" data-ib="${r.id}">
         <div class="row" style="flex-wrap:nowrap;gap:6px">${r.is_read ? "" : '<span class="dot on" style="background:var(--accent);box-shadow:none"></span>'}<b class="ib-co">${h(r.leads?.company || r.counterpart_name || r.counterpart)}</b><span class="mu" style="font-size:12px;margin-left:auto;white-space:nowrap">${h(ago(r.created_at))}</span></div>
-        <div class="ib-sub">${h(r.subject || "(no subject)")}</div>
+        <div class="ib-sub">${r.files > 0 ? `<span title="${h(L(r.files + " photo / file", r.files + " picture(s) / file(s)"))}">📎 </span>` : ""}${h(r.subject || "(no subject)")}</div>
         <div class="ib-snip">${h(onlyReply(r.snippet || ""))}</div>
         <div class="row" style="gap:6px;margin-top:4px">${intentBadge(r.intent)}${team ? `<span class="mu" style="font-size:12px">${h(userName(r.user_id))}</span>` : ""}</div>
       </div>`).join("") || `<div class="empty"><b>Abhi koi reply nahi</b>${msOk || outlookConnected() ? "Jin companies ko CRM se mail kiya hai, unke reply yahan aayenge." : "Pehle upar se Gmail / Outlook connect karo."}</div>`}</div>
@@ -592,22 +593,29 @@ async function readMail(id, pane, refresh) {
       <div class="row" style="margin-top:6px;gap:6px">${intentBadge(r.intent)}${lead ? `<a href="#" data-ol="${lead.id}" class="badge info">📋 ${h(lead.company)} · ${h(STATUS[lead.status]?.l || lead.status)}</a>` : ""}${r.rfqs ? `<span class="badge">${h(r.rfqs.rfq_no)}</span>` : ""}</div></div>
       ${r.thread_url ? `<a class="btn sm" href="${h(r.thread_url)}" target="_blank" rel="noopener noreferrer">${r.provider === "outlook" ? "Outlook" : "Gmail"} mein kholo ↗</a>` : ""}</div></div>
     <div class="ib-body">${h(onlyReply(r.body || r.snippet || "")).replace(/\n/g, "<br>")}</div>
+    <div id="ibFiles"></div>
     ${mine ? `<div class="ib-actions">
       <button class="btn primary" data-a="reply">${ic("mail")} Reply</button>
       ${lead ? `<button class="btn" data-a="wa">${ic("wa")} WhatsApp</button>` : ""}
       ${lead ? `<button class="btn" data-a="int">🔥 Interested mark</button><button class="btn" data-a="rfq">${ic("inbox")} RFQ banao</button><button class="btn" data-a="fu">⏰ Kal follow-up</button><button class="btn danger" data-a="no">🚫 Not interested</button>` : ""}
+      <button class="btn" data-a="ticket" title="${h(L("Support ticket — mail ki photos / files ke saath engineer ko", "Support ticket — goes to the engineer with the mail's pictures / files"))}">🛠 ${L("Ticket banao", "Make ticket")}</button>
       <span style="flex:1"></span>
       <select class="input" data-a="intent" style="width:auto;height:30px" aria-label="Tag">${Object.entries(INTENT).map(([k, [l]]) => `<option value="${k}" ${k === (r.intent || "other") ? "selected" : ""}>${l}</option>`).join("")}</select>
       <button class="btn ghost" data-a="unread">Unread</button><button class="btn ghost" data-a="arch">${r.archived ? "Unarchive" : "Archive"}</button>
       <button class="btn ghost danger" data-a="del" title="${h(L("CRM se hatao (Gmail mein rahega)", "Remove from the CRM (stays in Gmail)"))}">${ic("trash")} ${L("Delete", "Delete")}</button>
     </div>` : ""}`;
   pane.querySelector("[data-ol]")?.addEventListener("click", (e) => { e.preventDefault(); HOOK.openLead(lead.id); });
+  const files = await loadFiles("email_id", id);
+  const fb = $("#ibFiles", pane);
+  if (fb && files.length) { fb.innerHTML = filesHtml(files, `📎 ${files.length} ${L("photo / file", files.length > 1 ? "attachments" : "attachment")}`); wireFiles(fb, files); }
   const act = async (a) => {
     if (a === "reply") {
       if (lead && !canWork(lead) && !lockOf(lead).free) return openComposer({ channel: "email", reply: r, onSent: refresh });
       if (lead && lockOf(lead).free) await ensureWork("lead", lead);
       return openComposer({ channel: "email", reply: r, lead: lead || undefined, rfq: r.rfqs || undefined, onSent: refresh });
     }
+    if (a === "ticket") return HOOK.openTicket?.({ title: (r.subject || "").replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "").slice(0, 200), lead_id: lead?.id || r.lead_id || null,
+      description: onlyReply(r.body || "").slice(0, 4800), email_id: r.id, _files: files.length, _from: r.counterpart_name || r.counterpart });
     if (a === "unread") { await sb.from("email_messages").update({ is_read: false }).eq("id", id); HOOK.refreshBadges(); return refresh(); }
     if (a === "arch") { await sb.from("email_messages").update({ archived: !r.archived }).eq("id", id); toast(r.archived ? "Inbox mein wapas" : "Archived"); return refresh(); }
     if (a === "del") {
@@ -654,6 +662,7 @@ function appsScript(token) {
 // 2) Sirf un addresses ke replies CRM ko bhejta hai jinko aapne CRM se email kiya hai.
 // 3) Nayi enquiry mails (IndiaMART / TradeIndia / JustDial alerts, "requirement / quotation" wale mails)
 //    CRM ko bhejta hai → CRM mein apne aap RFQ. Dekhi hui mails pe Gmail label "CRM-RFQ" lagta hai.
+// 4) In replies ki photos / screenshots / files bhi CRM ko bhejta hai (Inbox + support ticket).
 const CRM_URL = "${url}";
 const TOKEN = "${token}";   // personal — kisi ke saath share mat karo
 
@@ -668,18 +677,59 @@ function removeSetup() {                 // ▶ sync band karna ho to ye Run kar
   PropertiesService.getUserProperties().deleteAllProperties();
 }
 
-function call_(action, payload) {
-  var res = UrlFetchApp.fetch(CRM_URL + "?v=3&action=" + action, {
+function call_(action, payload, qs) {
+  var res = UrlFetchApp.fetch(CRM_URL + "?v=4&action=" + action + (qs || ""), {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
+  return answer_(res);
+}
+
+function answer_(res) {
   var code = res.getResponseCode();
   if (code === 401 || code === 403) {      // token band ho gaya (Disconnect / naya code) → ye script khud ruk jaata hai
     removeSetup();
     throw new Error("CRM ne is code ko band kar diya hai. Naya code CRM se copy karke yahan paste karo, phir setup Run karo.");
   }
-  if (code !== 200) throw new Error("CRM " + code + ": " + res.getContentText());
+  if (code !== 200) throw new Error("CRM " + code + ": " + res.getContentText().slice(0, 300));
   return JSON.parse(res.getContentText());
+}
+
+// replies ki photos + files → CRM (har file 20 MB tak; usse badi ka sirf naam, kholne ke liye Gmail)
+function sendFiles_(ids) {
+  var props = PropertiesService.getUserProperties();
+  var q = JSON.parse(props.getProperty("fileq") || "[]");
+  (ids || []).forEach(function (id) { if (!q.some(function (x) { return x.id === id; })) q.push({ id: id, n: 0 }); });
+  if (!q.length) return;
+  if (Date.now() - Number(props.getProperty("file_busy") || 0) < 5 * 60e3) { props.setProperty("fileq", JSON.stringify(q.slice(0, 300))); return; }
+  props.setProperty("file_busy", String(Date.now()));
+  var t0 = Date.now(), left = [];
+  try {
+    q.forEach(function (it) {
+      if (Date.now() - t0 > 150e3) { left.push(it); return; }       // baaki agli baar
+      try {
+        var m = GmailApp.getMessageById(it.id);
+        var all = m.getAttachments({ includeInlineImages: true, includeAttachments: false }).map(function (a) { return [a, 1]; })
+          .concat(m.getAttachments({ includeInlineImages: false, includeAttachments: true }).map(function (a) { return [a, 0]; }));
+        all.forEach(function (p) {
+          var a = p[0], size = a.getSize();
+          if (p[1] && size < 10240) return;                       // signature ke logo / icons
+          var qs = "&id=" + encodeURIComponent(it.id) + "&name=" + encodeURIComponent(a.getName() || "file")
+                 + "&mime=" + encodeURIComponent(a.getContentType() || "") + "&size=" + size + "&inline=" + p[1];
+          if (size > 20 * 1048576) { call_("file", {}, qs + "&big=1"); return; }
+          answer_(UrlFetchApp.fetch(CRM_URL + "?v=4&action=file" + qs, { method: "post", contentType: "application/octet-stream",
+            headers: { "x-mail-token": TOKEN }, payload: a.getBytes(), muteHttpExceptions: true }));
+        });
+        call_("file", {}, "&id=" + encodeURIComponent(it.id) + "&done=1");
+      } catch (e) {
+        console.log("files " + it.id + ": " + e);
+        if (String(e).indexOf("CRM 404") < 0 && ++it.n < 3) left.push(it);
+      }
+    });
+  } finally {
+    props.setProperty("fileq", JSON.stringify(left.slice(0, 300)));
+    props.deleteProperty("file_busy");
+  }
 }
 
 function doGet(e) {                     // CRM "Gmail mein kholo" dabate hi isse bulata hai → draft turant
@@ -747,6 +797,7 @@ function syncReplies() {
   if (!who.length) return;
   var props = PropertiesService.getUserProperties();
   var since = Number(props.getProperty("since") || (Date.now() - 3 * 864e5));
+  if (!props.getProperty("files_v4")) since = Math.min(since, Date.now() - 30 * 864e5);   // pehli baar: pichhle 30 din ki photos / files bhi
   var after = Math.floor((since - 2 * 3600e3) / 1000);
   var me = Session.getEffectiveUser().getEmail().toLowerCase();
   var out = [];
@@ -757,12 +808,19 @@ function syncReplies() {
         if (m.getDate().getTime() < since - 2 * 3600e3) return;
         if (m.getFrom().toLowerCase().indexOf(me) >= 0) return;
         out.push({ id: m.getId(), thread_id: th.getId(), from: m.getFrom(), to: m.getTo(), subject: m.getSubject(),
-                   date: m.getDate().toISOString(), body: m.getPlainBody().slice(0, 15000) });
+                   date: m.getDate().toISOString(), body: m.getPlainBody().slice(0, 15000),
+                   files: m.getAttachments({ includeInlineImages: true }).length });
       });
     });
   }
-  for (var j = 0; j < out.length; j += 100) call_("push", { provider: "gmail", messages: out.slice(j, j + 100) });
+  var want = [];
+  for (var j = 0; j < out.length; j += 100) {
+    var r = call_("push", { provider: "gmail", messages: out.slice(j, j + 100) });
+    want = want.concat((r && r.want) || []);
+  }
   props.setProperty("since", String(Date.now()));
+  props.setProperty("files_v4", "1");
+  sendFiles_(want);
 }
 `;
 }

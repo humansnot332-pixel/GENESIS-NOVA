@@ -10,6 +10,8 @@ import {
 } from "./core.js";
 import { openComposer, ensureWork } from "./comms.js";
 import { L, isEn } from "./i18n.js";
+import { filesHtml, wireFiles, loadFiles, uploadTicketFiles } from "./files.js";
+import { pushCard } from "./push.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -553,12 +555,13 @@ export async function viewSupport(el, soft, params) {
   const { data, error } = await q; if (error) throw error;
   const leads = await leadsById(data.map((t) => t.lead_id));
   const late = (t) => !["resolved", "closed"].includes(t.status) && t.due_at && new Date(t.due_at) < new Date();
-  el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Open", "Open")], ["mine", L("Mujhe assigned", "Assigned to me")], ["done", L("Resolved", "Resolved")], ["all", L("Sab", "All")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-tf="${k}">${h(l)}</button>`).join("")}</div>
+  el.innerHTML = `<div id="pushBox"></div><div class="toolbar"><div class="chips">${[["open", L("Open", "Open")], ["mine", L("Mujhe assigned", "Assigned to me")], ["done", L("Resolved", "Resolved")], ["all", L("Sab", "All")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-tf="${k}">${h(l)}</button>`).join("")}</div>
     <span class="mu">${data.filter(late).length ? `⏰ ${data.filter(late).length} ${L("SLA se late", "past SLA")}` : ""}</span><span class="sp" style="flex:1"></span><button class="btn primary" id="tadd">${ic("plus")} Ticket</button></div>
   <div class="card"><div class="tbl-wrap">${!data.length ? empty("Koi ticket nahi 🎉", "No tickets 🎉") : `<table class="tbl"><thead><tr><th>#</th><th>${L("Problem", "Issue")}</th><th>${L("Company", "Company")}</th><th>Priority</th><th>Status</th><th>${L("Assigned", "Assigned")}</th><th>SLA</th></tr></thead><tbody>
   ${data.map((t) => `<tr data-tid="${t.id}"><td class="mono">${h(t.ticket_no)}</td><td><div class="co">${h(t.title)}</div><div class="sub">${h(TCAT.find((c) => c[0] === t.category)?.[1] || t.category)} · ${h(ago(t.created_at))}</div></td><td>${h(leads.get(t.lead_id)?.company || "—")}</td><td>${h(TPRI.find((p) => p[0] === t.priority)?.[1] || t.priority)}</td><td>${tBadge(t.status)}</td><td>${h(t.assignee_id ? userName(t.assignee_id) : "—")}</td><td class="sub" ${late(t) ? 'style="color:var(--bad)"' : ""}>${t.resolved_at ? "✔ " + h(ago(t.resolved_at)) : late(t) ? "⏰ " + h(ago(t.due_at)) : h(dt(t.due_at))}</td></tr>`).join("")}</tbody></table>`}</div></div>
   <p class="mu" style="font-size:12.5px">⏱ SLA: Urgent 4 ${L("ghante", "hours")} · High 1 ${L("din", "day")} · Normal 3 ${L("din", "days")} · Low 7 ${L("din", "days")}. ${h(L("Assign karte hi us engineer ko notification jata hai.", "The assignee gets a notification immediately."))}</p>`;
   $$("[data-tf]", el).forEach((b) => b.onclick = () => { el.dataset.tf = b.dataset.tf; viewSupport(el); });
+  pushCard($("#pushBox", el)).catch(() => {});
   $("#tadd", el).onclick = () => ticketForm({}, () => viewSupport(el));
   $$("[data-tid]", el).forEach((r) => r.onclick = () => ticketView(+r.dataset.tid, () => viewSupport(el)));
   if (params?.id && !soft) ticketView(+params.id, () => viewSupport(el));
@@ -567,7 +570,8 @@ export async function ticketForm(t, done) {
   const lead = t.lead_id ? (await leadsById([t.lead_id])).get(t.lead_id) : null;
   const m = modal({
     title: t.id ? `🛠 ${t.ticket_no}` : L("Naya support ticket", "New support ticket"), wide: true,
-    body: `<label class="f">${L("Problem (short)", "Issue (short)")} *</label><input class="input" name="title" value="${h(t.title || "")}" maxlength="200" placeholder="${h(L("Printer print nahi kar raha, laptop slow…", "Printer not printing, laptop slow…"))}">
+    body: `${t.email_id && !t.id ? `<div class="banner" style="margin:0 0 10px">📧 <div>${L("Mail se ticket", "Ticket from a mail")}${t._from ? ` · <b>${h(t._from)}</b>` : ""}${t._files ? ` · 📎 ${t._files} ${L("photo / file engineer ko ticket mein dikhengi", "picture(s) / file(s) go with the ticket to the engineer")}` : ""}</div></div>` : ""}
+      <label class="f">${L("Problem (short)", "Issue (short)")} *</label><input class="input" name="title" value="${h(t.title || "")}" maxlength="200" placeholder="${h(L("Printer print nahi kar raha, laptop slow…", "Printer not printing, laptop slow…"))}">
       <label class="f">${L("Company", "Company")}</label>${leadPickerHtml("tLead", lead)}
       <div class="grid3 sec"><div><label class="f">Category</label><select class="input" name="category">${opt(TCAT, t.category || "hardware")}</select></div>
       <div><label class="f">Priority</label><select class="input" name="priority">${opt(TPRI, t.priority || "normal")}</select></div>
@@ -579,13 +583,14 @@ export async function ticketForm(t, done) {
   $("#tsave", m).onclick = (e) => busy(e.target, async () => {
     const f = formData(m); if (!f.title) return toast(L("Problem likho", "Describe the issue"), true);
     const row = { title: f.title, lead_id: pick(), category: f.category, priority: f.priority, assignee_id: f.assignee_id, description: f.description };
+    if (t.email_id && !t.id) row.email_id = t.email_id;
     const res = t.id ? await sb.from("tickets").update(row).eq("id", t.id).select("*").single() : await sb.from("tickets").insert(row).select("*").single();
     if (res.error) throw res.error;
-    toast(`🛠 ${res.data.ticket_no} saved ✔`); closeModal(); done?.();
+    toast(`🛠 ${res.data.ticket_no} saved ✔${row.assignee_id && row.assignee_id !== S.me.id ? " · " + L("engineer ko notification gaya", "the engineer is notified") : ""}`); closeModal(); done?.(res.data);
   });
 }
-async function ticketView(id, done) {
-  const [{ data: t, error }, { data: cm }] = await Promise.all([sb.from("tickets").select("*").eq("id", id).single(), sb.from("ticket_comments").select("*").eq("ticket_id", id).order("created_at")]);
+export async function ticketView(id, done) {
+  const [{ data: t, error }, { data: cm }, files] = await Promise.all([sb.from("tickets").select("*").eq("id", id).single(), sb.from("ticket_comments").select("*").eq("ticket_id", id).order("created_at"), loadFiles("ticket_id", id)]);
   if (error) return fail(error);
   const lead = t.lead_id ? (await leadsById([t.lead_id])).get(t.lead_id) : null;
   const can = isMgr() || t.assignee_id === S.me.id || t.created_by === S.me.id;
@@ -593,11 +598,23 @@ async function ticketView(id, done) {
     title: `🛠 ${t.ticket_no} — ${t.title}`, wide: true,
     body: `<div class="row">${tBadge(t.status)}<span class="badge">${h(TPRI.find((p) => p[0] === t.priority)?.[1])}</span><span class="badge">${h(TCAT.find((c) => c[0] === t.category)?.[1])}</span>
         ${lead ? `<a href="#/leads/${lead.id}" class="mu">${h(lead.company)}</a>` : ""}<span class="mu right">${L("Banaya", "Opened by")} ${h(userName(t.created_by))} · ${h(ago(t.created_at))}</span></div>
+      ${t.email_id && (isMgr() || t.created_by === S.me.id) ? `<a class="mu" href="#/inbox/${t.email_id}" style="font-size:12.5px">📧 ${L("Is mail se bana — mail kholo", "Made from a mail — open it")}</a>` : ""}
       ${t.description ? `<p style="white-space:pre-wrap">${h(t.description)}</p>` : ""}
+      <div id="tkFiles"></div>
+      <div class="row" style="margin:6px 0 4px"><label class="btn sm" for="tkUp">📎 ${L("Photo / file lagao", "Add photo / file")}</label>
+        <input type="file" id="tkUp" multiple hidden accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.ppt,.pptx,.dwg,.dxf"><span class="mu" id="tkUpMsg" style="font-size:12px"></span></div>
       ${can ? `<div class="grid2 sec"><div><label class="f">Status</label><select class="input" id="tkS">${opt(TST, t.status)}</select></div><div><label class="f">${L("Assigned", "Assigned")}</label><select class="input" id="tkA"><option value="">—</option>${opt(S.team.filter((u) => u.active).map((u) => [u.id, u.full_name]), t.assignee_id)}</select></div></div>` : ""}
       <div class="sec-t">${L("Updates", "Updates")}</div><ul class="timeline">${(cm || []).map((c) => `<li><span class="ic">💬</span><div><div style="white-space:pre-wrap">${h(c.body)}</div><div class="t">${h(userName(c.user_id))} · ${h(dt(c.created_at))}</div></div></li>`).join("") || `<li><span></span><span class="mu">${L("Abhi koi update nahi", "No updates yet")}</span></li>`}</ul>
       <textarea class="input" id="tkC" maxlength="4000" placeholder="${h(L("Update likho — kya kiya, kya baaki…", "Write an update — what was done, what's pending…"))}"></textarea>`,
     foot: `${can ? `<button class="btn" id="tkE">Edit</button>` : ""}${isAdmin() ? `<button class="btn danger" id="tkD">${ic("trash")}</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>${L("Band karo", "Close")}</button><button class="btn primary" id="tkSave">${L("Save update", "Save update")}</button>`,
+  });
+  const showFiles = (rows) => { const box = $("#tkFiles", m); if (!box) return; box.innerHTML = filesHtml(rows, rows.length ? `📎 ${rows.length} ${L("photo / file", rows.length > 1 ? "files" : "file")}` : ""); wireFiles(box, rows); };
+  showFiles(files);
+  $("#tkUp", m).addEventListener("change", async (e) => {
+    const list = e.target.files; if (!list?.length) return;
+    const msg = $("#tkUpMsg", m); msg.textContent = L("⏳ Upload ho raha hai…", "⏳ Uploading…");
+    try { const n = await uploadTicketFiles(id, list); if (n) toast(`📎 ${n} ${L("file lag gayi ✔", n > 1 ? "files added ✔" : "file added ✔")}`); showFiles(await loadFiles("ticket_id", id)); }
+    finally { msg.textContent = ""; e.target.value = ""; }
   });
   $("#tkE", m)?.addEventListener("click", () => ticketForm(t, done));
   $("#tkD", m)?.addEventListener("click", async () => { if (!(await confirmBox(L("Ticket delete karna hai?", "Delete this ticket?"), "Delete"))) return; await sb.from("tickets").delete().eq("id", id); closeModal(); done?.(); });

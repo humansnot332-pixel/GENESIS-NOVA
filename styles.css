@@ -764,3 +764,31 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .au-opt label .input { width: 110px; height: 32px; }
 .au-log td { font-size: 12.5px; }
 @media (max-width: 760px) { .au-row { grid-template-columns: 1fr; } .au-opt { grid-column: 1; } }
+
+/* ---------- files: mail attachments + ticket photos ---------- */
+.files { margin: 10px 0; }
+.files-t { font-size: 12.5px; color: var(--mu); margin-bottom: 6px; font-weight: 600; }
+.fpics { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.fpic { width: 96px; height: 96px; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface-2); cursor: zoom-in; }
+.fpic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fdocs { display: flex; flex-wrap: wrap; gap: 6px; }
+.fdoc { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--tx); font: inherit; font-size: 12.5px; cursor: pointer; }
+.fdoc .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.fdoc small { color: var(--mu); white-space: nowrap; }
+.fdoc.off { cursor: default; opacity: .75; }
+.fdoc:not(.off):hover { border-color: var(--accent); }
+.lbox { position: fixed; inset: 0; z-index: 200; background: rgba(5,8,12,.94); display: flex; align-items: center; justify-content: center; outline: none; }
+.lbox img { max-width: 96vw; max-height: calc(100vh - 72px); object-fit: contain; }
+.lbox-bar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: #e9eef7;
+  background: rgba(0,0,0,.6); font-size: 13px; }
+.lbox-bar .fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.lbox-bar button, .lbox-bar a { color: #fff; background: rgba(255,255,255,.14); border: 0; border-radius: 8px; min-width: 38px; height: 36px; font-size: 18px;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+@media (max-width: 600px) { .fpic { width: 84px; height: 84px; } .fdoc .fn { max-width: 170px; } }
+
+/* ---------- phone notifications card ---------- */
+.pushcard .row { gap: 8px; }
+.pushcard ol { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; font-size: 13px; }
+.pushcard .devs { font-size: 12.5px; color: var(--mu); margin-top: 6px; }
+#ibFiles .files { margin: 0; padding: 0 18px 12px; }

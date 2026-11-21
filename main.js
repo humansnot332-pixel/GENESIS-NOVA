@@ -15,7 +15,7 @@ import {
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
   viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct, prodLabel,
-  marginHtml, shareQuote, quoteTrackHtml, orderFromQuote,
+  marginHtml, shareQuote, quoteTrackHtml, orderFromQuote, ticketForm, ticketView,
 } from "./biz.js";
 import { CONFIG } from "./config.js";
 import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
@@ -23,6 +23,7 @@ import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
+import { pushCard, pushResync } from "./push.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 // ---------- brand ----------
@@ -45,6 +46,8 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
     if (!busyNow()) location.reload();
     else addEventListener("hashchange", () => location.reload(), { once: true });
   });
+  // a phone notification was tapped while the app is open → go to that ticket
+  navigator.serviceWorker.addEventListener("message", (e) => { const hsh = e.data?.type === "open" && String(e.data.hash || ""); if (hsh && /^#\/[a-z]/.test(hsh)) location.hash = hsh; });
 }
 addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; const b = document.getElementById("installBtn"); if (b) b.hidden = false; });
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -216,11 +219,14 @@ async function start() {
   timers.push(setInterval(() => !document.hidden && reloadMe(), 120e3));      // safety net if the live signal was missed
   subscribeRealtime();
   startOutlookAutoSync();
+  pushResync();            // this phone's notifications follow whoever is logged in now
 }
 HOOK.openLead = (id, o) => openLead(id, o);
 HOOK.softRefresh = () => softRefresh();
 HOOK.refreshBadges = () => refreshBadges();
 HOOK.openRfq = (r) => rfqForm(r);
+// Inbox → "Make ticket": the new ticket opens right away (with the mail's pictures / files)
+HOOK.openTicket = (t) => ticketForm(t, (row) => row?.id && ticketView(row.id));
 HOOK.go = (link) => { if (location.hash === link) route(); else location.hash = link; };
 
 sb.auth.onAuthStateChange((ev, session) => {
@@ -651,6 +657,8 @@ async function historyPanel(scope) {
   }));
 }
 ACT.install = async (t) => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; t.hidden = true; };
+HOOK.canInstall = () => !!installEvt;
+HOOK.install = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; const b = document.getElementById("installBtn"); if (b) b.hidden = true; };
 ACT.lang = (t) => {
   const v = t.dataset.v; if (v === getLang()) return;
   setLang(v);
@@ -2668,11 +2676,13 @@ ACT.profile = () => {
       <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
       <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="en" ${isEn() ? "selected" : ""}>English</option><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option></select></div>
       <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
+      <div id="pPush" style="margin-top:14px"></div>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">
       <input class="input" id="pp2" type="password" placeholder="Confirm" autocomplete="new-password">`,
     foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="ps">Save</button>`,
   });
+  pushCard($("#pPush", m)).catch(() => {});
   $("#ps", m).onclick = (e) => busy(e.target, async () => {
     const n = $("#pn", m).value.trim(), p1 = $("#pp1", m).value, p2 = $("#pp2", m).value;
     const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value, lang: $("#plang", m).value };
