@@ -22,6 +22,7 @@ import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
+import { viewPurchase, openPo } from "./vpo.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 // ---------- brand ----------
@@ -253,6 +254,7 @@ const NAV = [
   ["quotes", "Quotations", "file"],
   ["obf", "OBF (order booking)", "check", () => canSee("quotes")],   // follows quotation access
   ["orders", "Orders & payments", "rupee"],
+  ["purchase", "Vendor POs", "tag", () => canSee("orders") || isMgr()],
   ["renewals", "Renewals / AMC", "refresh"],
   ["support", "Support tickets", "tool"],
   ["products", "Products & prices", "tag"],
@@ -426,6 +428,7 @@ function route() {
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
     if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
     if (S.params.id && S.route === "obf") openObf(+S.params.id);
+    if (S.params.id && S.route === "purchase") openPo(+S.params.id);
   }).catch((e) => { page.classList.remove("stale"); if (cached && page.isConnected) page.innerHTML = `<div class="empty">—</div>`; fail(e); });
 }
 addEventListener("hashchange", route);
@@ -678,6 +681,7 @@ VIEWS.products = (el) => viewProducts(el);
 VIEWS.renewals = (el) => viewRenewals(el);
 VIEWS.orders = (el) => viewOrders(el);
 VIEWS.obf = (el) => viewObf(el);
+VIEWS.purchase = (el) => viewPurchase(el);
 VIEWS.support = (el, soft, params) => viewSupport(el, soft, params);
 VIEWS.daily = (el) => viewDaily(el);
 VIEWS.duplicates = (el) => viewDuplicates(el);
@@ -2459,6 +2463,68 @@ VIEWS.company = async (el) => {
 };
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// ---- the four automations (migration 054): settings, Gmail readiness, and the log of what they did
+const AU = [
+  ["pay", "💰", () => L("Payment reminders", "Payment reminders"), () => L("Invoice due hone se pehle aur late hone par customer ko mail; 7 din late pe salesperson ko call ka task.", "A mail to the customer before the due date and when it's late; a call task for the salesperson at 7 days late.")],
+  ["renew", "🔁", () => L("Renewal quotation", "Renewal quotations"), () => L("AMC / licence khatam hone se pehle renewal quotation ban ke online link ke saath customer ko jaati hai.", "Before an AMC / licence ends, a renewal quotation is made and mailed with the online link.")],
+  ["followup", "📞", () => L("Quotation follow-up", "Quotation follow-ups"), () => L("Quotation bhejne ke baad follow-up mail; aakhri pe call task. Customer reply / accept kare toh ruk jaata hai.", "Follow-up mails after a quotation goes out; a call task at the end. Stops when the customer replies or accepts.")],
+  ["vpo", "📦", () => L("Vendor PO", "Vendor POs"), () => L("OBF approve hote hi har vendor ka PO ban ke vendor ko mail; maal late ho toh yaad.", "When an OBF is approved each vendor gets a PO by mail; a reminder if the goods are late.")],
+  ["digest", "📊", () => L("Director ki subah ki list", "Director's morning list"), () => L("Baaki paise, overdue invoices, OBF approval, expire hone wali quotations, late PO.", "Dues, overdue invoices, OBFs waiting, quotations expiring, late POs.")],
+];
+const AU_ACT = { email: ["📧", L("Mail gaya", "Mailed")], notify: ["🔔", L("Yaad dilaya", "Reminded")], made: ["📝", L("Bana", "Made")], skip: ["⏭", L("Roka", "Skipped")] };
+async function autoCard(root) {
+  const box = $("#auBody", root); if (!box) return;
+  const [{ data: st }, { data: log }, { data: gm }] = await Promise.all([
+    sb.from("settings").select("value").eq("key", "automation").limit(1),
+    sb.from("automation_log").select("*").order("created_at", { ascending: false }).limit(40),
+    sb.rpc("auto_gmail_status"),
+  ]);
+  const cfg = st?.[0]?.value || {}, ro = !isAdmin(), dis = ro ? " disabled" : "";
+  const ready = (gm || []).filter((x) => x.can_send).length, total = (gm || []).length;
+  const notReady = (gm || []).filter((x) => !x.can_send).map((x) => userName(x.user_id)).join(", ");
+  const list = (a) => (Array.isArray(a) ? a : []).join(", ");
+  const extra = (k) => {
+    const c = cfg[k] || {};
+    if (k === "pay") return `<label>${L("Due se pehle", "Days before due")} <input class="input" type="number" min="0" max="30" data-au="pay.before" value="${h(c.before ?? 3)}"${dis}></label><label>${L("Late hone par (din)", "Days late")} <input class="input" data-au="pay.after" value="${h(list(c.after) || "1, 7, 15, 30")}"${dis}></label>`;
+    if (k === "renew") return `<label>${L("Kitne din pehle", "Days before the end")} <input class="input" type="number" min="7" max="120" data-au="renew.days" value="${h(c.days ?? 30)}"${dis}></label>`;
+    if (k === "followup") return `<label>${L("Bhejne ke kitne din baad", "Days after sending")} <input class="input" data-au="followup.days" value="${h(list(c.days) || "2, 5")}"${dis}></label>`;
+    return "";
+  };
+  box.innerHTML = `<p class="mu" style="margin:0 0 12px;font-size:12.5px">${L("Roz subah ~10 baje (Mon–Sat) CRM khud chalata hai. Mail salesperson ke <b>apne Gmail</b> se jaata hai (banner + open tracking ke saath); jiska Gmail CRM se connect nahi, usko notification + task milta hai. Har reminder ek hi baar jaata hai.", "The CRM runs this every morning ~10 am (Mon–Sat). Mails go from the salesperson's <b>own Gmail</b> (banner + open tracking); anyone without a connected Gmail gets a notification + task instead. Every reminder goes only once.")}
+      <br>📧 ${L("Auto-mail ke liye Gmail ready", "Gmail ready for auto-mail")}: <b>${ready} / ${total}</b>${notReady ? ` <span title="${h(notReady)}">· ${L("baaki", "not yet")}: ${h(notReady.length > 80 ? notReady.slice(0, 80) + "…" : notReady)} (Inbox → Gmail setup)</span>` : ""}</p>
+    <div class="au-list">${AU.map(([k, icn, name, desc]) => { const c = cfg[k] || {}; return `<div class="au-row">
+      <label class="au-on"><input type="checkbox" data-au="${k}.on"${c.on === false ? "" : " checked"}${dis}> <b>${icn} ${h(name())}</b></label>
+      <div class="au-desc mu">${h(desc())}</div>
+      <div class="au-opt">${["pay", "renew", "followup", "vpo"].includes(k) ? `<select class="input" data-au="${k}.mode"${dis}><option value="auto"${c.mode !== "review" ? " selected" : ""}>${L("Mail apne aap", "Mail automatically")}</option><option value="review"${c.mode === "review" ? " selected" : ""}>${L("Sirf salesperson ko yaad", "Only remind the salesperson")}</option></select>` : ""}${extra(k)}</div></div>`; }).join("")}</div>
+    ${ro ? "" : `<button class="btn primary sm" id="auSave" style="margin-top:10px">${L("Save", "Save")}</button>`}
+    <h4 style="margin:18px 0 6px">${L("Automation ne kya kiya", "What the automations did")}</h4>
+    ${(log || []).length ? `<div class="tbl-wrap"><table class="tbl au-log"><tbody>${log.map((r) => `<tr style="cursor:default"><td class="sub" style="width:90px">${h(ago(r.created_at))}</td><td style="width:28px">${(AU.find((a) => a[0] === r.kind) || [])[1] || "⚡"}</td>
+      <td>${h(r.detail || "")}</td><td style="width:120px"><span class="badge ${r.action === "email" ? "good" : r.action === "skip" ? "" : "info"}">${(AU_ACT[r.action] || [])[0] || ""} ${h((AU_ACT[r.action] || [])[1] || r.action)}</span></td><td class="sub" style="width:120px">${h(r.user_id ? userName(r.user_id) : "")}</td></tr>`).join("")}</tbody></table></div>`
+      : `<p class="mu" style="font-size:12.5px">${L("Abhi tak kuch nahi — kal subah se yahan dikhega.", "Nothing yet — it shows up here from tomorrow morning.")}</p>`}`;
+  $("#auSave", box)?.addEventListener("click", (e) => busy(e.target, async () => {
+    const v = structuredClone(cfg);
+    $$("[data-au]", box).forEach((i) => {
+      const [k, f] = i.dataset.au.split("."); v[k] ||= {};
+      if (f === "on") v[k].on = i.checked;
+      else if (f === "after" || f === "days" && k === "followup") v[k][f] = [...new Set(i.value.split(/[^0-9]+/).map(Number).filter((n) => n > 0 && n <= 120))].sort((a, b) => a - b);
+      else if (i.type === "number") v[k][f] = Math.max(0, +i.value || 0);
+      else v[k][f] = i.value;
+    });
+    if (!(v.pay?.after || []).length) v.pay.after = [1, 7, 15, 30];
+    if (!(v.followup?.days || []).length) v.followup.days = [2, 5];
+    const { error } = await sb.from("settings").upsert({ key: "automation", value: v, updated_by: S.me.id, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    toast(L("✔ Automation settings save", "✔ Automation settings saved")); autoCard(root);
+  }));
+  const run = $("#auRun", root);
+  if (run && !run.dataset.wired) {
+    run.dataset.wired = "1";
+    run.addEventListener("click", (e) => busy(e.target, async () => {
+      const { data: r, error } = await sb.rpc("auto_run_now"); if (error) throw error;
+      toast(`⚡ ${L("Ho gaya", "Done")}: 💰 ${r.pay} · 🔁 ${r.renew} · 📞 ${r.followup} · 📦 ${r.po_late} · 📊 ${r.digest}`); autoCard(root);
+    }));
+  }
+}
 VIEWS.automation = async (el) => {
   const [{ data: s }, { data: runs }, { data: lq }] = await Promise.all([
     sb.from("settings").select("value").eq("key", "ingest").single(),
@@ -2473,6 +2539,7 @@ VIEWS.automation = async (el) => {
     <div class="card kpi"><div class="l">Next auto-run</div><div class="v" style="font-size:20px">${nextRun && c.enabled ? h(nextRun.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })) : "—"}</div></div>
     <div class="card kpi"><div class="l">Last run</div><div class="v" style="font-size:20px">${runs?.[0] ? h(ago(runs[0].started_at)) : "—"}</div><div class="s">${runs?.[0] ? `+${runs[0].leads_added} leads · +${runs[0].rfqs_added} RFQs` : ""}</div></div>
   </div>
+  <div class="card sec" id="autoCard"><div class="card-h"><h3>⚡ ${L("Auto follow-up & reminders", "Auto follow-ups & reminders")}</h3><span class="sp"></span>${isAdmin() ? `<button class="btn sm" id="auRun">▶ ${L("Abhi chalao", "Run now")}</button>` : ""}</div><div class="card-b" id="auBody"><div class="mu">…</div></div></div>
   <div class="card sec" id="rfqSrc"><div class="card-h"><h3>📨 ${L("RFQ apne aap — 4 raaste", "RFQs automatically — 4 ways")}</h3></div><div class="card-b"><div class="grid2">
     <div><b>1. IndiaMART</b> <span id="imState" class="mu">…</span>
       ${isAdmin() ? `<div class="row" style="gap:8px;margin-top:8px;flex-wrap:nowrap"><input class="input" id="imKey" type="password" autocomplete="off" placeholder="${L("IndiaMART CRM key yahan paste karo", "Paste the IndiaMART CRM key")}" style="flex:1;min-width:0"><button class="btn sm primary" id="imSave">Save</button></div>` : ""}
@@ -2511,6 +2578,8 @@ VIEWS.automation = async (el) => {
     </div>
   </div>`;
   $$(".chip input", el).forEach((x) => x.onchange = () => x.parentElement.classList.toggle("on", x.checked));
+  // ---- automations card
+  autoCard(el);
   // ---- RFQ sources card
   wireEnquiryShare(el);
   const imShow = async () => {

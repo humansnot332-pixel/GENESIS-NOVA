@@ -970,7 +970,7 @@ export async function unreadCounts() {
   return { notif: n.count || 0, replies: r.count || 0 };
 }
 // ---- notifications: grouped by day, like a phone (Aaj / Kal / Monday / 12 Nov) ----
-const N_ICON = { assign: "👤", digest: "📊", lock: "🔒", lock_request: "🙋", payment: "💰", quote_reply: "💬", quote_view: "👀", obf: "📋", quote_expiry: "⏳",
+const N_ICON = { assign: "👤", digest: "📊", lock: "🔒", lock_request: "🙋", payment: "💰", quote_reply: "💬", quote_view: "👀", obf: "📋", quote_expiry: "⏳", vpo: "📦",
   renewal: "🔁", reply: "✉️", mail_open: "👁", enquiry_mail: "📧", rfq: "📥", ticket: "🎫", mail_stale: "📭", access: "🔑", lock_warn: "⏳", rfq_stuck: "🚨" };
 function nDay(t) {
   const d = new Date(t), today = new Date(); today.setHours(0, 0, 0, 0);

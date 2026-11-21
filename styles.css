@@ -750,3 +750,17 @@ details.stg > summary::-webkit-details-marker { display: none; }
 @media (max-width: 760px) { .obl { grid-template-columns: 1fr; gap: 6px; } .obl-n { padding: 0; } }
 .qth { flex-wrap: wrap; row-gap: 4px; }
 .qth .qtauto { white-space: normal; text-align: left; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
+
+/* ---------- automations card ---------- */
+.au-list { display: flex; flex-direction: column; gap: 8px; }
+.au-row { display: grid; grid-template-columns: 230px 1fr; gap: 4px 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); }
+.au-on { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.au-on input { accent-color: var(--accent); width: 16px; height: 16px; }
+.au-desc { font-size: 12.5px; align-self: center; }
+.au-opt { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.au-opt:empty { display: none; }
+.au-opt select.input { width: auto; min-width: 200px; height: 32px; }
+.au-opt label { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--tx-2); }
+.au-opt label .input { width: 110px; height: 32px; }
+.au-log td { font-size: 12.5px; }
+@media (max-width: 760px) { .au-row { grid-template-columns: 1fr; } .au-opt { grid-column: 1; } }
