@@ -258,9 +258,9 @@ const NAV = [
   ["inbox", "Inbox (replies)", "mail"],
   ["tasks", "Follow-ups & tasks", "check"],
   ["quotes", "Quotations", "file"],
-  ["obf", "OBF (order booking)", "check", () => canSee("quotes")],   // follows quotation access
+  ["obf", "OBF (order booking)", "check"],
   ["orders", "Orders & payments", "rupee"],
-  ["purchase", "Vendor POs", "tag", () => canSee("orders") || isMgr()],
+  ["purchase", "Vendor POs", "tag"],
   ["renewals", "Renewals / AMC", "refresh"],
   ["support", "Support tickets", "tool"],
   ["products", "Products & prices", "tag"],
@@ -284,9 +284,9 @@ const TITLES = Object.fromEntries(NAV.filter((n) => n.length >= 3 && typeof n[1]
 const PAGEABLE = NAV.filter((n) => n.length >= 3 && typeof n[1] === "string" && !n[3]).map((n) => n[0]);
 // default when an Admin hasn't picked pages for someone (profiles.pages is null)
 const ROLE_PAGES = {
-  telecaller: ["dashboard", "today", "leads", "tasks", "quotes", "templates", "requests", "inbox"],
-  presales: ["dashboard", "today", "leads", "rfqs", "inbox", "tasks", "quotes", "support", "products", "templates", "requests"],
-  sales: ["dashboard", "today", "leads", "pipeline", "rfqs", "inbox", "tasks", "quotes", "orders", "renewals", "support", "products", "templates", "requests", "reports"],
+  telecaller: ["dashboard", "today", "leads", "tasks", "quotes", "obf", "templates", "requests", "inbox"],
+  presales: ["dashboard", "today", "leads", "rfqs", "inbox", "tasks", "quotes", "obf", "support", "products", "templates", "requests"],
+  sales: ["dashboard", "today", "leads", "pipeline", "rfqs", "inbox", "tasks", "quotes", "obf", "orders", "purchase", "renewals", "support", "products", "templates", "requests", "reports"],
 };
 const rolePages = (role) => (["admin", "manager"].includes(role) ? PAGEABLE : ROLE_PAGES[role] || PAGEABLE);
 function canSee(r) {
@@ -2099,13 +2099,19 @@ VIEWS.reports = async (el) => {
 // ---------------------------------------------------------------------
 VIEWS.team = async (el) => {
   await loadTeam();
-  const { data: loads } = await sb.from("leads").select("owner_id").in("status", OPEN_STATUSES).not("owner_id", "is", null).limit(20000);
+  const [{ data: loads }, { data: subs }, { data: ob }] = await Promise.all([
+    sb.from("leads").select("owner_id").in("status", OPEN_STATUSES).not("owner_id", "is", null).limit(20000),
+    sb.from("push_subs").select("user_id"),
+    sb.from("settings").select("value").eq("key", "obf").maybeSingle(),
+  ]);
+  if (ob?.value) S.settings.obf = ob.value;
   const cnt = {}; (loads || []).forEach((l) => { cnt[l.owner_id] = (cnt[l.owner_id] || 0) + 1; });
+  const phones = {}; (subs || []).forEach((x) => { phones[x.user_id] = (phones[x.user_id] || 0) + 1; });
   el.innerHTML = `<div class="toolbar"><span class="mu">${S.team.filter((u) => u.active).length} active users · ${S.team.filter(online).length} online</span><span class="sp" style="flex:1"></span>
     <button class="btn" data-act="distribute">⚡ Pool auto-distribute</button><button class="btn primary" data-act="addUser">${ic("plus")} User</button></div>
   <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th>Role</th><th>${L("Pages", "Pages")}</th><th>Categories</th><th class="num">Target</th><th class="num">Open leads</th><th>Last seen</th><th>Status</th><th></th></tr></thead><tbody>
   ${S.team.map((u) => `<tr style="cursor:default"><td><div class="row" style="flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><div><div class="co">${h(u.full_name)}</div><div class="sub">${h(u.email)}</div></div></div></td>
-    <td>${h(ROLE[u.role])}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
+    <td>${h(ROLE[u.role])}${u.role !== "admin" && isApprover(u.id) ? ` <span class="badge info" title="${h(L("OBF approve kar sakta hai", "Can approve OBFs"))}">✅ Director</span>` : ""}${phones[u.id] ? ` <span title="${h(L("Phone notification ON", "Phone notifications on") + " · " + phones[u.id])}">📲</span>` : ""}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
     <td class="sub">${h(ago(u.last_seen))}</td><td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge bad">Disabled</span>'}</td>
     <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm" data-act="pwUser" data-id="${u.id}">Password</button> <button class="btn sm" data-act="handover" data-id="${u.id}" title="${h(L("Iske saare leads / RFQs / tasks kisi aur ko do", "Move all their leads / RFQs / tasks to someone else"))}">🔁 Handover</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>
@@ -2129,6 +2135,30 @@ function wirePageAccess(m) {
   $$("[data-pa]", m).forEach((b) => b.onclick = () => set(b.dataset.pa === "def" ? rolePages(role()) : b.dataset.pa === "calling" ? ["today", "leads", "tasks"] : b.dataset.pa === "all" ? PAGEABLE : []));
   $("[name=role]", m)?.addEventListener("change", () => { const a = role() === "admin"; $("#paBox", m).hidden = a; $("#paAdmin", m).hidden = !a; set(rolePages(role())); });
 }
+// OBF approvers (the Director): Admins always; others listed in settings obf.approvers
+const isApprover = (id) => S.teamById?.get(id)?.role === "admin" || (S.settings.obf?.approvers || []).includes(id);
+const approverHtml = (role, on) => `<div class="sec-t" style="margin-top:16px">${L("Khaas permission", "Special permission")}</div>
+  <label class="chip ${on || role === "admin" ? "on" : ""}" id="apChip"><input type="checkbox" class="sr" id="uApprover" ${on || role === "admin" ? "checked" : ""} ${role === "admin" ? "disabled" : ""}>✅ ${L("OBF approve kar sakta hai (Director)", "Can approve OBFs (Director)")}</label>
+  <div class="mu" style="font-size:12px;margin-top:4px">${L("Customer ke order (OBF) ki approval request + roz subah ki hisaab list isko jaati hai. Admin hamesha approve kar sakta hai.", "Gets the OBF approval requests and the morning money list. Admins can always approve.")}</div>`;
+function wireApprover(m) {
+  const box = $("#uApprover", m), chip = $("#apChip", m); if (!box) return;
+  box.onchange = () => {
+    chip.classList.toggle("on", box.checked);
+    const pg = $('[name=pages][value="obf"]', m);      // a Director must be able to open the OBF page
+    if (box.checked && pg && !pg.checked) { pg.checked = true; pg.parentElement.classList.add("on"); }
+  };
+  $("[name=role]", m)?.addEventListener("change", (e) => { const a = e.target.value === "admin"; box.disabled = a; if (a) box.checked = true; chip.classList.toggle("on", box.checked); });
+}
+async function saveApprover(uid, on) {
+  const { data } = await sb.from("settings").select("value").eq("key", "obf").maybeSingle();
+  const v = data?.value || {}, now = new Set(v.approvers || []);
+  if (now.has(uid) === !!on) return;
+  if (on) now.add(uid); else now.delete(uid);
+  const nv = { ...v, approvers: [...now] };
+  const { error } = await sb.from("settings").upsert({ key: "obf", value: nv, updated_by: S.me.id, updated_at: new Date().toISOString() });
+  if (error) throw error;
+  S.settings.obf = nv;
+}
 // what to store: null when it equals the role default (so later default changes still apply)
 function pagesToSave(m, role) {
   if (role === "admin") return null;
@@ -2147,13 +2177,14 @@ ACT.addUser = () => {
       <div><label class="f">Daily call target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="40"></div></div>
       <label class="f">Categories</label>${catChecks()}
       ${pageAccessHtml("telecaller", null)}
+      ${approverHtml("telecaller", false)}
       <label class="f">Temporary password</label><div class="row" style="flex-wrap:nowrap"><input class="input mono" name="password" value="${h(pw)}" minlength="10"><button type="button" class="btn icon" id="cpw" aria-label="Copy">${ic("copy")}</button></div>
       <div class="mu" style="font-size:12px;margin-top:4px">User ko ye password do; wo login ke baad Profile se badal sakta hai.</div></form>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="us">Create user</button>`,
   });
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
   $("#cpw", m).onclick = () => { navigator.clipboard?.writeText($("[name=password]", m).value); toast("Copied"); };
-  wirePageAccess(m);
+  wirePageAccess(m); wireApprover(m);
   $("#us", m).onclick = (e) => busy(e.target, async () => {
     const f = formData($("#uf", m)); f.categories ||= [];
     if (!f.full_name || !f.email) return toast("Naam aur email daalo", true);
@@ -2162,6 +2193,10 @@ ACT.addUser = () => {
     if (pages && !pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
     await callFn("admin-users", { action: "create", ...f });
     if (pages) { const { error: pe } = await sb.from("profiles").update({ pages }).eq("email", f.email.trim().toLowerCase()); if (pe) toast(L("User bana, par page access save nahi hua: ", "User created, but page access not saved: ") + friendly(pe), true); }
+    if ($("#uApprover", m)?.checked && f.role !== "admin") {
+      const { data: nu } = await sb.from("profiles").select("id").eq("email", f.email.trim().toLowerCase()).maybeSingle();
+      if (nu?.id) await saveApprover(nu.id, true).catch((x) => toast(L("Director permission save nahi hui: ", "Director permission not saved: ") + friendly(x), true));
+    }
     closeModal(); toast("User ban gaya ✔ — email + password share karo"); VIEWS.team($("#page"));
   });
 };
@@ -2173,19 +2208,22 @@ ACT.editUser = (t) => {
       <div><label class="f">Role</label><select class="input" name="role" ${u.id === S.me.id ? "disabled" : ""}>${ROLES.map(([k, l]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Daily target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="${u.daily_target}"></div></div>
       <label class="f">Categories</label>${catChecks(u.categories || [])}
-      ${pageAccessHtml(u.role, u.pages)}</form>`,
+      ${pageAccessHtml(u.role, u.pages)}
+      ${approverHtml(u.role, isApprover(u.id))}</form>`,
     foot: `${u.id !== S.me.id ? `<button class="btn danger" id="udel">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="es">Save</button>`,
   });
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
   $("#es", m).onclick = (e) => busy(e.target, async () => {
     const f = formData($("#ef", m)); f.categories ||= []; f.daily_target = +f.daily_target || 0;
     f.pages = pagesToSave(m, f.role || u.role);
+    if (f.pages && $("#uApprover", m)?.checked && !f.pages.includes("obf")) f.pages.push("obf");
     if (f.pages && !f.pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
     if (u.id === S.me.id) delete f.role;
     const { error } = await sb.from("profiles").update(f).eq("id", u.id); if (error) throw error;
+    if ((f.role || u.role) !== "admin") await saveApprover(u.id, !!$("#uApprover", m)?.checked);
     closeModal(); toast("Saved ✔"); VIEWS.team($("#page"));
   });
-  wirePageAccess(m);
+  wirePageAccess(m); wireApprover(m);
   $("#udel", m)?.addEventListener("click", async () => {
     if (!(await confirmBox(`${u.full_name} ko permanently delete? Uske saare leads pool mein chale jayenge. (Disable karna behtar hai)`, "Delete"))) return;
     try { await callFn("admin-users", { action: "delete", user_id: u.id }); toast("Deleted"); VIEWS.team($("#page")); } catch (e) { fail(e); }
