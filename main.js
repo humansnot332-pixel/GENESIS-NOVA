@@ -38,13 +38,23 @@ const brandCache = () => { try { return JSON.parse(localStorage.getItem("crm_bra
 let installEvt = null;
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   const hadSW = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(() => {});
-  // a new version was deployed → load it (now if the user is idle, else on the next page change)
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((r) => {
+    r.update().catch(() => {});
+    // a tab left open for hours / the installed phone app: look for a new version every 10 min
+    // and whenever the app comes back to the front (at most once a minute)
+    let last = Date.now();
+    const check = () => { if (Date.now() - last > 60e3) { last = Date.now(); r.update().catch(() => {}); } };
+    setInterval(() => { last = 0; check(); }, 10 * 60e3);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+    addEventListener("focus", check);
+  }).catch(() => {});
+  // a new version was deployed → load it (now if the user is idle, else ask + on the next page change)
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (!hadSW) return;
     const busyNow = () => document.querySelector("[data-modal], .drawer") || document.activeElement?.matches("input, textarea, select");
-    if (!busyNow()) location.reload();
-    else addEventListener("hashchange", () => location.reload(), { once: true });
+    if (!busyNow()) return location.reload();
+    toastAction(L("🔄 CRM ka naya version aa gaya", "🔄 A new version of the CRM is ready"), L("Abhi reload", "Reload now"), () => location.reload(), 60000);
+    addEventListener("hashchange", () => location.reload(), { once: true });
   });
   // a phone notification was tapped while the app is open → go to that ticket
   navigator.serviceWorker.addEventListener("message", (e) => { const hsh = e.data?.type === "open" && String(e.data.hash || ""); if (hsh && /^#\/[a-z]/.test(hsh)) location.hash = hsh; });
