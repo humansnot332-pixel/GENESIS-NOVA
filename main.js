@@ -1701,7 +1701,7 @@ async function quoteEditor(q0) {
       <div><label class="f">Phone</label><input class="input" data-tp="phone" value="${h(tp.phone || "")}" maxlength="16" inputmode="tel" placeholder="${h(L("10 digit mobile", "10-digit mobile"))}"></div>
       <div><label class="f">Email</label><input class="input" data-tp="email" type="email" inputmode="email" value="${h(tp.email || "")}" maxlength="200" placeholder="name@company.com"></div>
       <div><label class="f">Billing address</label><input class="input" data-tp="address" value="${h(tp.address || "")}" maxlength="300"></div>
-      <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60" list="stateDL" autocomplete="off"><datalist id="stateDL">${STATE_NAMES.map((n) => `<option value="${h(n)}">`).join("")}</datalist></div>
+      <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60" list="stateDL" autocomplete="off"><datalist id="stateDL">${STATE_NAMES.map((n) => `<option value="${h(n)}">`).join("")}</datalist><datalist id="unitDL">${["Number", "Nos", "Set", "Licence", "User", "Seat", "Month", "Year", "Box", "Metre", "Lot"].map((u) => `<option value="${u}">`).join("")}</datalist><datalist id="warDL">${["1 Year", "2 Years", "3 Years", "5 Years", "6 Months", "As per OEM", "N/A"].map((u) => `<option value="${u}">`).join("")}</datalist></div>
       <div><label class="f">GSTIN</label><input class="input mono" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="24" autocomplete="off" spellcheck="false" placeholder="27ABCDE1234F1Z5"></div>
       <div class="qsite"><label class="f" for="qsite">Delivery / site address <span class="lbl-hint">— ${L("khali = billing address", "empty = same as billing")}</span></label><input class="input" id="qsite" value="${h(q.site?.address || "")}" maxlength="300"></div></div>
     <div class="qbar sec">
@@ -1746,6 +1746,9 @@ async function quoteEditor(q0) {
       <td class="qchk"><input type="checkbox" data-inc data-i="${i}"${it.opt ? "" : " checked"} title="${h(L("Total mein shamil", "Included in the total"))}" aria-label="${h(L("Total mein shamil: ", "Included in the total: ") + (it.desc || "item " + (i + 1)))}"></td>
       <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400" list="prodDL" placeholder="${h(L("Product list se chuno ya likho…", "Pick from product list or type…"))}">
         <div class="qdet"${it.details ? "" : " hidden"}><textarea class="input" data-i="${i}" data-k="details" rows="${Math.max(2, Math.min(6, String(it.details || "").split("\n").length))}" maxlength="1000" placeholder="${h(L("Specs / configuration — product ke neeche chhapega", "Specs / configuration — printed under the product"))}">${h(it.details || "")}</textarea></div>
+        <div class="qmeta"><label>Unit <input class="input" data-i="${i}" data-k="unit" value="${h(it.unit || "")}" maxlength="20" list="unitDL" placeholder="Number"></label>
+          <label>Lic. Qty <input class="input" data-i="${i}" data-k="lic" value="${h(it.lic || "")}" maxlength="20" placeholder="N/A"></label>
+          <label>Warranty <input class="input" data-i="${i}" data-k="warranty" value="${h(it.warranty || "")}" maxlength="40" list="warDL" placeholder="1 Year"></label></div>
         <div class="qrow-x"><button type="button" class="linkbtn" data-det="${i}"${it.details ? " hidden" : ""}>＋ ${L("details / specs", "details / specs")}</button>${it._hint ? `<span class="qhint">↺ ${h(it._hint)}</span>` : ""}</div></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="8" inputmode="numeric"></td>
       <td><input class="input" type="number" min="0" data-i="${i}" data-k="qty" value="${h(it.qty)}"></td><td><input class="input" type="number" min="0" data-i="${i}" data-k="price" value="${h(it.price)}"></td>
       <td><select class="input" data-i="${i}" data-k="tax">${[0, 5, 12, 18, 28].map((t) => `<option ${+it.tax === t ? "selected" : ""}>${t}</option>`).join("")}</select></td>
@@ -1781,7 +1784,7 @@ async function quoteEditor(q0) {
   m.addEventListener("input", (e) => {
     const t = e.target;
     if (t.dataset.tp) { tp[t.dataset.tp] = t.value; if (t.dataset.tp === "state") drawTotals(); }
-    if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (!["desc", "hsn", "details"].includes(t.dataset.k)) { const it = q.items[+t.dataset.i]; t.closest("tr").querySelector(".qamt").innerHTML = amtHtml(it); drawTotals(); } }
+    if (t.dataset.k) { q.items[+t.dataset.i][t.dataset.k] = t.value; if (!["desc", "hsn", "details", "unit", "lic", "warranty"].includes(t.dataset.k)) { const it = q.items[+t.dataset.i]; t.closest("tr").querySelector(".qamt").innerHTML = amtHtml(it); drawTotals(); } }
   });
   m.addEventListener("change", (e) => {
     if (e.target.matches("[data-inc]")) {           // tick / untick one item
@@ -2078,7 +2081,7 @@ async function quoteEditor(q0) {
     if (tp.gstin) tp.gstin = String(tp.gstin).toUpperCase().replace(/\s+/g, "");
     if ((q.terms_html || "").length > RICH_MAX || (q.annexure_html || "").length > RICH_MAX) return toast(L("T&C / Annexure bahut lamba hai — thoda chhota karo", "Terms / annexure are too long — please shorten them"), true);
     const c = qCalc(q);
-    const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0, ...(i.opt ? { opt: true } : {}), ...(i.details ? { details: String(i.details).slice(0, 1000) } : {}), ...(i.unit ? { unit: String(i.unit).slice(0, 20) } : {}) })),
+    const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0, ...(i.opt ? { opt: true } : {}), ...(i.details ? { details: String(i.details).slice(0, 1000) } : {}), ...(i.unit ? { unit: String(i.unit).slice(0, 20) } : {}), ...(String(i.lic || "").trim() ? { lic: String(i.lic).trim().slice(0, 20) } : {}), ...(String(i.warranty || "").trim() ? { warranty: String(i.warranty).trim().slice(0, 40) } : {}) })),
       show_optional: q.show_optional, notes: null, quote_date: q.quote_date, validity_days: q.validity_days, payment_terms: q.payment_terms, delivery: q.delivery,
       ref: q.ref, site: q.site, amc: q.amc, round_off: q.round_off !== false, round_amt: c.round, note_customer: q.note_customer, note_internal: q.note_internal, terms_html: q.terms_html, annexure_html: q.annexure_html,
       terms_tpl: used.terms[0]?.id || null, annexure_tpl: used.annexure[0]?.id || null,
@@ -2095,7 +2098,13 @@ async function quoteEditor(q0) {
 function printQuote(q) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
   const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
-  const rowHtml = (it, i) => `<tr><td>${i + 1}</td><td>${h(it.desc)}${it.details ? `<div class="qdt">${h(it.details)}</div>` : ""}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2(it.qty * it.price))}</td></tr>`;
+  // line table like the reference: Sr | Description | Taxation | HSN/SAC | Qty | Lic. Qty | Warranty | Price(Unit) | Taxable Value | Tax Amount | Total
+  const n2 = (v) => (+v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const head = `<thead><tr><th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC Code</th><th class="c">Qty.</th><th class="c">Lic. Qty.</th><th class="c">Warranty</th><th class="r">Price(Unit)</th><th class="r">Taxable Value</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>`;
+  const rowHtml = (it, i) => { const tv = r2((+it.qty || 0) * (+it.price || 0)), ta = r2(tv * (+it.tax || 0) / 100);
+    return `<tr><td class="c">${i + 1}</td><td><b>${h(it.desc)}</b>${it.details ? `<div class="qdt">${h(it.details)}</div>` : ""}</td><td>GST @${h(+it.tax || 0)}%</td><td class="c">${h(it.hsn || "------")}</td>
+      <td class="c">${h(it.qty)}(${h(it.unit || "Number")})</td><td class="c">${h(it.lic || "N/A")}</td><td class="c">${h(it.warranty || "-----")}</td><td class="r">${n2(it.price)}</td><td class="r">${n2(tv)}</td><td class="r">${n2(ta)}</td><td class="r">${n2(tv + ta)}</td></tr>`; };
+  const tot = (l, v, strong) => `<tr class="qtot"><td colspan="8" class="nob"></td><td colspan="2" class="r">${strong ? `<b>${l}</b>` : l}</td><td class="r">${strong ? `<b>${v}</b>` : v}</td></tr>`;
   let pr = document.getElementById("printRoot");
   if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
   pr.innerHTML = `<div class="qdoc">
@@ -2104,13 +2113,13 @@ function printQuote(q) {
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
     <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
-    <table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>
+    <table class="qlines">${head}<tbody>
     ${inc.map(rowHtml).join("")}
-    <tr><td colspan="6" class="r">Subtotal</td><td class="r">${inr(c.sub)}</td></tr>${c.lines.map(([l, v]) => `<tr><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
-    ${c.round ? `<tr><td colspan="6" class="r">Round off</td><td class="r">${c.round > 0 ? "+" : "−"}${Math.abs(c.round).toFixed(2)}</td></tr>` : ""}
-    <tr><th colspan="6" class="r">Grand Total</th><th class="r">${inr(c.grand)}</th></tr></tbody></table>
+    ${tot("Sub Total", n2(c.sub))}${c.lines.map(([l, v]) => tot(h(l), n2(v))).join("")}
+    ${c.round ? tot("Round off", (c.round > 0 ? "+" : "−") + Math.abs(c.round).toFixed(2)) : ""}
+    ${tot("Grand Total", inr(c.grand), true)}</tbody></table>
     <p><b>Amount in words:</b> ${h(rupeesWords(c.grand))}</p>
-    ${opt.length ? `<div class="qopt"><h4>Optional items <span>— not included in the total above; tell us to add any of them</span></h4><table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>${opt.map(rowHtml).join("")}</tbody></table></div>` : ""}
+    ${opt.length ? `<div class="qopt"><h4>Optional items <span>— not included in the total above; tell us to add any of them</span></h4><table class="qlines">${head}<tbody>${opt.map(rowHtml).join("")}</tbody></table></div>` : ""}
     ${q.note_customer ? `<p style="white-space:pre-wrap"><b>Note:</b> ${h(q.note_customer)}</p>` : ""}
     <div class="qsec" data-pr="terms"><h4>Terms &amp; Conditions</h4><div class="rich"></div></div>
     <p><b>Bank:</b> ${h(co.bank || "")} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>

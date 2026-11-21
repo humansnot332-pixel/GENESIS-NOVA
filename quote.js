@@ -46,7 +46,13 @@ function termRows(q) {
   }
   return rows.filter(([, v]) => v);
 }
-const rowHtml = (it, i) => `<td>${i + 1}</td><td><pre>${h(it.desc)}</pre>${it.details ? `<pre class="mu dt">${h(it.details)}</pre>` : ""}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2((+it.qty || 0) * (+it.price || 0)))}</td>`;
+// one line like the reference: Sr | Description | Taxation | HSN/SAC | Qty | Lic. Qty | Warranty | Price(Unit) | Taxable Value | Tax Amount | Total
+const n2 = (v) => (+v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const rowHtml = (it, i) => { const tv = r2((+it.qty || 0) * (+it.price || 0)), ta = r2(tv * (+it.tax || 0) / 100);
+  return `<td class="c">${i + 1}</td><td><pre class="pn">${h(it.desc)}</pre>${it.details ? `<pre class="mu dt">${h(it.details)}</pre>` : ""}</td><td class="nw">GST @${h(+it.tax || 0)}%</td><td class="c">${h(it.hsn || "------")}</td>
+    <td class="c nw">${h(it.qty)}(${h(it.unit || "Number")})</td><td class="c">${h(it.lic || "N/A")}</td><td class="c nw">${h(it.warranty || "-----")}</td><td class="r">${n2(it.price)}</td><td class="r">${n2(tv)}</td><td class="r">${n2(ta)}</td><td class="r">${n2(tv + ta)}</td>`; };
+const COLS = 11;
+const totRow = (l, v, ck, cls = "tot") => `<tr class="${cls}"><td colspan="${COLS - 3 + (ck ? 1 : 0)}" class="nob"></td><td colspan="2" class="r lb">${l}</td><td class="r">${v}</td></tr>`;
 
 function respBox(q) {
   if (q.response === "accepted") return `<div class="note ok">✅ You accepted this quotation on ${h(dt(q.response_at))}${q.options_added || q.options_removed ? " with your own selection of items" : ""}. Our team will contact you shortly with the next steps. Thank you!</div>`;
@@ -63,7 +69,7 @@ function render(q) {
   const all = (q.items || []).map((it, k) => ({ ...it, n: Number.isInteger(it.i) ? it.i : k }));
   const inc = all.filter((it) => !it.opt), opt = all.filter((it) => it.opt);
   const canPick = q.response !== "accepted" && q.status !== "lost" && all.length > 0;
-  const head = (ck) => `<thead><tr>${ck ? '<th class="ck"></th>' : ""}<th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead>`;
+  const head = (ck) => `<thead><tr>${ck ? '<th class="ck"></th>' : ""}<th class="c">Sr. No.</th><th>Description</th><th>Taxation</th><th class="c">HSN/SAC Code</th><th class="c">Qty.</th><th class="c">Lic. Qty.</th><th class="c">Warranty</th><th class="r">Price(Unit)</th><th class="r">Taxable Value</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>`;
   document.title = `Quotation ${q.quote_no} · ${co.name || ""}`;
   app.innerHTML = `<div class="card">
     <div class="hd"><div><h1>${h(co.name || "")}</h1><div class="mu">${h(co.address || "")}</div><div class="mu">${co.gstin ? "GSTIN: " + h(co.gstin) : ""}${co.pan ? " · PAN: " + h(co.pan) : ""}</div></div>
@@ -73,14 +79,14 @@ function render(q) {
     ${termRows(q).length ? `<div class="terms">${termRows(q).map(([k, v]) => `<div><span class="mu">${h(k)}</span><b>${h(v)}</b></div>`).join("")}</div>` : ""}
     ${canPick ? `<p class="pickhint">✔ <b>Tick the items you want</b> — the total with GST updates instantly. Accepting confirms exactly your selection.</p>
     <div class="tw pick"><table>${head(true)}<tbody>
-      ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace("<pre>", it.opt ? '<span class="otag">Optional</span><pre>' : "<pre>")}</tr>`).join("")}
+      ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace('<pre class="pn">', it.opt ? '<span class="otag">Optional</span><pre class="pn">' : '<pre class="pn">')}</tr>`).join("")}
       </tbody><tbody id="tots"></tbody></table></div>
     <div class="selsum" id="selSum" hidden></div>`
     : `<div class="tw"><table>${head(false)}<tbody>
       ${inc.map((it, i) => `<tr>${rowHtml(it, i)}</tr>`).join("")}
-      <tr class="tot"><td colspan="6" class="r">Subtotal</td><td class="r">${inr(q.subtotal)}</td></tr>
-      ${calc(q, inc).lines.concat(+q.round_amt ? [["Round off", +q.round_amt]] : []).map(([l, v]) => `<tr class="tot"><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
-      <tr class="grand"><td colspan="6" class="r">Grand Total (incl. GST)</td><td class="r">${inr(q.grand_total)}</td></tr></tbody></table></div>
+      ${totRow("Sub Total", n2(q.subtotal), false)}
+      ${calc(q, inc).lines.concat(+q.round_amt ? [["Round off", +q.round_amt]] : []).map(([l, v]) => totRow(h(l), n2(v), false)).join("")}
+      ${totRow("Grand Total (incl. GST)", inr(q.grand_total), false, "grand")}</tbody></table></div>
     ${opt.length ? `<div class="blk optbox"><b class="t">${q.response === "accepted" ? "Not included in your order" : "Optional items — not included in the total"}</b>
       <div class="tw" style="margin:6px 0"><table>${head(false)}<tbody>${opt.map((it, i) => `<tr>${rowHtml(it, i)}</tr>`).join("")}</tbody></table></div></div>` : ""}`}
     ${q.note ? `<div class="blk"><b class="t">Note</b><pre>${h(q.note)}</pre></div>` : ""}
@@ -106,9 +112,9 @@ function render(q) {
     if (!canPick) return;
     const c = chosen(), t = calc(q, c), round = r2(t.grand - (t.sub + t.tax));
     app.querySelectorAll("[data-pi]").forEach((cb) => cb.closest("tr").classList.toggle("on", cb.checked));
-    $("tots").innerHTML = `<tr class="tot"><td colspan="7" class="r">Subtotal</td><td class="r">${inr(t.sub)}</td></tr>
-      ${t.lines.concat(round ? [["Round off", round]] : []).map(([l, v]) => `<tr class="tot"><td colspan="7" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
-      <tr class="grand"><td colspan="7" class="r">Grand Total (incl. GST)</td><td class="r">${inr(t.grand)}</td></tr>`;
+    $("tots").innerHTML = totRow("Sub Total", n2(t.sub), true)
+      + t.lines.concat(round ? [["Round off", round]] : []).map(([l, v]) => totRow(h(l), n2(v), true)).join("")
+      + totRow("Grand Total (incl. GST)", inr(t.grand), true, "grand");
     const box = $("selSum"), acc = $("acc"), orig = isOriginal();
     box.hidden = orig;
     box.innerHTML = !c.length ? "Please tick at least one item."
