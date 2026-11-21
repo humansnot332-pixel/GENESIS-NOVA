@@ -1613,8 +1613,10 @@ VIEWS.quotes = async (el) => {
 ACT.newQuote = () => quoteEditor({ to_party: { state: "Maharashtra" }, items: [] });
 ACT.delQuote = async (t) => {
   const no = t.dataset.no || "", co = t.dataset.co || "";
-  if (!(await confirmBox(L(`Quotation ${no}${co ? " (" + co + ")" : ""} permanently delete karni hai? Ye wapas nahi aayegi.`,
-    `Delete quotation ${no}${co ? " (" + co + ")" : ""} permanently? This cannot be undone.`), L("Haan, delete karo", "Yes, delete")))) return;
+  const { data: obs } = await sb.from("obfs").select("obf_no, status").eq("quotation_id", +t.dataset.id);
+  const ob = (obs || []).map((o) => `OBF ${o.obf_no || "(draft)"}`).join(", ");
+  if (!(await confirmBox(L(`Quotation ${no}${co ? " (" + co + ")" : ""} permanently delete karni hai?${ob ? ` Iska ${ob} bhi delete hoga.` : ""} Ye wapas nahi aayegi.`,
+    `Delete quotation ${no}${co ? " (" + co + ")" : ""} permanently?${ob ? ` Its ${ob} is deleted too.` : ""} This cannot be undone.`), L("Haan, delete karo", "Yes, delete")))) return;
   const { data, error } = await sb.from("quotations").delete().eq("id", +t.dataset.id).select("id, lead_id, quote_no");
   if (error) return fail(error);
   if (!data?.length) return toast(L("Delete nahi hui — sirf banane wala ya Manager delete kar sakta hai", "Not deleted — only its creator or a Manager can delete it"), true);
