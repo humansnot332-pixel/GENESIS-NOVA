@@ -39,7 +39,15 @@
   .optbox table th:first-child { width:34px } .optbox input[type=checkbox] { width:18px; height:18px; accent-color:var(--good); cursor:pointer; margin:0 }
   .optbox tr.on td { background:color-mix(in srgb, var(--good) 10%, transparent) }
   .optsum { margin-top:8px; padding:10px 12px; border-radius:10px; background:color-mix(in srgb, var(--good) 13%, transparent); font-weight:600 }
-  @media print { body { background:#fff; color:#000 } .actions, #resp { display:none } .card { border:0; box-shadow:none; padding:0 } .annex { break-before:page; margin-top:0 } .rich { background:none; padding:0 } .optbox input, .optbox .hint, .optsum { display:none } }
+  .pickhint { margin:14px 0 4px; padding:9px 12px; border-radius:10px; background:color-mix(in srgb, var(--acc) 10%, transparent); font-size:14px }
+  .pick th.ck, .pick td.ck { width:36px; text-align:center } .pick input[type=checkbox] { width:20px; height:20px; accent-color:var(--good); cursor:pointer; margin:0 }
+  .pick tbody:first-of-type tr { cursor:pointer } .pick tbody:first-of-type tr:not(.on) td:not(.ck) { opacity:.45 } .pick tbody:first-of-type tr:not(.on) td:last-child { text-decoration:line-through }
+  .pick tbody:first-of-type tr.on td { background:color-mix(in srgb, var(--good) 7%, transparent) }
+  .otag { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:99px; margin-bottom:3px; background:color-mix(in srgb, var(--warn) 22%, transparent) }
+  .selsum { margin-top:8px; padding:10px 12px; border-radius:10px; background:color-mix(in srgb, var(--good) 13%, transparent); font-weight:500 } .selsum.bad { background:color-mix(in srgb, #ef4444 15%, transparent) }
+  .lnk { background:none; border:0; color:var(--acc); cursor:pointer; font:inherit; text-decoration:underline; padding:0 0 0 8px }
+  @media print { body { background:#fff; color:#000 } .actions, #resp { display:none } .card { border:0; box-shadow:none; padding:0 } .annex { break-before:page; margin-top:0 } .rich { background:none; padding:0 } .optbox input, .optbox .hint, .optsum { display:none }
+    .pick .ck, .pickhint, .selsum { display:none } .pick tbody:first-of-type tr:not(.on) { display:none } .pick tbody:first-of-type tr.on td { background:none } }
 </style>
 <script type="module" src="quote.js"></script>
 </head>

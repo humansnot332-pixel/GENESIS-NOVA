@@ -3,7 +3,7 @@
 //  (one PO per vendor, at the OBF cost), mailed to the vendor from the
 //  salesperson's Gmail; "Maal aa gaya" on every PO → the order is delivered.
 // =====================================================================
-import { sb, S, h, inr, ic, toast, fail, modal, closeModal, busy, isMgr, userName, dOnly, ago } from "./core.js";
+import { sb, S, h, inr, ic, toast, fail, modal, closeModal, busy, isMgr, isAdmin, userName, dOnly, ago, confirmBox } from "./core.js";
 import { L } from "./i18n.js";
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -70,7 +70,7 @@ export async function openPo(id, done) {
         <label class="f">Note</label><input class="input" data-p="notes" value="${h(p.notes || "")}" maxlength="1000"${mine ? "" : " disabled"}></div></div>
     <div class="sec tbl-wrap"><table class="tbl" id="poIt"><thead><tr><th>#</th><th>Description</th><th style="width:90px">HSN</th><th class="num" style="width:80px">Qty</th><th class="num" style="width:120px">Rate ₹</th><th class="num" style="width:80px">GST %</th><th class="num">Amount</th></tr></thead><tbody></tbody></table>
       <dl class="kv" id="poTot" style="max-width:360px;margin-left:auto"></dl></div>`,
-    foot: `<button class="btn" id="poPr">${ic("print")} PDF</button>${open ? `<button class="btn" id="poMail">📧 ${L("Vendor ko email", "Email the vendor")}</button><button class="btn" id="poGot">✅ ${L("Maal aa gaya", "Goods received")}</button><button class="btn danger ghost" id="poCx">${L("Cancel PO", "Cancel PO")}</button>` : ""}
+    foot: `${isAdmin() ? `<button class="btn danger" id="poDel" title="${h(L("Admin: ye PO hamesha ke liye hatao", "Admin: delete this PO for good"))}">${ic("trash")}</button>` : ""}<button class="btn" id="poPr">${ic("print")} PDF</button>${open ? `<button class="btn" id="poMail">📧 ${L("Vendor ko email", "Email the vendor")}</button><button class="btn" id="poGot">✅ ${L("Maal aa gaya", "Goods received")}</button><button class="btn danger ghost" id="poCx">${L("Cancel PO", "Cancel PO")}</button>` : ""}
       <span style="flex:1"></span><button class="btn" data-close>${L("Band karo", "Close")}</button>${mine ? `<button class="btn primary" id="poSave">Save</button>` : ""}`,
   });
   const draw = () => {
@@ -120,6 +120,13 @@ export async function openPo(id, done) {
     busy(b, async () => { const { error: e2 } = await sb.rpc("vpo_mark", { p_id: p.id, p_status: "cancelled" }); if (e2) throw e2; toast(L("PO cancel ho gaya", "PO cancelled")); again(); });
   });
   $("#poPr", m).addEventListener("click", () => printPo(p, v));
+  $("#poDel", m)?.addEventListener("click", async () => {
+    if (!(await confirmBox(L(`PO ${p.po_no} permanently delete karna hai? Ye wapas nahi aayega.`, `Delete PO ${p.po_no} permanently? This cannot be undone.`), L("Haan, delete karo", "Yes, delete")))) return;
+    const { data, error } = await sb.from("purchase_orders").delete().eq("id", p.id).select("id");
+    if (error) return fail(error);
+    if (!data?.length) return toast(L("Delete nahi hua — sirf Admin delete kar sakta hai", "Not deleted — only an Admin can delete it"), true);
+    closeModal(); toast(L(`🗑 PO ${p.po_no} delete ho gaya`, `🗑 PO ${p.po_no} deleted`)); done?.();
+  });
   return m;
 }
 

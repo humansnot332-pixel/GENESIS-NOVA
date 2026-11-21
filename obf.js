@@ -5,7 +5,7 @@
 //  history. The salesperson adds PO + costs and sends it; the Director checks
 //  it on the phone and approves → the order is created and billing can start.
 // =====================================================================
-import { sb, S, h, inr, ic, toast, fail, modal, closeModal, busy, isMgr, userName, dOnly, ago } from "./core.js";
+import { sb, S, h, inr, ic, toast, fail, modal, closeModal, busy, isMgr, isAdmin, userName, dOnly, ago, confirmBox } from "./core.js";
 import { L } from "./i18n.js";
 import { invoiceForm } from "./biz.js";
 
@@ -123,7 +123,7 @@ export async function openObf(id, done) {
         <label class="f">${L("Commission kisko", "Commission to")}</label>${inp("commission_to", o.commission_to, 'maxlength="120"')}
         <label class="f">${L("Director ke liye note", "Note for the Director")}</label><textarea class="input" data-o="remarks" rows="2" maxlength="2000"${dis}>${h(o.remarks || "")}</textarea>
         <p class="mu" style="font-size:12px;margin:8px 0 0">M.E.: <b>${h(userName(o.owner_id))}</b> · ${L("Quotation", "Quotation")} ${o.quotation_id ? `<a href="#/quotes/${o.quotation_id}">${L("kholo", "open")}</a>` : "—"}</p></div></div>`,
-    foot: `<button class="btn" id="obPr">${ic("print")} PDF</button>${o.status === "pending" && !decide ? `<button class="btn" id="obWa">${ic("wa")} ${L("Director ko WhatsApp", "WhatsApp the Director")}</button>` : ""}
+    foot: `${isAdmin() ? `<button class="btn danger" id="obDel" title="${h(L("Admin: ye OBF hamesha ke liye hatao", "Admin: delete this OBF for good"))}">${ic("trash")}</button>` : ""}<button class="btn" id="obPr">${ic("print")} PDF</button>${o.status === "pending" && !decide ? `<button class="btn" id="obWa">${ic("wa")} ${L("Director ko WhatsApp", "WhatsApp the Director")}</button>` : ""}
       <span style="flex:1"></span><button class="btn" data-close>${L("Band karo", "Close")}</button>
       ${edit ? `<button class="btn" id="obSave">${L("Draft save", "Save draft")}</button><button class="btn primary" id="obSend">✈ ${L("Director ko bhejo", "Send to the Director")}</button>` : ""}`,
   });
@@ -222,6 +222,14 @@ export async function openObf(id, done) {
   // ---- after approval: billing
   $("#obInv", m)?.addEventListener("click", () => { closeModal(); invoiceForm({ order_id: o.order_id, lead_id: o.lead_id, amount: o.grand_total, quotation_id: o.quotation_id }, done); });
   $("#obPr", m).addEventListener("click", () => printObf(o));
+  $("#obDel", m)?.addEventListener("click", async () => {
+    if (!(await confirmBox(L(`OBF ${o.obf_no || "(draft)"} permanently delete karna hai? ${o.order_id ? "Iska order aur vendor PO rahenge (unhe alag se delete kar sakte ho). " : ""}Ye wapas nahi aayega.`,
+      `Delete OBF ${o.obf_no || "(draft)"} permanently? ${o.order_id ? "Its order and vendor POs stay (delete them separately if needed). " : ""}This cannot be undone.`), L("Haan, delete karo", "Yes, delete")))) return;
+    const { data, error } = await sb.from("obfs").delete().eq("id", o.id).select("id");
+    if (error) return fail(error);
+    if (!data?.length) return toast(L("Delete nahi hua — sirf Admin delete kar sakta hai", "Not deleted — only an Admin can delete it"), true);
+    closeModal(); toast(L(`🗑 OBF ${o.obf_no || ""} delete ho gaya`, `🗑 OBF ${o.obf_no || ""} deleted`)); done?.();
+  });
   $("#obWa", m)?.addEventListener("click", () => {
     const c = calc(o), p = pctOf(c.sub, c.contribution);
     const t = `🙏 OBF ${o.obf_no} approval ke liye\n${o.customer?.name || ""}\nGrand total: ${inr(o.grand_total)}\nContribution: ${inr(c.contribution)} (${(p ?? 0).toFixed(1)}%)\nPayment: ${o.payment_terms || "—"}${+o.prev_outstanding > 0 ? `\nPurana baaki: ${inr(o.prev_outstanding)}` : ""}\n👉 ${obfUrl(o.id)}`;

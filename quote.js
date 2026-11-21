@@ -49,7 +49,7 @@ function termRows(q) {
 const rowHtml = (it, i) => `<td>${i + 1}</td><td><pre>${h(it.desc)}</pre>${it.details ? `<pre class="mu dt">${h(it.details)}</pre>` : ""}</td><td>${h(it.hsn)}</td><td class="r">${h(it.qty)}</td><td class="r">${inr(it.price)}</td><td class="r">${h(it.tax)}%</td><td class="r">${inr(r2((+it.qty || 0) * (+it.price || 0)))}</td>`;
 
 function respBox(q) {
-  if (q.response === "accepted") return `<div class="note ok">✅ You accepted this quotation on ${h(dt(q.response_at))}${q.options_added ? ` (including ${q.options_added} optional item${q.options_added > 1 ? "s" : ""} you added)` : ""}. Our team will contact you shortly with the next steps. Thank you!</div>`;
+  if (q.response === "accepted") return `<div class="note ok">✅ You accepted this quotation on ${h(dt(q.response_at))}${q.options_added || q.options_removed ? " with your own selection of items" : ""}. Our team will contact you shortly with the next steps. Thank you!</div>`;
   if (q.status === "lost") return `<div class="note w">This quotation is no longer active. Please contact us for an updated offer.</div>`;
   return `<div id="resp">${q.response === "changes" ? `<div class="note w">✏️ You requested changes on ${h(dt(q.response_at))}. We'll send a revised quotation soon.</div>` : ""}
     <div class="actions"><button class="pri" id="acc">✅ Accept quotation</button><button id="chg">✏️ Request changes</button><button id="pr">🖨 Print / Save PDF</button></div>
@@ -59,9 +59,11 @@ function respBox(q) {
 
 function render(q) {
   const co = q.company || {}, to = q.to || {}, rep = q.rep || {};
-  const all = (q.items || []).map((it, n) => ({ ...it, n }));             // n = position in the saved quotation
+  // n = the item's place in the saved quotation (sent by the server as i)
+  const all = (q.items || []).map((it, k) => ({ ...it, n: Number.isInteger(it.i) ? it.i : k }));
   const inc = all.filter((it) => !it.opt), opt = all.filter((it) => it.opt);
-  const canPick = q.response !== "accepted" && q.status !== "lost";
+  const canPick = q.response !== "accepted" && q.status !== "lost" && all.length > 0;
+  const head = (ck) => `<thead><tr>${ck ? '<th class="ck"></th>' : ""}<th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead>`;
   document.title = `Quotation ${q.quote_no} · ${co.name || ""}`;
   app.innerHTML = `<div class="card">
     <div class="hd"><div><h1>${h(co.name || "")}</h1><div class="mu">${h(co.address || "")}</div><div class="mu">${co.gstin ? "GSTIN: " + h(co.gstin) : ""}${co.pan ? " · PAN: " + h(co.pan) : ""}</div></div>
@@ -69,16 +71,18 @@ function render(q) {
     <div><b>To:</b> ${h(to.name || "")}${to.address ? "<br>" + h(to.address) : ""}${to.state ? ", " + h(to.state) : ""}${to.gstin ? "<br>GSTIN: " + h(to.gstin) : ""}${to.contact ? "<br>Kind Attn: " + h(to.contact) : ""}</div>
     ${q.site?.address ? `<div style="margin-top:6px"><b>Delivery / site:</b> ${h(q.site.address)}</div>` : ""}
     ${termRows(q).length ? `<div class="terms">${termRows(q).map(([k, v]) => `<div><span class="mu">${h(k)}</span><b>${h(v)}</b></div>`).join("")}</div>` : ""}
-    <div class="tw"><table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>
+    ${canPick ? `<p class="pickhint">✔ <b>Tick the items you want</b> — the total with GST updates instantly. Accepting confirms exactly your selection.</p>
+    <div class="tw pick"><table>${head(true)}<tbody>
+      ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace("<pre>", it.opt ? '<span class="otag">Optional</span><pre>' : "<pre>")}</tr>`).join("")}
+      </tbody><tbody id="tots"></tbody></table></div>
+    <div class="selsum" id="selSum" hidden></div>`
+    : `<div class="tw"><table>${head(false)}<tbody>
       ${inc.map((it, i) => `<tr>${rowHtml(it, i)}</tr>`).join("")}
       <tr class="tot"><td colspan="6" class="r">Subtotal</td><td class="r">${inr(q.subtotal)}</td></tr>
       ${calc(q, inc).lines.concat(+q.round_amt ? [["Round off", +q.round_amt]] : []).map(([l, v]) => `<tr class="tot"><td colspan="6" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
-      <tr class="grand"><td colspan="6" class="r">Grand Total</td><td class="r">${inr(q.grand_total)}</td></tr></tbody></table></div>
-    ${opt.length ? `<div class="blk optbox"><b class="t">Optional items — not included in the total</b>
-      ${canPick ? `<p class="mu hint" style="margin:0 0 4px">Tick any item you would like to add — the new total shows below. Accepting the quotation adds them to your order.</p>` : ""}
-      <div class="tw" style="margin:6px 0"><table><thead><tr>${canPick ? "<th></th>" : ""}<th>#</th><th>Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">GST</th><th class="r">Amount</th></tr></thead><tbody>
-      ${opt.map((it, i) => `<tr data-row="${it.n}">${canPick ? `<td><input type="checkbox" data-oi="${it.n}" aria-label="Add ${h(String(it.desc || "item").slice(0, 80))}"></td>` : ""}${rowHtml(it, i)}</tr>`).join("")}</tbody></table></div>
-      <div class="optsum" id="optSum" hidden></div></div>` : ""}
+      <tr class="grand"><td colspan="6" class="r">Grand Total (incl. GST)</td><td class="r">${inr(q.grand_total)}</td></tr></tbody></table></div>
+    ${opt.length ? `<div class="blk optbox"><b class="t">${q.response === "accepted" ? "Not included in your order" : "Optional items — not included in the total"}</b>
+      <div class="tw" style="margin:6px 0"><table>${head(false)}<tbody>${opt.map((it, i) => `<tr>${rowHtml(it, i)}</tr>`).join("")}</tbody></table></div></div>` : ""}`}
     ${q.note ? `<div class="blk"><b class="t">Note</b><pre>${h(q.note)}</pre></div>` : ""}
     <div class="blk" id="qTerms" hidden><b class="t">Terms &amp; Conditions</b><div class="rich"></div></div>
     ${co.bank ? `<p class="mu"><b>Bank:</b> ${h(co.bank)} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>` : ""}
@@ -94,16 +98,33 @@ function render(q) {
   if (q.annexure_html) { renderRich($("qAnnex").querySelector(".rich"), q.annexure_html); $("qAnnex").hidden = false; }
   $("pr")?.addEventListener("click", () => print());
   $("chg")?.addEventListener("click", () => { $("chgBox").hidden = false; $("chgNote").focus(); });
-  // optional items the customer ticks → new total
-  const picked = () => opt.filter((it) => document.querySelector(`[data-oi="${it.n}"]`)?.checked);
-  const withPicked = () => calc(q, [...inc, ...picked()]);
-  app.querySelectorAll("[data-oi]").forEach((cb) => cb.addEventListener("change", () => {
-    cb.closest("tr").classList.toggle("on", cb.checked);
-    const sel = picked(), box = $("optSum"), acc = $("acc");
-    box.hidden = !sel.length;
-    box.innerHTML = sel.length ? `New total with ${sel.length} optional item${sel.length > 1 ? "s" : ""}: <b>${inr(withPicked().grand)}</b> <span class="mu">(incl. GST)</span>` : "";
-    if (acc) acc.textContent = sel.length ? `✅ Accept quotation — ${inr(withPicked().grand)}` : "✅ Accept quotation";
+
+  // the customer's ticks → live totals with GST (same rounding as the CRM and the server)
+  const chosen = () => all.filter((it) => app.querySelector(`[data-pi="${it.n}"]`)?.checked);
+  const isOriginal = () => { const c = chosen(); return c.length === inc.length && c.every((it) => !it.opt); };
+  const refresh = () => {
+    if (!canPick) return;
+    const c = chosen(), t = calc(q, c), round = r2(t.grand - (t.sub + t.tax));
+    app.querySelectorAll("[data-pi]").forEach((cb) => cb.closest("tr").classList.toggle("on", cb.checked));
+    $("tots").innerHTML = `<tr class="tot"><td colspan="7" class="r">Subtotal</td><td class="r">${inr(t.sub)}</td></tr>
+      ${t.lines.concat(round ? [["Round off", round]] : []).map(([l, v]) => `<tr class="tot"><td colspan="7" class="r">${h(l)}</td><td class="r">${inr(v)}</td></tr>`).join("")}
+      <tr class="grand"><td colspan="7" class="r">Grand Total (incl. GST)</td><td class="r">${inr(t.grand)}</td></tr>`;
+    const box = $("selSum"), acc = $("acc"), orig = isOriginal();
+    box.hidden = orig;
+    box.innerHTML = !c.length ? "Please tick at least one item."
+      : `Your selection: <b>${c.length} of ${all.length}</b> item${all.length > 1 ? "s" : ""} · Total incl. GST <b>${inr(t.grand)}</b> <button type="button" class="lnk" id="selReset">↺ Back to our offer</button>`;
+    box.classList.toggle("bad", !c.length);
+    $("selReset")?.addEventListener("click", () => { app.querySelectorAll("[data-pi]").forEach((cb) => { cb.checked = !all.find((it) => String(it.n) === cb.dataset.pi)?.opt; }); refresh(); });
+    if (acc) { acc.disabled = !c.length; acc.textContent = `✅ Accept quotation — ${inr(t.grand)}`; }
+  };
+  app.querySelectorAll("[data-pi]").forEach((cb) => cb.addEventListener("change", refresh));
+  // tapping anywhere on the row ticks it (easy on a phone)
+  app.querySelectorAll(".pick tbody:first-of-type tr").forEach((tr) => tr.addEventListener("click", (e) => {
+    if (e.target.closest("input, a, button")) return;
+    const cb = tr.querySelector("[data-pi]"); if (cb) { cb.checked = !cb.checked; refresh(); }
   }));
+  refresh();
+
   const send = async (action, note, btn, options = null) => {
     btn.disabled = true;
     try {
@@ -114,13 +135,14 @@ function render(q) {
     } catch { alert("Could not send — please check your internet and try again."); btn.disabled = false; }
   };
   $("acc")?.addEventListener("click", (e) => {
-    const sel = picked();
-    const msg = sel.length ? `Accept quotation ${q.quote_no} with ${sel.length} optional item${sel.length > 1 ? "s" : ""} — new total ${inr(withPicked().grand)}?` : `Accept quotation ${q.quote_no} for ${inr(q.grand_total)}?`;
-    if (confirm(msg)) send("accepted", null, e.target, sel.length ? sel.map((it) => ({ i: it.n, d: String(it.desc || "") })) : null);
+    const c = chosen(); if (!c.length) return;
+    const total = inr(calc(q, c).grand), orig = isOriginal();
+    const msg = orig ? `Accept quotation ${q.quote_no} for ${total} (incl. GST)?` : `Accept quotation ${q.quote_no} with your selection of ${c.length} item${c.length > 1 ? "s" : ""} — ${total} (incl. GST)?`;
+    if (confirm(msg)) send("accepted", null, e.target, orig ? null : { sel: c.map((it) => ({ i: it.n, d: String(it.desc || "") })) });
   });
   $("chgSend")?.addEventListener("click", (e) => {
     let n = $("chgNote").value.trim(); if (!n) return $("chgNote").focus();
-    const sel = picked(); if (sel.length) n = (`Interested in the optional items: ${sel.map((it) => it.desc).join(", ")}. ` + n).slice(0, 1000);
+    if (canPick && !isOriginal()) n = (`My selection: ${chosen().map((it) => it.desc).join(", ") || "none"} (${inr(calc(q, chosen()).grand)} incl. GST). ` + n).slice(0, 1000);
     send("changes", n, e.target);
   });
 }

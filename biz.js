@@ -480,10 +480,18 @@ async function invoiceView(id, done) {
       <dt>${L("Amount", "Amount")}</dt><dd><b>${inr(i.amount)}</b></dd><dt>${L("Mila", "Received")}</dt><dd>${inr(i.paid)}</dd><dt>${L("Baaki", "Balance")}</dt><dd><b>${inr(Math.max(0, i.balance))}</b> <span class="badge ${PAYB[i.pay_status]}">${h(i.pay_status)}</span></dd>
       ${full?.notes ? `<dt>Notes</dt><dd>${h(full.notes)}</dd>` : ""}</dl>
       <div class="sec-t">${L("Payments", "Payments")}</div>${(pays || []).map((p) => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${inr(p.amount)}</b><span>${h(p.mode)}</span><span class="mu">${h(dOnly(p.paid_on))}${p.reference ? " · " + h(p.reference) : ""}</span><span class="mu right">${h(userName(p.created_by))}</span>${isMgr() ? `<button class="btn ghost icon sm" data-pdel="${p.id}" aria-label="Delete">${ic("x")}</button>` : ""}</div>`).join("") || `<div class="mu">${L("Abhi koi payment nahi", "No payments yet")}</div>`}`,
-    foot: `${isMgr() ? `<button class="btn danger" id="icancel">${i.cancelled ? L("Un-cancel", "Restore") : L("Cancel invoice", "Cancel invoice")}</button>` : ""}<button class="btn" id="iedit">Edit</button><span style="flex:1"></span>${!i.cancelled && i.pay_status !== "paid" ? `<button class="btn primary" id="ipay">₹ ${L("Payment mila", "Record payment")}</button>` : `<button class="btn" data-close>OK</button>`}`,
+    foot: `${isAdmin() ? `<button class="btn danger" id="idel" title="${h(L("Admin: invoice aur uske payments hamesha ke liye hatao", "Admin: delete the invoice and its payments for good"))}">${ic("trash")}</button>` : ""}${isMgr() ? `<button class="btn danger" id="icancel">${i.cancelled ? L("Un-cancel", "Restore") : L("Cancel invoice", "Cancel invoice")}</button>` : ""}<button class="btn" id="iedit">Edit</button><span style="flex:1"></span>${!i.cancelled && i.pay_status !== "paid" ? `<button class="btn primary" id="ipay">₹ ${L("Payment mila", "Record payment")}</button>` : `<button class="btn" data-close>OK</button>`}`,
   });
   $("#ipay", m)?.addEventListener("click", () => paymentForm(i, done));
   $("#iedit", m).onclick = () => invoiceForm(full, done);
+  $("#idel", m)?.addEventListener("click", async () => {
+    if (!(await confirmBox(L(`Invoice ${i.invoice_no} permanently delete karni hai? Iske ${(pays || []).length} payment bhi hat jaayenge. Ye wapas nahi aayegi. (Sirf band karna ho toh "Cancel invoice" dabao.)`,
+      `Delete invoice ${i.invoice_no} permanently? Its ${(pays || []).length} payment(s) go too. This cannot be undone. (To just void it, use "Cancel invoice".)`), L("Haan, delete karo", "Yes, delete")))) return;
+    const { data, error } = await sb.from("invoices").delete().eq("id", id).select("id");
+    if (error) return fail(error);
+    if (!data?.length) return toast(L("Delete nahi hui", "Not deleted"), true);
+    closeModal(); toast(L(`🗑 Invoice ${i.invoice_no} delete ho gayi`, `🗑 Invoice ${i.invoice_no} deleted`)); done?.();
+  });
   $("#icancel", m)?.addEventListener("click", (e) => busy(e.target, async () => { const { error: x } = await sb.from("invoices").update({ cancelled: !i.cancelled }).eq("id", id); if (x) throw x; closeModal(); done?.(); }));
   $$("[data-pdel]", m).forEach((b) => b.onclick = () => busy(b, async () => { await sb.from("payments").delete().eq("id", +b.dataset.pdel); invoiceView(id, done); done?.(); }));
 }
@@ -528,7 +536,8 @@ export function quoteTrackHtml(q) {
   const resp = q.customer_response === "accepted" ? `<span class="badge good">✅ ${L("Customer ne accept ki", "Accepted by customer")} · ${h(ago(q.customer_response_at))}</span>`
     : q.customer_response === "changes" ? `<span class="badge warn">✏️ ${L("Changes maange", "Changes requested")} · ${h(ago(q.customer_response_at))}</span>` : "";
   return `<div class="qtrack">${q.share_token ? (q.view_count ? `👁 <b>${q.view_count}×</b> ${L("dekhi", "viewed")} · ${L("pehli baar", "first")} ${h(ago(q.first_viewed_at))} · ${L("last", "last")} ${h(ago(q.last_viewed_at))}` : `🔗 ${L("Link bheja — customer ne abhi kholi nahi", "Link shared — not opened yet")}`) : `🔗 ${L("Online link banao — customer kab kholta hai wo pata chalega", "Create an online link — you'll know when the customer opens it")}`} ${resp}
-    ${q.customer_options?.length ? `<div style="margin-top:4px">➕ ${L("Customer ne online ye optional items jode (total mein jud gaye)", "The customer added these optional items online (now in the total)")}: <b>${h(q.customer_options.map((o) => o.d).join(", "))}</b></div>` : ""}
+    ${(q.customer_options || []).some((o) => !o.x) ? `<div style="margin-top:4px">➕ ${L("Customer ne online ye items jode (total mein jud gaye)", "The customer added these items online (now in the total)")}: <b>${h(q.customer_options.filter((o) => !o.x).map((o) => o.d).join(", "))}</b></div>` : ""}
+    ${(q.customer_options || []).some((o) => o.x) ? `<div style="margin-top:4px">➖ ${L("Customer ne ye items hataye (ab optional, total se bahar)", "The customer took these items out (now optional, not in the total)")}: <b>${h(q.customer_options.filter((o) => o.x).map((o) => o.d).join(", "))}</b></div>` : ""}
     ${q.customer_note ? `<div class="mu" style="margin-top:4px">“${h(q.customer_note)}”</div>` : ""}</div>`;
 }
 export async function orderFromQuote(q, done) {

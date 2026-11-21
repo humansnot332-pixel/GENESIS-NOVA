@@ -23,6 +23,7 @@ import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
+import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
 import { pushCard, pushResync } from "./push.js";
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -1466,7 +1467,7 @@ function rfqForm(r) {
     </div><label class="f">Details</label><textarea class="input" name="details" maxlength="5000">${h(r.details || "")}</textarea></fieldset>
     ${r.source && r.source !== "manual" ? `<p class="mu">Source: ${h(SOURCES[r.source] || r.source)} ${r.source_ref ? "· " + h(r.source_ref) : ""}</p>` : ""}</form>
     ${isNew ? "" : `<details class="card sec" id="rfH"><summary>🔐 ${L("Lock history", "Lock history")}</summary><div class="card-b" style="padding:4px 16px"><div class="mu">…</div></div></details>`}`,
-    foot: `${r.lead_id ? `<button class="btn" id="rfLead">Lead kholo</button>` : ""}${!isNew && work && r.phone ? `<a class="btn primary" id="rfCall" href="${h(telHref(r.phone))}">${ic("phone")} Call</a>` : ""}${!isNew && (work || lk.free) ? `<button class="btn" id="rfMail">${ic("mail")} Email</button><button class="btn" id="rfWa">${ic("wa")} WhatsApp</button><button class="btn" id="rfQ">${ic("file")} Quotation</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button>${work ? `<button class="btn primary" id="rfS">Save</button>` : ""}`,
+    foot: `${!isNew && isAdmin() ? `<button class="btn danger" id="rfDel" title="${h(L("Admin: ye RFQ hamesha ke liye hatao", "Admin: delete this RFQ for good"))}">${ic("trash")}</button>` : ""}${r.lead_id ? `<button class="btn" id="rfLead">Lead kholo</button>` : ""}${!isNew && work && r.phone ? `<a class="btn primary" id="rfCall" href="${h(telHref(r.phone))}">${ic("phone")} Call</a>` : ""}${!isNew && (work || lk.free) ? `<button class="btn" id="rfMail">${ic("mail")} Email</button><button class="btn" id="rfWa">${ic("wa")} WhatsApp</button><button class="btn" id="rfQ">${ic("file")} Quotation</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button>${work ? `<button class="btn primary" id="rfS">Save</button>` : ""}`,
   });
   const reload = async () => { const { data } = await sb.from("rfqs").select("*").eq("id", r.id).single(); if (data) rfqForm(data); };
   $("#rfClaim", m)?.addEventListener("click", (e) => busy(e.target, async () => {
@@ -1494,6 +1495,14 @@ function rfqForm(r) {
   $("#rfMail", m)?.addEventListener("click", () => outreach("email"));
   $("#rfWa", m)?.addEventListener("click", () => outreach("whatsapp"));
   $("#rfLead", m)?.addEventListener("click", () => { closeModal(); openLead(r.lead_id); });
+  $("#rfDel", m)?.addEventListener("click", async () => {
+    if (!(await confirmBox(L(`RFQ ${r.rfq_no} (${r.company}) permanently delete karna hai? Lead aur quotations rahenge. Ye wapas nahi aayega.`,
+      `Delete RFQ ${r.rfq_no} (${r.company}) permanently? The lead and quotations stay. This cannot be undone.`), L("Haan, delete karo", "Yes, delete")))) return;
+    const { data, error } = await sb.from("rfqs").delete().eq("id", r.id).select("id");
+    if (error) return fail(error);
+    if (!data?.length) return toast(L("Delete nahi hua — sirf Admin delete kar sakta hai", "Not deleted — only an Admin can delete it"), true);
+    closeModal(); history.replaceState(null, "", "#/rfqs"); toast(L(`🗑 RFQ ${r.rfq_no} delete ho gaya`, `🗑 RFQ ${r.rfq_no} deleted`)); softRefresh();
+  });
   $("#rfQ", m)?.addEventListener("click", async () => { if (!(await ensureWork("rfq", r))) return; quoteEditor({ rfq_id: r.id, lead_id: r.lead_id, to_party: { name: r.company, contact: r.contact, email: r.email, address: r.city, state: "Maharashtra" }, items: [{ desc: [r.product, r.details].filter(Boolean).join(" — ").slice(0, 300), hsn: "", qty: parseFloat(r.qty) || 1, price: 0, tax: 18 }] }); });
   $("#rfS", m)?.addEventListener("click", (e) => busy(e.target, async () => {
     const f = formData($("#rf", m));
@@ -1689,11 +1698,11 @@ async function quoteEditor(q0) {
       <div class="qcs"><label class="f" for="qcn">Customer * <span class="lbl-hint" id="qlinked">${q.lead_id ? "🔗 " + L("customer record se juda", "linked to the customer record") : L("— naam, phone ya GSTIN likho", "— type a name, phone or GSTIN")}</span></label>
         <input class="input" id="qcn" data-tp="name" value="${h(tp.name || "")}" maxlength="200" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="qcsL"><div class="qcs-list" id="qcsL" role="listbox" hidden></div></div>
       <div><label class="f">Contact person</label><input class="input" data-tp="contact" value="${h(tp.contact || "")}" maxlength="120"></div>
-      <div><label class="f">Phone</label><input class="input" data-tp="phone" value="${h(tp.phone || "")}" maxlength="40" inputmode="tel"></div>
-      <div><label class="f">Email</label><input class="input" data-tp="email" value="${h(tp.email || "")}" maxlength="200"></div>
+      <div><label class="f">Phone</label><input class="input" data-tp="phone" value="${h(tp.phone || "")}" maxlength="16" inputmode="tel" placeholder="${h(L("10 digit mobile", "10-digit mobile"))}"></div>
+      <div><label class="f">Email</label><input class="input" data-tp="email" type="email" inputmode="email" value="${h(tp.email || "")}" maxlength="200" placeholder="name@company.com"></div>
       <div><label class="f">Billing address</label><input class="input" data-tp="address" value="${h(tp.address || "")}" maxlength="300"></div>
-      <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60"></div>
-      <div><label class="f">GSTIN</label><input class="input" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="15"></div>
+      <div><label class="f">State (GST)</label><input class="input" data-tp="state" value="${h(tp.state || "")}" maxlength="60" list="stateDL" autocomplete="off"><datalist id="stateDL">${STATE_NAMES.map((n) => `<option value="${h(n)}">`).join("")}</datalist></div>
+      <div><label class="f">GSTIN</label><input class="input mono" data-tp="gstin" value="${h(tp.gstin || "")}" maxlength="24" autocomplete="off" spellcheck="false" placeholder="27ABCDE1234F1Z5"></div>
       <div class="qsite"><label class="f" for="qsite">Delivery / site address <span class="lbl-hint">— ${L("khali = billing address", "empty = same as billing")}</span></label><input class="input" id="qsite" value="${h(q.site?.address || "")}" maxlength="300"></div></div>
     <div class="qbar sec">
       <div><label class="f" for="qdate">Date</label><input class="input" type="date" id="qdate" value="${h(q.quote_date || isoDay())}"></div>
@@ -1737,7 +1746,7 @@ async function quoteEditor(q0) {
       <td class="qchk"><input type="checkbox" data-inc data-i="${i}"${it.opt ? "" : " checked"} title="${h(L("Total mein shamil", "Included in the total"))}" aria-label="${h(L("Total mein shamil: ", "Included in the total: ") + (it.desc || "item " + (i + 1)))}"></td>
       <td><input class="input" data-i="${i}" data-k="desc" value="${h(it.desc)}" maxlength="400" list="prodDL" placeholder="${h(L("Product list se chuno ya likho…", "Pick from product list or type…"))}">
         <div class="qdet"${it.details ? "" : " hidden"}><textarea class="input" data-i="${i}" data-k="details" rows="${Math.max(2, Math.min(6, String(it.details || "").split("\n").length))}" maxlength="1000" placeholder="${h(L("Specs / configuration — product ke neeche chhapega", "Specs / configuration — printed under the product"))}">${h(it.details || "")}</textarea></div>
-        <div class="qrow-x"><button type="button" class="linkbtn" data-det="${i}"${it.details ? " hidden" : ""}>＋ ${L("details / specs", "details / specs")}</button>${it._hint ? `<span class="qhint">↺ ${h(it._hint)}</span>` : ""}</div></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="12"></td>
+        <div class="qrow-x"><button type="button" class="linkbtn" data-det="${i}"${it.details ? " hidden" : ""}>＋ ${L("details / specs", "details / specs")}</button>${it._hint ? `<span class="qhint">↺ ${h(it._hint)}</span>` : ""}</div></td><td><input class="input" data-i="${i}" data-k="hsn" value="${h(it.hsn)}" maxlength="8" inputmode="numeric"></td>
       <td><input class="input" type="number" min="0" data-i="${i}" data-k="qty" value="${h(it.qty)}"></td><td><input class="input" type="number" min="0" data-i="${i}" data-k="price" value="${h(it.price)}"></td>
       <td><select class="input" data-i="${i}" data-k="tax">${[0, 5, 12, 18, 28].map((t) => `<option ${+it.tax === t ? "selected" : ""}>${t}</option>`).join("")}</select></td>
       <td class="num qamt">${amtHtml(it)}</td><td><button class="btn ghost icon sm" data-rm="${i}" aria-label="Remove">${ic("x")}</button></td></tr>`).join("");
@@ -1747,6 +1756,28 @@ async function quoteEditor(q0) {
     const c = qCalc(q);
     $("#qt", m).innerHTML = `<dl class="kv"><dt>Subtotal</dt><dd class="num">${inr(c.sub)}</dd>${c.lines.map(([l, v]) => `<dt>${h(l)}</dt><dd>${inr(v)}</dd>`).join("")}<dt><label class="qro"><input type="checkbox" id="qro"${q.round_off === false ? "" : " checked"}> Round off</label></dt><dd>${c.round ? (c.round > 0 ? "+" : "−") + Math.abs(c.round).toFixed(2) : "0.00"}</dd><dt><b>Grand total</b></dt><dd><b style="font-size:18px">${inr(c.grand)}</b></dd></dl><p class="mu" style="font-size:12px">${h(rupeesWords(c.grand))} · ${c.inter ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}</p>${c.optN ? `<p class="opt-sum">➕ ${c.optN} optional item${c.optN > 1 ? "s" : ""} · ${inr(c.optSub)} + GST <span class="mu">${L("— total mein nahi", "— not in the total")}</span></p>` : ""}${marginHtml(q.items.filter((x) => !x.opt))}`;
   };
+  // typing rules: phone = digits only, GSTIN = capitals without spaces, HSN = digits; a red field turns normal again
+  m.addEventListener("input", (e) => {
+    const t = e.target; t.classList.remove("bad"); t.removeAttribute("aria-invalid");
+    const fix = (v) => { if (v !== t.value) { const at = t.selectionStart - (t.value.length - v.length); t.value = v; try { t.setSelectionRange(at, at); } catch { /* number inputs */ } } };
+    if (t.dataset.tp === "phone") fix(t.value.replace(/[^\d+\- ]/g, ""));
+    if (t.dataset.tp === "gstin") fix(t.value.toUpperCase().replace(/[^0-9A-Z]/g, ""));
+    if (t.dataset.k === "hsn") fix(t.value.replace(/\D/g, ""));
+  }, true);
+  // leaving a field: tidy it (phone → 10 digits, state → GST name, GSTIN → fills the state)
+  m.addEventListener("change", (e) => {
+    const t = e.target, k = t.dataset.tp; if (!k) return;
+    if (k === "phone" && phoneOk(t.value)) t.value = tp.phone = cleanPhone(t.value);
+    if (k === "email") t.value = tp.email = t.value.trim().toLowerCase();
+    if (k === "state") { const c = canonState(t.value); if (c) { t.value = tp.state = c; drawTotals(); } }
+    if (k === "gstin" && t.value) {
+      const g = gstinInfo(t.value), se = $('[data-tp="state"]', m);
+      if (g.state && canonState(tp.state) !== g.state) {
+        se.value = tp.state = g.state; se.classList.remove("bad"); drawTotals();
+        toast(L(`State GSTIN se: ${g.state} (GST usi hisaab se)`, `State taken from the GSTIN: ${g.state} (GST follows it)`));
+      }
+    }
+  }, true);
   m.addEventListener("input", (e) => {
     const t = e.target;
     if (t.dataset.tp) { tp[t.dataset.tp] = t.value; if (t.dataset.tp === "state") drawTotals(); }
@@ -2020,8 +2051,31 @@ async function quoteEditor(q0) {
   $("#qwa", m)?.addEventListener("click", (e) => busy(e.target, () => shared("whatsapp")));
   $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
   $("#qsave", m).onclick = (e) => busy(e.target, async () => {
-    if (!tp.name) return toast("Customer naam daalo", true);
     syncAll();
+    // fully empty rows (no product, no rate) are just dropped
+    const before = q.items.length;
+    q.items = q.items.filter((it) => String(it.desc || "").trim() || +it.price || String(it.details || "").trim());
+    if (q.items.length !== before) drawItems();
+    $$(".bad", m).forEach((x) => { x.classList.remove("bad"); x.removeAttribute("aria-invalid"); });
+    const errs = checkQuote(q, tp), hard = errs.filter((x) => !x.soft);
+    const where = (x) => x.i != null ? $(`[data-i="${x.i}"][data-k="${x.k}"]`, m)
+      : ({ name: $("#qcn", m), date: $("#qdate", m), validity: $("#qval", m), items: $("#qadd", m) })[x.k] || $(`[data-tp="${x.k}"]`, m);
+    errs.forEach((x) => { const el = where(x); if (el && !x.soft) { el.classList.add("bad"); el.setAttribute("aria-invalid", "true"); el.title = L(x.h, x.en); } });
+    if (hard.length) {
+      const el = where(hard[0]); el?.focus(); el?.scrollIntoView({ block: "center", behavior: "smooth" });
+      return toast(L(hard[0].h, hard[0].en) + (hard.length > 1 ? L(` (+${hard.length - 1} aur — laal box dekho)`, ` (+${hard.length - 1} more — see the red boxes)`) : ""), true);
+    }
+    // a doubtful but possible value (GSTIN check digit): warn once in place — pressing Save again saves it
+    const soft = errs.filter((y) => y.soft), softKey = soft.map((x) => x.k + ":" + (tp[x.k] || "")).join("|");
+    if (soft.length && softKey !== m.dataset.softOk) {
+      m.dataset.softOk = softKey;
+      soft.forEach((x) => { const el = where(x); if (el) { el.classList.add("bad"); el.title = L(x.h, x.en); } });
+      where(soft[0])?.focus();
+      return toast(L(soft[0].h, soft[0].en) + L(" — sahi hai toh Save dobara dabao", " — if it is right, press Save again"), true);
+    }
+    if (tp.phone && phoneOk(tp.phone)) tp.phone = cleanPhone(tp.phone);
+    if (canonState(tp.state)) tp.state = canonState(tp.state);
+    if (tp.gstin) tp.gstin = String(tp.gstin).toUpperCase().replace(/\s+/g, "");
     if ((q.terms_html || "").length > RICH_MAX || (q.annexure_html || "").length > RICH_MAX) return toast(L("T&C / Annexure bahut lamba hai — thoda chhota karo", "Terms / annexure are too long — please shorten them"), true);
     const c = qCalc(q);
     const row = { to_party: tp, items: q.items.map((i) => ({ desc: String(i.desc || "").slice(0, 400), hsn: String(i.hsn || "").slice(0, 12), qty: +i.qty || 0, price: +i.price || 0, tax: +i.tax || 0, ...(i.opt ? { opt: true } : {}), ...(i.details ? { details: String(i.details).slice(0, 1000) } : {}), ...(i.unit ? { unit: String(i.unit).slice(0, 20) } : {}) })),
