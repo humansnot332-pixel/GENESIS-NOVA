@@ -861,7 +861,7 @@ function sendQueuedNow_() {
 
 // Gmail search for mails that may be a buyer's enquiry (the CRM decides; anything else is ignored there)
 var ENQ_Q = "in:inbox newer_than:2d -in:sent -label:crm-rfq (from:(indiamart.com OR tradeindia.com OR justdial.com OR exportersindia.com OR sulekha.com)" +
-  " OR subject:(enquiry OR inquiry OR requirement OR required OR quotation OR quote OR rfq OR \"best price\" OR \"price list\" OR need OR purchase))";
+  " OR subject:(enquiry OR inquiry OR requirement OR required OR quotation OR quote OR rfq OR \\"best price\\" OR \\"price list\\" OR need OR purchase))";
 
 function scanEnquiries_() {             // nayi enquiry mails → CRM mein RFQ (har ~5 minute)
   var props = PropertiesService.getUserProperties();
