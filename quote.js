@@ -2,10 +2,14 @@
 // The link is quote.html#<token>; the token never leaves the browser in URLs/referrers.
 import { CONFIG } from "./config.js";
 import { renderRich, textToHtml } from "./rte.js";
+import { pickData, fmtIN, fmtRound } from "./qpick.js";
 
 const app = document.getElementById("app");
 const token = decodeURIComponent(location.hash.slice(1).split("&")[0] || "");
-const preview = /[#&]p=1\b/.test(location.hash);
+// &pdf=1 → the CRM turns this page into the PDF it mails (tick boxes + totals become PDF form fields); never counts as a view
+const pdfMode = /[#&]pdf=1\b/.test(location.hash);
+const preview = pdfMode || /[#&]p=1\b/.test(location.hash);
+if (pdfMode) document.documentElement.classList.add("pdfmode");
 const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = (n) => Math.round((+n + Number.EPSILON) * 100) / 100;
@@ -68,7 +72,7 @@ function render(q) {
   // n = the item's place in the saved quotation (sent by the server as i)
   const all = (q.items || []).map((it, k) => ({ ...it, n: Number.isInteger(it.i) ? it.i : k }));
   const inc = all.filter((it) => !it.opt), opt = all.filter((it) => it.opt);
-  const canPick = q.response !== "accepted" && q.status !== "lost" && all.length > 0;
+  const canPick = pdfMode ? all.length > 0 : q.response !== "accepted" && q.status !== "lost" && all.length > 0;
   const head = (ck) => `<thead><tr>${ck ? '<th class="ck"></th>' : ""}<th class="c">Sr. No.</th><th>Description</th><th>Taxation</th><th class="c">HSN/SAC Code</th><th class="c">Qty.</th><th class="c">Lic. Qty.</th><th class="c">Warranty</th><th class="r">Price(Unit)</th><th class="r">Taxable Value</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>`;
   document.title = `Quotation ${q.quote_no} · ${co.name || ""}`;
   app.innerHTML = `<div class="card">
@@ -77,9 +81,10 @@ function render(q) {
     <div><b>To:</b> ${h(to.name || "")}${to.address ? "<br>" + h(to.address) : ""}${to.state ? ", " + h(to.state) : ""}${to.gstin ? "<br>GSTIN: " + h(to.gstin) : ""}${to.contact ? "<br>Kind Attn: " + h(to.contact) : ""}</div>
     ${q.site?.address ? `<div style="margin-top:6px"><b>Delivery / site:</b> ${h(q.site.address)}</div>` : ""}
     ${termRows(q).length ? `<div class="terms">${termRows(q).map(([k, v]) => `<div><span class="mu">${h(k)}</span><b>${h(v)}</b></div>`).join("")}</div>` : ""}
-    ${canPick ? `<p class="pickhint">✔ <b>Tick the items you want</b> — the total with GST updates instantly. Accepting confirms exactly your selection.</p>
+    ${canPick ? `<p class="pickhint">${pdfMode ? "✔ <b>Tick the items you want in this PDF</b> — the total with GST updates by itself. Then save the PDF and reply to our email with it to confirm."
+      : "✔ <b>Tick the items you want</b> — the total with GST updates instantly. Accepting confirms exactly your selection."}</p>
     <div class="tw pick"><table>${head(true)}<tbody>
-      ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace('<pre class="pn">', it.opt ? '<span class="otag">Optional</span><pre class="pn">' : '<pre class="pn">')}</tr>`).join("")}
+      ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"${pdfMode ? ` data-pk="${it.n}"` : ""}><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace('<pre class="pn">', it.opt ? '<span class="otag">Optional</span><pre class="pn">' : '<pre class="pn">')}</tr>`).join("")}
       </tbody><tbody id="tots"></tbody></table></div>
     <div class="selsum" id="selSum" hidden></div>`
     : `<div class="tw"><table>${head(false)}<tbody>
@@ -94,9 +99,9 @@ function render(q) {
     ${co.bank ? `<p class="mu"><b>Bank:</b> ${h(co.bank)} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>` : ""}
     <p style="margin-top:18px">Your contact: <b>${h(rep.name || "")}</b>${rep.designation ? ", " + h(rep.designation) : ""}<br>
       <span class="mu">${rep.phone ? `📞 <a href="tel:${h(String(rep.phone).replace(/[^\d+]/g, ""))}">${h(rep.phone)}</a>` : ""} ${rep.email ? ` · ✉️ <a href="mailto:${h(rep.email)}">${h(rep.email)}</a>` : ""}</span></p>
-    ${respBox(q)}
+    ${pdfMode ? "" : respBox(q)}
   </div>
-  <div class="card annex" id="qAnnex" hidden><div class="hd"><h2>ANNEXURE</h2><div class="mu">Quotation No. ${h(q.quote_no)} · ${h(dt(q.date))}</div></div><div class="rich"></div></div>
+  <div class="card annex" id="qAnnex" hidden${pdfMode ? " data-pdf-break" : ""}><div class="hd"><h2>ANNEXURE</h2><div class="mu">Quotation No. ${h(q.quote_no)} · ${h(dt(q.date))}</div></div><div class="rich"></div></div>
   <p class="mu" style="text-align:center;margin-top:14px">${h(co.name || "")}${co.website ? " · " + h(co.website) : ""}</p>`;
   const $ = (id) => document.getElementById(id);
   const terms = q.terms_html || textToHtml(q.notes);
@@ -108,6 +113,17 @@ function render(q) {
   // the customer's ticks → live totals with GST (same rounding as the CRM and the server)
   const chosen = () => all.filter((it) => app.querySelector(`[data-pi="${it.n}"]`)?.checked);
   const isOriginal = () => { const c = chosen(); return c.length === inc.length && c.every((it) => !it.opt); };
+  // PDF: a total row for every GST rate in the table, values the PDF fills in again when a box is ticked
+  if (pdfMode && canPick) {
+    const items = []; all.forEach((it) => { items[it.n] = it; });
+    const a = String(q.company?.state || "").trim().toLowerCase(), b = String(q.to?.state || "").trim().toLowerCase();
+    const p = pickData(items, { inter: !!(a && b && a !== b), roundOff: q.round_off, showOptional: true });
+    const row = (l, v, key, cls = "tot") => `<tr class="${cls}"><td colspan="${COLS - 2}" class="nob"></td><td colspan="2" class="r lb">${l}</td><td class="r" data-tot="${key}">${v}</td></tr>`;
+    $("tots").innerHTML = row("Sub Total", fmtIN(p.T.sub), "sub") + p.labels.map((l, k) => row(h(l), fmtIN(p.T.lines[k]), "l" + k)).join("")
+      + (p.O ? row("Round off", fmtRound(p.T.round), "round") : "") + row("Grand Total (incl. GST) ₹", fmtIN(p.T.grand), "grand", "grand");
+    window.__pick = p;
+    return;
+  }
   const refresh = () => {
     if (!canPick) return;
     const c = chosen(), t = calc(q, c), round = r2(t.grand - (t.sub + t.tax));
@@ -157,9 +173,11 @@ function render(q) {
   if (!token) { app.innerHTML = `<div class="center"><h1>Link incomplete</h1><p class="mu">Please open the full link that was shared with you.</p></div>`; return; }
   try {
     const q = await call("view");
-    if (q.error) { app.innerHTML = `<div class="center"><h1>Quotation not found</h1><p class="mu">This link is invalid or has been withdrawn. Please contact your sales representative.</p></div>`; return; }
+    if (q.error) { if (pdfMode) window.__pdfError = q.error; app.innerHTML = `<div class="center"><h1>Quotation not found</h1><p class="mu">This link is invalid or has been withdrawn. Please contact your sales representative.</p></div>`; return; }
     render(q);
-  } catch {
+    if (pdfMode) { await document.fonts?.ready; window.__pdfReady = true; }
+  } catch (e) {
+    if (pdfMode) window.__pdfError = String(e?.message || e);
     app.innerHTML = `<div class="center"><h1>Could not load</h1><p class="mu">Please check your internet connection and refresh.</p></div>`;
   }
 })();

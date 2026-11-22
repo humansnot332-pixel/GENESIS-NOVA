@@ -24,7 +24,7 @@ import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
-import { htmlToPdf, makeFillable } from "./qpdf.js";
+import { htmlToPdf, elementToPdf, makeFillable } from "./qpdf.js";
 import { pickData, pickScript, fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
 
@@ -2110,7 +2110,7 @@ async function quoteEditor(q0) {
       syncAll();
       if (saveSig() !== savedSig) return toast(L("Pehle Save dabao — customer ko saved quotation hi jaati hai (PDF + online link)", "Press Save first — the customer gets the saved quotation (PDF + online link)"), true);
     }
-    const link = await shareQuote(q, ch, ch === "email" ? { attach: () => ({ name: pdfName(q), make: () => quotePdf(q) }) } : undefined);
+    const link = await shareQuote(q, ch, ch === "email" ? { attach: (url) => ({ name: pdfName(q), make: () => quotePdf(q, url) }) } : undefined);
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
   };
   $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
@@ -2166,9 +2166,54 @@ function printQuote(q) {
   window.print();
 }
 const pdfName = (q) => `Quotation ${String(q.quote_no || "draft").replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
-/** the quotation as a PDF file (same layout as Print) in which the customer ticks / unticks items and the
- *  totals with GST change inside the PDF → { blob, name, pages, bytes } */
-async function quotePdf(q) {
+/** the quotation as a PDF that looks exactly like the customer's online page (quote.html, drawn in a hidden
+ *  frame in preview mode — no view counted); the customer ticks / unticks items and the totals with GST
+ *  change inside the PDF → { blob, name, pages, bytes } */
+async function quotePdf(q, link) {
+  const tok = String(link || "").split("#")[1];
+  if (!tok) return quotePdfPrint(q);
+  const W = 1040, fr = document.createElement("iframe");
+  fr.className = "pdf-stage"; fr.setAttribute("aria-hidden", "true"); fr.tabIndex = -1;
+  fr.style.cssText = `width:${W}px;height:1400px;border:0`;
+  fr.src = new URL("quote.html#" + tok + "&pdf=1", location.href.split("#")[0]).href;
+  document.body.append(fr);
+  try {
+    await new Promise((ok, no) => {
+      const t0 = Date.now();
+      const tick = () => {
+        let ready = false, err = null;
+        try { ready = !!fr.contentWindow?.__pdfReady; err = fr.contentWindow?.__pdfError || null; } catch { /* not loaded yet / blocked */ }
+        if (ready) return ok();
+        if (err) return no(new Error(err));
+        if (Date.now() - t0 > 25000) return no(new Error("quotation page did not load"));
+        setTimeout(tick, 150);
+      };
+      tick();
+    });
+    const w = fr.contentWindow, root = w.document.getElementById("app"), p = w.__pick;
+    if (!p) throw new Error("no items");
+    // never cut anything off: a table wider than its card (long words, many columns) → widen the frame until it fits
+    let full = W;
+    for (let i = 0; i < 4; i++) {
+      const card = w.document.querySelector(".card"), cs = card && w.getComputedStyle(card);
+      const inner = card ? card.getBoundingClientRect().right - parseFloat(cs.paddingRight || 0) : full;
+      const right = Math.max(0, ...[...w.document.querySelectorAll(".card table")].map((t) => t.getBoundingClientRect().right));
+      const over = Math.ceil(right - inner);
+      if (over <= 0) break;
+      full += over + 12; fr.style.width = full + "px";
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    fr.style.height = Math.ceil(root.scrollHeight + 40) + "px";
+    await new Promise((r) => setTimeout(r, 80));
+    const r = await elementToPdf(root, { width: full, title: "Quotation " + (q.quote_no || ""), marks: "td.ck[data-pk], [data-tot]" });
+    const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand) };
+    p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
+    const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, tickTop: true });
+    return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
+  } finally { fr.remove(); }
+}
+// fallback (no online link): the print layout with ticks
+async function quotePdfPrint(q) {
   const p = pickData(q.items || [], { inter: qCalc(q).inter, roundOff: q.round_off, showOptional: q.show_optional });
   const r = await htmlToPdf((root) => quoteDoc(q, root, { pick: p }), { title: "Quotation " + (q.quote_no || ""), marks: "[data-pi], [data-tot]" });
   const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand), words: amountWords(p.T.grand) };

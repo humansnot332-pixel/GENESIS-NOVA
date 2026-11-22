@@ -25,29 +25,34 @@ const loadFormLib = () => (formLib ||= loadScript("pdf-lib.min.js")
  *   [{ key, page, x, top, w, h }] in PDF points, top measured from the top of that page
  * → { blob, pages, bytes, marks }
  */
-export async function htmlToPdf(fill, { title = "Document", linkSel = null, url = null, marks: markSel = null } = {}) {
-  await loadLibs();
+export async function htmlToPdf(fill, opts = {}) {
   const stage = document.createElement("div");
   stage.className = "pdf-stage"; stage.setAttribute("aria-hidden", "true");
   const root = document.createElement("div"); root.style.width = A4W + "px";
   stage.append(root); document.body.append(stage);
-  try {
-    await fill(root);
-    await document.fonts?.ready;
+  try { await fill(root); return await elementToPdf(root, { ...opts, width: A4W }); }
+  finally { stage.remove(); }
+}
+/** an element already laid out (in this page or in an iframe), `width` CSS px wide → A4 portrait PDF */
+export async function elementToPdf(root, { title = "Document", linkSel = null, url = null, marks: markSel = null, width = A4W } = {}) {
+  await loadLibs();
+  const W = width, Hpg = W * 297 / 210, PAD = PAD_Y * W / A4W;
+  {
+    await root.ownerDocument.fonts?.ready;
     await Promise.all([...root.querySelectorAll("img")].map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; })));
     const top0 = root.getBoundingClientRect().top, total = Math.ceil(root.scrollHeight);
     const rel = (el) => { const r = el.getBoundingClientRect(); return { top: r.top - top0, bottom: r.bottom - top0, left: r.left - root.getBoundingClientRect().left, width: r.width, height: r.height }; };
     const cuts = [...new Set([...root.querySelectorAll(BREAK_AT)].map((el) => Math.round(rel(el).bottom)))].filter((y) => y > 0 && y < total).sort((a, b) => a - b);
     const forced = [...root.querySelectorAll(".qannex, [data-pdf-break]")].map((el) => Math.round(rel(el).top)).filter((y) => y > 0 && y < total);
     const link = linkSel && url ? root.querySelector(linkSel) : null, lr = link ? rel(link) : null;
-    const want = markSel ? [...root.querySelectorAll(markSel)].map((el) => ({ key: el.dataset.pi != null ? "it" + el.dataset.pi : el.dataset.tot, r: rel(el) })) : [];
+    const want = markSel ? [...root.querySelectorAll(markSel)].map((el) => ({ key: el.dataset.pi != null ? "it" + el.dataset.pi : el.dataset.pk != null ? "it" + el.dataset.pk : el.dataset.tot, r: rel(el) })) : [];
     const marks = [];
 
-    const canvas = await window.html2canvas(root, { scale: SCALE, backgroundColor: "#ffffff", useCORS: true, logging: false, windowWidth: A4W });
+    const canvas = await window.html2canvas(root, { scale: SCALE, backgroundColor: "#ffffff", useCORS: true, logging: false, windowWidth: W });
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait", compress: true });
     pdf.setProperties({ title, creator: "Genesis Nova CRM" });
-    const pw = pdf.internal.pageSize.getWidth(), k = pw / A4W, room = A4H - 2 * PAD_Y;
+    const pw = pdf.internal.pageSize.getWidth(), k = pw / W, room = Hpg - 2 * PAD;
     let y = 0, page = 0;
     while (y < total - 1) {
       const limit = y + room;
@@ -59,15 +64,15 @@ export async function htmlToPdf(fill, { title = "Document", linkSel = null, url 
       const g = part.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, part.width, part.height);
       g.drawImage(canvas, 0, Math.floor(y * SCALE), canvas.width, part.height, 0, 0, part.width, part.height);
       if (page) pdf.addPage();
-      pdf.addImage(part.toDataURL("image/jpeg", 0.9), "JPEG", 0, PAD_Y * k, pw, h * k, undefined, "FAST");
+      pdf.addImage(part.toDataURL("image/jpeg", 0.9), "JPEG", 0, PAD * k, pw, h * k, undefined, "FAST");
       // the online link stays clickable in the PDF
-      if (lr && lr.top >= y && lr.bottom <= cut) pdf.link(lr.left * k, (PAD_Y + lr.top - y) * k, lr.width * k, lr.height * k, { url });
-      for (const m of want) if (m.r.top >= y - 0.5 && m.r.bottom <= cut + 0.5) marks.push({ key: m.key, page, x: m.r.left * k, top: (PAD_Y + m.r.top - y) * k, w: m.r.width * k, h: m.r.height * k });
+      if (lr && lr.top >= y && lr.bottom <= cut) pdf.link(lr.left * k, (PAD + lr.top - y) * k, lr.width * k, lr.height * k, { url });
+      for (const m of want) if (m.r.top >= y - 0.5 && m.r.bottom <= cut + 0.5) marks.push({ key: m.key, page, x: m.r.left * k, top: (PAD + m.r.top - y) * k, w: m.r.width * k, h: m.r.height * k });
       y = cut; page++;
     }
     const blob = pdf.output("blob");
     return { blob, pages: page, bytes: blob.size, marks };
-  } finally { stage.remove(); }
+  }
 }
 
 /** Blob → base64 (no "data:" prefix) — for Outlook attachments */
@@ -87,7 +92,7 @@ export function saveBlob(blob, name) {
  * text box laid over the printed value (white background), named "t_<key>". Ticking a box runs `script`
  * (PDF JavaScript), which fills the text boxes again.
  */
-export async function makeFillable(blob, marks, { checked = {}, script = "", values = {} } = {}) {
+export async function makeFillable(blob, marks, { checked = {}, script = "", values = {}, tickTop = false } = {}) {
   await loadFormLib();
   const { PDFDocument, StandardFonts, rgb, TextAlignment, PDFName, PDFHexString } = window.PDFLib;
   const doc = await PDFDocument.load(await blob.arrayBuffer());
@@ -100,7 +105,8 @@ export async function makeFillable(blob, marks, { checked = {}, script = "", val
     const H = pg.getHeight();
     if (m.key.startsWith("it")) {
       const size = 10, cb = form.createCheckBox(m.key);
-      cb.addToPage(pg, { x: m.x + (m.w - size) / 2, y: H - m.top - m.h / 2 - size / 2, width: size, height: size, borderWidth: 1, borderColor: teal, backgroundColor: white, textColor: teal });
+      const cy = tickTop ? Math.min(m.h / 2, 11) : m.h / 2;     // tickTop: level with the item's first line
+      cb.addToPage(pg, { x: m.x + (m.w - size) / 2, y: H - m.top - cy - size / 2, width: size, height: size, borderWidth: 1, borderColor: teal, backgroundColor: white, textColor: teal });
       if (checked[m.key.slice(2)]) cb.check();
       // the click runs the script: /A (Acrobat, Firefox) and mouse-up /AA /U (Chrome / Edge) — running twice is harmless
       if (action) cb.acroField.getWidgets().forEach((w) => { w.dict.set(PDFName.of("A"), action); w.dict.set(PDFName.of("AA"), doc.context.obj({ U: action })); });
@@ -108,7 +114,10 @@ export async function makeFillable(blob, marks, { checked = {}, script = "", val
       const tf = form.createTextField("t_" + m.key), big = m.key === "grand", words = m.key === "words";
       tf.addToPage(pg, { x: m.x + 1, y: H - m.top - m.h + 1, width: Math.max(10, m.w - 2), height: Math.max(8, m.h - 2), borderWidth: 0, backgroundColor: white, font: big ? bold : font });
       tf.setAlignment(words ? TextAlignment.Left : TextAlignment.Right);
-      tf.setFontSize(words ? 8.5 : big ? 8.5 : 8);
+      // the text must fit even when ticking more items adds a digit (one spare character)
+      const f = big ? bold : font, sample = String(values[m.key] ?? "") + "0", room = Math.max(8, m.w - 6);
+      const fit = sample.length > 1 ? room / f.widthOfTextAtSize(sample, 1) : 99;
+      tf.setFontSize(Math.max(5.5, Math.min(big ? 11 : 9, m.h * (big ? 0.55 : 0.6), fit)));
       tf.setText(String(values[m.key] ?? ""));
       tf.updateAppearances(big ? bold : font);
       tf.enableReadOnly();

@@ -51,6 +51,20 @@
   @media print { body { background:#fff; color:#000 } .actions, #resp { display:none } .card { border:0; box-shadow:none; padding:0 } .annex { break-before:page; margin-top:0 } .rich { background:none; padding:0 } .optbox input, .optbox .hint, .optsum { display:none }
     .pick .ck, .pickhint, .selsum { display:none } .pick tbody:first-of-type tr:not(.on) { display:none } .pick tbody:first-of-type tr.on td { background:none } }
 </style>
+<style>
+  /* PDF made by the CRM from this page: light, flat, the HTML tick boxes hidden (the PDF draws its own), no dimmed rows */
+  :root.pdfmode { --bg:#fff; --card:#fff; --ink:#0f172a; --mu:#64748b; --line:#e2e8f0; --acc:#2563eb; --good:#059669; --warn:#d97706; }
+  .pdfmode body { background:#fff } .pdfmode .wrap { max-width:none; margin:0; padding:0 }
+  .pdfmode .card { border:0; box-shadow:none; border-radius:0; padding:20px 24px } .pdfmode .tw { overflow:visible }
+  .pdfmode .rich { background:none; color:inherit; padding:0 } .pdfmode .pick input[type=checkbox] { visibility:hidden }
+  .pdfmode .pick tbody:first-of-type tr td, .pdfmode .pick tbody:first-of-type tr:not(.on) td { background:none; opacity:1; text-decoration:none }
+  .pdfmode .annex { margin-top:0 } .pdfmode #selSum { display:none }
+  .pdfmode table { min-width:0 } .pdfmode th, .pdfmode td { padding:8px 7px } .pdfmode td.nw { white-space:normal }
+  .pdfmode .pick tr:not(.tot):not(.grand) > td:nth-child(3) { min-width:200px }
+  /* the PDF drawer (html2canvas) cannot read color-mix() → plain colours that look the same on white */
+  .pdfmode .note.ok, .pdfmode .optsum, .pdfmode .selsum { background:#dcf1ea } .pdfmode .note.w { background:#fbeedb } .pdfmode .selsum.bad { background:#fde2e2 }
+  .pdfmode .rich th { background:#f1f3f6 } .pdfmode .optbox tr.on td { background:#e6f4ef } .pdfmode .pickhint { background:#e9effd } .pdfmode .otag { background:#f9e7cb }
+</style>
 <script type="module" src="quote.js"></script>
 </head>
 <body>
