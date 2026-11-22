@@ -67,7 +67,7 @@ const dec = (v, places) => new RegExp(`^\\d+(\\.\\d{1,${places}})?$`).test(Strin
  *  k = "name" | "contact" | "phone" | "email" | "gstin" | "state" | "items" | "desc" | "qty" | "price" | "hsn" | "date" | "validity"
  *  i = item row (for item fields)
  */
-export function checkQuote(q, tp, { today = new Date().toISOString().slice(0, 10) } = {}) {
+export function checkQuote(q, tp, { today = new Date().toISOString().slice(0, 10), keepDate = null } = {}) {
   const e = [], L2 = (h, en) => ({ h, en });
   const name = String(tp.name || "").trim();
   if (name.length < 2) e.push({ k: "name", ...L2("Customer ka naam daalo", "Enter the customer's name") });
@@ -97,7 +97,8 @@ export function checkQuote(q, tp, { today = new Date().toISOString().slice(0, 10
     if (!dec(pr, 2) || +pr > 100000000) e.push({ k: "price", i, ...L2(`Item ${n}: rate 0 ya usse zyada, max 2 decimal`, `Item ${n}: rate must be 0 or more, max 2 decimals`) });
     if (!hsnOk(it.hsn)) e.push({ k: "hsn", i, ...L2(`Item ${n}: HSN/SAC 4, 6 ya 8 digit ka hota hai`, `Item ${n}: HSN/SAC has 4, 6 or 8 digits`) });
   });
-  if (q.quote_date) {
+  // an old quotation (e.g. from the ERP) keeps its own date — only a date typed now must be recent
+  if (q.quote_date && q.quote_date !== keepDate) {
     const max = new Date(today + "T00:00:00"); max.setDate(max.getDate() + 30);
     const min = new Date(today + "T00:00:00"); min.setFullYear(min.getFullYear() - 1);
     const d = new Date(q.quote_date + "T00:00:00");

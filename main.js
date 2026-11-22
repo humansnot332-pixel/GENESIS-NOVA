@@ -1603,13 +1603,63 @@ const w3 = (n) => (n >= 100 ? W1[Math.floor(n / 100)] + " Hundred" + (n % 100 ? 
 function wInt(n) { if (!n) return "Zero"; const p = [], cr = Math.floor(n / 1e7); n %= 1e7; const la = Math.floor(n / 1e5); n %= 1e5; const th = Math.floor(n / 1e3); n %= 1e3; if (cr) p.push(wInt(cr) + " Crore"); if (la) p.push(w2(la) + " Lakh"); if (th) p.push(w2(th) + " Thousand"); if (n) p.push(w3(n)); return p.join(" "); }
 const rupeesWords = (v) => { v = r2(v); const r = Math.floor(v), ps = Math.round((v - r) * 100); return wInt(r) + " Rupees" + (ps ? " and " + w2(ps) + " Paise" : "") + " Only"; };
 
-VIEWS.quotes = async (el) => {
-  const { data, error } = await sb.from("quotations").select("id, quote_no, to_party, status, grand_total, created_at, owner_id, lead_id, view_count, customer_response").order("created_at", { ascending: false }).limit(200);
-  if (error) throw error;
-  el.innerHTML = `<div class="toolbar"><span class="mu">GST quotations — CGST/SGST ya IGST state ke hisaab se apne aap.</span><span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
-  <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>` : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
-  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${h(userName(q.owner_id))}</td><td class="sub">${h(dOnly(q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
+// Quotations page: search (number / customer), status, CRM vs ERP history, one customer, 100 at a time
+const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100 };
+let qSeq = 0;
+HOOK.quotesFor = (id, name) => {
+  Object.assign(QF, { lead: id, leadName: name || "", q: "", st: "", src: "", n: 100 });
+  closeDrawer();
+  if (S.route === "quotes") VIEWS.quotes($("#page")); else location.hash = "#/quotes";
 };
+const erpBy = (q) => (String(q.note_internal || "").match(/Banayi: ([^·]+)/) || [])[1]?.trim() || "";
+VIEWS.quotes = async (el, soft) => {
+  if (!soft || !$("#qtb", el)) {
+    const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"]];
+    el.innerHTML = `<div class="toolbar" id="qtb">
+      <input class="input grow" id="qq" type="search" maxlength="80" autocomplete="off" value="${h(QF.q)}" aria-label="${h(L("Quotation dhoondo", "Search quotations"))}"
+        placeholder="${h(L("Quotation no. ya customer ka naam…", "Quotation no. or customer name…"))}">
+      <div class="chips" id="qst" role="group" aria-label="Status">${ST.map(([k, t]) => `<button class="chip ${QF.st === k ? "on" : ""}" data-st="${k}" aria-pressed="${QF.st === k}">${h(t)}</button>`).join("")}</div>
+      <select class="input" id="qsrc" style="width:auto" aria-label="${h(L("Kahan se", "Source"))}">
+        <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select>
+      <span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
+    <div id="qlead"></div>
+    <div class="card"><div class="tbl-wrap" id="qbody"><div class="empty">Loading…</div></div><div id="qfoot"></div></div>`;
+    let t;
+    $("#qq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { QF.q = e.target.value.trim(); QF.n = 100; loadQuotes(el); }, 280); };
+    $$("#qst .chip", el).forEach((b) => b.onclick = () => {
+      QF.st = b.dataset.st; QF.n = 100;
+      $$("#qst .chip", el).forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
+      loadQuotes(el);
+    });
+    $("#qsrc", el).onchange = (e) => { QF.src = e.target.value; QF.n = 100; loadQuotes(el); };
+  }
+  await loadQuotes(el);
+};
+async function loadQuotes(el) {
+  const seq = ++qSeq;
+  let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal", { count: "exact" })
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);
+  if (QF.st) q = q.eq("status", QF.st);
+  if (QF.src === "erp") q = q.not("import_batch", "is", null); else if (QF.src === "crm") q = q.is("import_batch", null);
+  if (QF.lead) q = q.eq("lead_id", QF.lead);
+  // words only (punctuation → "anything"): "dr. mahinder" finds "DR. MAHINDER WATSA", "7737" finds "PR/26/7737"
+  const term = QF.q.split(/[^\p{L}\p{N}&/-]+/u).filter(Boolean).join("*");
+  if (term) q = q.or(`quote_no.ilike."*${term}*",to_party->>name.ilike."*${term}*"`);
+  const { data, error, count } = await q;
+  if (seq !== qSeq || !$("#qbody", el)) return;
+  if (error) throw error;
+  $("#qlead", el).innerHTML = QF.lead ? `<div class="row" style="margin:0 0 10px"><span class="badge info" style="height:28px;padding:0 10px">🏢 ${h(L("Sirf", "Only"))}: ${h(QF.leadName || "#" + QF.lead)}</span><button class="btn sm" id="qlx">✕ ${L("Sab customers", "All customers")}</button></div>` : "";
+  if (QF.lead) $("#qlx", el).onclick = () => { QF.lead = null; QF.leadName = ""; QF.n = 100; loadQuotes(el); };
+  const filtered = QF.q || QF.st || QF.src || QF.lead;
+  $("#qbody", el).innerHTML = !data.length ? (filtered ? `<div class="empty"><b>${L("Kuch nahi mila", "Nothing found")}</b>${L("Search ya filter badal ke dekho", "Try another search or filter")}</div>`
+      : `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>`)
+    : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
+  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${h(q.owner_id ? userName(q.owner_id) : erpBy(q) || "—")}</td><td class="sub">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+  const total = count ?? data.length;
+  $("#qfoot", el).innerHTML = data.length ? `<div class="row" style="padding:10px 16px;border-top:1px solid var(--line)"><span class="mu">${L(`${num(data.length)} / ${num(total)} dikh rahi hain`, `Showing ${num(data.length)} of ${num(total)}`)}</span><span class="sp" style="flex:1"></span>${total > data.length ? `<button class="btn sm" id="qmore">${L("100 aur dikhao", "Show 100 more")}</button>` : ""}</div>` : "";
+  const more = $("#qmore", el);
+  if (more) more.onclick = () => busy(more, async () => { QF.n += 100; await loadQuotes(el); });
+}
 ACT.newQuote = () => quoteEditor({ to_party: { state: "Maharashtra" }, items: [] });
 ACT.delQuote = async (t) => {
   const no = t.dataset.no || "", co = t.dataset.co || "";
@@ -1623,7 +1673,7 @@ ACT.delQuote = async (t) => {
   const d = data[0];
   if (d.lead_id) sb.from("activities").insert({ lead_id: d.lead_id, kind: "system", body: `🗑 Quotation ${d.quote_no} delete ki` }).then(() => {}, () => {});
   closeModal(); toast(L(`🗑 Quotation ${no} delete ho gayi`, `🗑 Quotation ${no} deleted`));
-  if (S.route === "quotes") VIEWS.quotes($("#page"));
+  if (S.route === "quotes") loadQuotes($("#page")).catch(() => {});
 };
 ACT.quote = async (t) => { const { data, error } = await sb.from("quotations").select("*").eq("id", +t.dataset.id).single(); if (error) return fail(error); quoteEditor(data); };
 
@@ -2062,7 +2112,7 @@ async function quoteEditor(q0) {
     q.items = q.items.filter((it) => String(it.desc || "").trim() || +it.price || String(it.details || "").trim());
     if (q.items.length !== before) drawItems();
     $$(".bad", m).forEach((x) => { x.classList.remove("bad"); x.removeAttribute("aria-invalid"); });
-    const errs = checkQuote(q, tp), hard = errs.filter((x) => !x.soft);
+    const errs = checkQuote(q, tp, { keepDate: q0.id ? q0.quote_date : null }), hard = errs.filter((x) => !x.soft);
     const where = (x) => x.i != null ? $(`[data-i="${x.i}"][data-k="${x.k}"]`, m)
       : ({ name: $("#qcn", m), date: $("#qdate", m), validity: $("#qval", m), items: $("#qadd", m) })[x.k] || $(`[data-tp="${x.k}"]`, m);
     errs.forEach((x) => { const el = where(x); if (el && !x.soft) { el.classList.add("bad"); el.setAttribute("aria-invalid", "true"); el.title = L(x.h, x.en); } });

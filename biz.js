@@ -730,13 +730,16 @@ export async function viewDuplicates(el) {
 //  LEAD DRAWER PANEL: renewals · orders · invoices · tickets · visits
 // =====================================================================
 export async function leadPanel(box, lead, reopen) {
-  const [{ data: rn }, { data: od }, { data: iv }, { data: tk }, { data: vs }] = await Promise.all([
+  const [{ data: rn }, { data: od }, { data: iv }, { data: tk }, { data: vs }, { data: qs, count: qn }] = await Promise.all([
     sb.from("renewals").select("*").eq("lead_id", lead.id).eq("status", "active").order("end_date"),
     sb.from("orders").select("id, order_no, amount, status, created_at").eq("lead_id", lead.id).order("created_at", { ascending: false }).limit(10),
     sb.from("invoice_balances").select("*").eq("lead_id", lead.id).order("invoice_date", { ascending: false }).limit(10),
     sb.from("tickets").select("id, ticket_no, title, status").eq("lead_id", lead.id).in("status", ["open", "in_progress", "waiting"]),
     sb.from("visits").select("id").eq("lead_id", lead.id),
+    sb.from("quotations").select("id, quote_no, status, grand_total, quote_date, created_at, import_batch", { count: "exact" })
+      .eq("lead_id", lead.id).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(5),
   ]);
+  const QB = { won: "good", lost: "bad", sent: "info" };
   const due = (iv || []).filter((i) => !i.cancelled && +i.balance > 0.5);
   const can = canWork(lead);
   box.innerHTML = `<div class="card sec"><div class="card-h"><h3>💼 ${L("Account", "Account")}</h3><span class="sp"></span>
@@ -746,12 +749,15 @@ export async function leadPanel(box, lead, reopen) {
       ${due.map((i) => `<div class="row lp-row">🧾 <span style="flex:1" class="mono">${h(i.invoice_no)}</span><span class="badge ${PAYB[i.pay_status]}">${h(i.pay_status)}</span><b>${inr(i.balance)}</b> <span class="mu">${L("baaki", "due")}</span></div>`).join("")}
       ${(od || []).slice(0, 3).map((o) => `<div class="row lp-row">📦 <span style="flex:1" class="mono">${h(o.order_no)}</span><span class="badge">${h(o.status)}</span>${inr(o.amount)}</div>`).join("")}
       ${(tk || []).map((t) => `<div class="row lp-row" data-lpt="${t.id}">🛠 <span style="flex:1">${h(t.ticket_no)} · ${h(t.title)}</span>${tBadge(t.status)}</div>`).join("")}
-      ${!(rn || []).length && !due.length && !(od || []).length && !(tk || []).length ? `<div class="mu" style="padding:8px 0">${L("Koi renewal, order, payment ya ticket nahi", "No renewals, orders, dues or tickets")}${vs?.length ? ` · 📍 ${vs.length} visits` : ""}</div>` : vs?.length ? `<div class="mu" style="padding:6px 0;font-size:12px">📍 ${vs.length} ${L("visits", "visits")}</div>` : ""}
+      ${(qs || []).map((q) => `<div class="row lp-row" data-act="quote" data-id="${q.id}" role="button" tabindex="0">📄 <span style="flex:1"><span class="mono">${h(q.quote_no)}</span>${q.import_batch ? ' <span class="badge">ERP</span>' : ""} <span class="mu">${h(dOnly(q.quote_date || q.created_at))}</span></span><span class="badge ${QB[q.status] || ""}">${h(q.status)}</span>${inr(q.grand_total)}</div>`).join("")}
+      ${qn > 0 ? `<div class="row" style="padding:4px 0 8px"><button class="btn sm ghost" data-lp="allq">📄 ${qn > (qs || []).length ? L(`Sab ${qn} quotations dekho`, `See all ${qn} quotations`) : L("Quotations page par dekho", "Open in Quotations")}</button></div>` : ""}
+      ${!(rn || []).length && !due.length && !(od || []).length && !(tk || []).length && !qn ? `<div class="mu" style="padding:8px 0">${L("Koi renewal, order, payment ya ticket nahi", "No renewals, orders, dues or tickets")}${vs?.length ? ` · 📍 ${vs.length} visits` : ""}</div>` : vs?.length ? `<div class="mu" style="padding:6px 0;font-size:12px">📍 ${vs.length} ${L("visits", "visits")}</div>` : ""}
     </div></div>`;
   $$("[data-lp]", box).forEach((b) => b.onclick = () => {
     if (b.dataset.lp === "visit") return checkIn(lead, reopen);
     if (b.dataset.lp === "ren") return renewalForm({ lead_id: lead.id, owner_id: lead.owner_id || S.me.id }, reopen);
     if (b.dataset.lp === "tkt") return ticketForm({ lead_id: lead.id }, reopen);
+    if (b.dataset.lp === "allq") return HOOK.quotesFor?.(lead.id, lead.company);
   });
   $$("[data-lpr]", box).forEach((r) => r.onclick = () => renewalForm(rn.find((x) => x.id === +r.dataset.lpr), reopen));
   $$("[data-lpt]", box).forEach((r) => r.onclick = () => { location.hash = "#/support/" + r.dataset.lpt; });
