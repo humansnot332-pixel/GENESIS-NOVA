@@ -2243,7 +2243,7 @@ function quoteDoc(q, pr, { link = null, pick = null } = {}) {
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
     ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> — tick or untick items to see the total with GST, and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
-    ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Adobe Reader, Chrome, Edge, Firefox; some phone viewers don't update the total.)</span></div>` : ""}
+    ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Open in Chrome, Adobe Reader or Edge — Mac Preview, Safari and phone viewers don't update the total.)</span></div>` : ""}
     <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table class="qlines">${head}<tbody>
     ${pick ? pickBody() : `${inc.map((it, i) => rowHtml(it, i)).join("")}

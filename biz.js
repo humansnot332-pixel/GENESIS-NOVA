@@ -530,8 +530,8 @@ export async function shareQuote(q, channel, extra = {}) {
   const prod = (q.items || []).filter((i) => !i.opt).map((i) => String(i.desc || "").split("\n")[0]).filter(Boolean).slice(0, 2).join(", ");
   const pdfTicks = !!extra.attach;   // email with the PDF: the customer ticks items inside the PDF, no link
   openComposer({ channel, lead, to: q.to_party?.email, stage: "quote", attach: extra.attach ? extra.attach(link) : null, vars: pdfTicks ? {
-    quote_link: "", quote_link_en: " In the attached PDF you can tick / untick items — the total with GST changes by itself; save it and reply with it to confirm.",
-    quote_link_hi: " Attached PDF mein hi items tick / untick karein — GST ke saath total apne aap badlega; PDF save karke reply mein bhej dein.",
+    quote_link: "", quote_link_en: " In the attached PDF you can tick / untick items — the total with GST changes by itself (open it in Chrome, Adobe Reader or Edge; Mac Preview / phone viewers don't update the total); save it and reply with it to confirm.",
+    quote_link_hi: " Attached PDF mein hi items tick / untick karein — GST ke saath total apne aap badlega (PDF Chrome, Adobe Reader ya Edge mein kholein; Mac Preview / phone viewer mein total nahi badalta); PDF save karke reply mein bhej dein.",
     quote_no: q.quote_no, ...(prod ? { product: prod } : {}) } : { quote_link: link, quote_link_en: ` You can also view it online — tick / untick items to see the total with GST, and accept it in one click: ${link}`, quote_link_hi: ` Online dekhein — items tick / untick karke GST ke saath total dekhein aur ek click mein accept karein: ${link}`, quote_no: q.quote_no, ...(prod ? { product: prod } : {}) } });
   return link;
 }

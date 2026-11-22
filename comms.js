@@ -323,8 +323,8 @@ export async function openComposer(opts) {
     const en = isEn() || /^(dear|hello|hi)\b/i.test(body.value.trim());
     const ins = (line) => { const i = body.value.indexOf("\n\n"); body.value = i < 0 ? body.value + "\n\n" + line : body.value.slice(0, i + 2) + line + "\n\n" + body.value.slice(i + 2); };
     if (opts.attach) {     // the PDF itself has the ticks — the mail only says so (no link)
-      if (!/tick/i.test(body.value)) ins(en ? "✅ In the attached PDF you can tick / untick items — the total with GST changes by itself. Save it and reply with it to confirm."
-                                            : "✅ Attached PDF mein hi items tick / untick karein — GST ke saath total apne aap badlega. PDF save karke reply mein bhej dein.");
+      if (!/tick/i.test(body.value)) ins(en ? "✅ In the attached PDF you can tick / untick items — the total with GST changes by itself (open it in Chrome, Adobe Reader or Edge; Mac Preview / phone viewers don't update the total). Save it and reply with it to confirm."
+                                            : "✅ Attached PDF mein hi items tick / untick karein — GST ke saath total apne aap badlega (PDF Chrome, Adobe Reader ya Edge mein kholein; Mac Preview / phone viewer mein total nahi badalta). PDF save karke reply mein bhej dein.");
       return;
     }
     const url = ctx.quote_link; if (!url) return;

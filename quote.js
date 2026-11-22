@@ -81,7 +81,7 @@ function render(q) {
     <div><b>To:</b> ${h(to.name || "")}${to.address ? "<br>" + h(to.address) : ""}${to.state ? ", " + h(to.state) : ""}${to.gstin ? "<br>GSTIN: " + h(to.gstin) : ""}${to.contact ? "<br>Kind Attn: " + h(to.contact) : ""}</div>
     ${q.site?.address ? `<div style="margin-top:6px"><b>Delivery / site:</b> ${h(q.site.address)}</div>` : ""}
     ${termRows(q).length ? `<div class="terms">${termRows(q).map(([k, v]) => `<div><span class="mu">${h(k)}</span><b>${h(v)}</b></div>`).join("")}</div>` : ""}
-    ${canPick ? `<p class="pickhint">${pdfMode ? "✔ <b>Tick the items you want in this PDF</b> — the total with GST updates by itself. Then save the PDF and reply to our email with it to confirm."
+    ${canPick ? `<p class="pickhint">${pdfMode ? "✔ <b>Tick the items you want in this PDF</b> — the total with GST updates by itself. Then save the PDF and reply to our email with it to confirm.<br><span class=\"mu\">Open it in <b>Google Chrome, Adobe Acrobat Reader or Microsoft Edge</b> — Mac Preview, Safari and phone viewers show the ticks but do not update the total.</span>"
       : "✔ <b>Tick the items you want</b> — the total with GST updates instantly. Accepting confirms exactly your selection."}</p>
     <div class="tw pick"><table>${head(true)}<tbody>
       ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"${pdfMode ? ` data-pk="${it.n}"` : ""}><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace('<pre class="pn">', it.opt ? '<span class="otag">Optional</span><pre class="pn">' : '<pre class="pn">')}</tr>`).join("")}
