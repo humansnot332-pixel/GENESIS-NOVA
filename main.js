@@ -878,6 +878,8 @@ ACT.callNext = (b) => busy(b, async () => {
 function closeDrawer() { $$(".drawer, .scrim:not(.m)").forEach((n) => n.remove()); }
 
 let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawers stacking on double-click / double route)
+// a lock's end: a won customer's lock never ends ("infinity" in the database)
+const lockTill = (u) => { const d = u ? new Date(u) : null; return !d || isNaN(d) || d.getFullYear() > 9000 ? L("hamesha ke liye (won)", "permanently (won)") : L("till ", "until ") + dt(u); };
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
   const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = await Promise.all([
@@ -908,8 +910,8 @@ async function openLead(id, opt = {}) {
         <div class="mu" style="font-size:13px">${h([l.contact_name, l.designation].filter(Boolean).join(" · "))}${l.contact_name ? " · " : ""}${h([l.area, l.city].filter(Boolean).join(", "))}</div></div>
         <button class="btn ghost icon" data-dclose aria-label="Close">${ic("x")}</button></div>
       <div class="row" style="margin-top:8px">${statusBadge(l.status)}<span class="badge">${h(l.category)}</span><span class="badge ${l.score >= 70 ? "good" : ""}">Score ${l.score}</span><span class="badge">${h(SOURCES[l.source] || l.source)}</span>${followBadge(l.next_follow_up)}</div>
-      ${lk.mine ? `<div class="lockbar mine">🔒 <div><b>Aap is lead pe kaam kar rahe ho</b><small>Lock ${lk.until && new Date(lk.until).getFullYear() > 9000 ? "permanent (won)" : "till " + h(dt(lk.until))} · har call / email pe apne aap badhta hai</small></div><button class="btn sm" data-lk="release">🔓 Release</button></div>`
-      : lk.other ? `<div class="lockbar other">🔒 <div><b>${h(lk.holder)} is lead pe kaam kar raha/rahi hai</b><small>${L(`Locked ${h(ago(l.locked_at))} · till ${h(dt(lk.until))}. Aap dekh sakte ho, par call / email / edit sirf ${h(lk.holder)} karega.`, `Locked ${h(ago(l.locked_at))} · until ${h(dt(lk.until))}. You can view it, but only ${h(lk.holder)} can call / email / edit.`)}</small></div>
+      ${lk.mine ? `<div class="lockbar mine">🔒 <div><b>Aap is lead pe kaam kar rahe ho</b><small>Lock ${lk.until && new Date(lk.until).getFullYear() > 9000 ? "permanent (won)" : h(lockTill(lk.until))} · har call / email pe apne aap badhta hai</small></div><button class="btn sm" data-lk="release">🔓 Release</button></div>`
+      : lk.other ? `<div class="lockbar other">🔒 <div><b>${h(lk.holder)} is lead pe kaam kar raha/rahi hai</b><small>${L(`Locked ${h(ago(l.locked_at))} · ${h(lockTill(lk.until))}. Aap dekh sakte ho, par call / email / edit sirf ${h(lk.holder)} karega.`, `Locked ${h(ago(l.locked_at))} · ${h(lockTill(lk.until))}. You can view it, but only ${h(lk.holder)} can call / email / edit.`)}</small></div>
           ${isMgr() ? `<button class="btn sm" data-lk="force">Force release</button>` : `<button class="btn sm primary" data-lk="request">🙋 Request access</button>`}</div>`
       : `<div class="lockbar free">🔓 <div><b>Free lead</b><small>Jo pehle lock karega, wahi kaam karega. Lock karte hi number dikhega.</small>${lastDrop ? `<small class="lastdrop">↩ ${L("Pichhli baar", "Last time")}: ${h(userName(lastDrop.from_user))} ${L("ne chhoda", "dropped it")} — “${h(lastDrop.reason)}” · ${h(ago(lastDrop.at))}</small>` : ""}</div><button class="btn sm primary" data-lk="claim">🔒 Lock karke shuru karo</button></div>`}
       <div class="contact">
@@ -1451,7 +1453,7 @@ function rfqForm(r) {
   const lk = lockOf(r), work = isNew || canWork(r);
   const m = modal({
     title: isNew ? "Naya RFQ" : `${r.rfq_no} · ${r.company}`, wide: true,
-    body: `${isNew ? "" : lk.mine ? `<div class="lockbar mine" style="margin-top:12px">🔒 <div><b>Ye RFQ aapke paas hai</b><small>Lock till ${h(dt(lk.until))}</small></div><button type="button" class="btn sm" id="rfRel">🔓 Release</button></div>`
+    body: `${isNew ? "" : lk.mine ? `<div class="lockbar mine" style="margin-top:12px">🔒 <div><b>Ye RFQ aapke paas hai</b><small>Lock ${h(lockTill(lk.until))}</small></div><button type="button" class="btn sm" id="rfRel">🔓 Release</button></div>`
       : lk.other ? `<div class="lockbar other" style="margin-top:12px">🔒 <div><b>${h(lk.holder)} is RFQ pe kaam kar raha/rahi hai</b><small>${L(`Aap dekh sakte ho, edit / quote / email sirf ${h(lk.holder)} karega.`, `You can view it, but only ${h(lk.holder)} can edit / quote / email.`)}</small></div>${isMgr() ? `<button type="button" class="btn sm" id="rfRel">Force release</button>` : `<button type="button" class="btn sm primary" id="rfReq">🙋 Request access</button>`}</div>`
       : `<div class="lockbar free" style="margin-top:12px">🔓 <div><b>Free RFQ</b><small>Lock karo — phir sirf aap is pe kaam karoge.</small></div><button type="button" class="btn sm primary" id="rfClaim">🔒 Lock karo</button></div>`}
     ${isNew ? "" : '<div id="rfMails"></div>'}
