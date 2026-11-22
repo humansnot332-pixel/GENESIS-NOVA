@@ -24,6 +24,7 @@ import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
+import { htmlToPdf } from "./qpdf.js";
 import { pushCard, pushResync } from "./push.js";
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -2097,8 +2098,16 @@ async function quoteEditor(q0) {
   };
 
   $("#qp", m)?.addEventListener("click", () => { syncAll(); printQuote(q); });
+  // what the customer gets (PDF + online link) is the SAVED quotation → unsaved edits must be saved first
+  const saveSig = () => JSON.stringify([q.items, q.to_party, q.terms_html, q.annexure_html, q.note_customer, q.quote_date, q.validity_days, q.payment_terms, q.delivery, q.ref, q.site, q.amc, q.round_off, q.show_optional]);
+  let savedSig = null;
+  if (q.id) requestAnimationFrame(() => { try { syncAll(); savedSig = saveSig(); } catch { /* editor closed */ } });
   const shared = async (ch) => {
-    const link = await shareQuote(q, ch);
+    if (ch && q.id && savedSig != null) {
+      syncAll();
+      if (saveSig() !== savedSig) return toast(L("Pehle Save dabao — customer ko saved quotation hi jaati hai (PDF + online link)", "Press Save first — the customer gets the saved quotation (PDF + online link)"), true);
+    }
+    const link = await shareQuote(q, ch, ch === "email" ? { attach: (url) => ({ name: pdfName(q), make: () => quotePdf(q, url) }) } : undefined);
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
   };
   $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
@@ -2148,6 +2157,19 @@ async function quoteEditor(q0) {
   });
 }
 function printQuote(q) {
+  let pr = document.getElementById("printRoot");
+  if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
+  quoteDoc(q, pr);
+  window.print();
+}
+const pdfName = (q) => `Quotation ${String(q.quote_no || "draft").replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
+/** the quotation as a PDF file (same layout as Print) with the online link inside → { blob, name, pages, bytes } */
+async function quotePdf(q, link) {
+  const r = await htmlToPdf((root) => quoteDoc(q, root, { link }), { title: "Quotation " + (q.quote_no || ""), linkSel: ".qlinkbox a", url: link });
+  return { ...r, name: pdfName(q) };
+}
+// the quotation document (Print / PDF): fills `pr`
+function quoteDoc(q, pr, { link = null } = {}) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
   const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
   // line table like the reference: Sr | Description | Taxation | HSN/SAC | Qty | Lic. Qty | Warranty | Price(Unit) | Taxable Value | Tax Amount | Total
@@ -2157,13 +2179,12 @@ function printQuote(q) {
     return `<tr><td class="c">${i + 1}</td><td><b>${h(it.desc)}</b>${it.details ? `<div class="qdt">${h(it.details)}</div>` : ""}</td><td>GST @${h(+it.tax || 0)}%</td><td class="c">${h(it.hsn || "------")}</td>
       <td class="c">${h(it.qty)}(${h(it.unit || "Number")})</td><td class="c">${h(it.lic || "N/A")}</td><td class="c">${h(it.warranty || "-----")}</td><td class="r">${n2(it.price)}</td><td class="r">${n2(tv)}</td><td class="r">${n2(ta)}</td><td class="r">${n2(tv + ta)}</td></tr>`; };
   const tot = (l, v, strong) => `<tr class="qtot"><td colspan="8" class="nob"></td><td colspan="2" class="r">${strong ? `<b>${l}</b>` : l}</td><td class="r">${strong ? `<b>${v}</b>` : v}</td></tr>`;
-  let pr = document.getElementById("printRoot");
-  if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
   pr.innerHTML = `<div class="qdoc">
     <div class="hd"><div><h2>${h(co.name || CONFIG.COMPANY)}</h2><div>${h(co.address || "")}</div><div>GSTIN: ${h(co.gstin || "")} · PAN: ${h(co.pan || "")}</div></div>
       <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(q.quote_date ? niceDay(q.quote_date) : dOnly(q.created_at || new Date()))}</div></div></div>
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
+    ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> — tick or untick items to see the total with GST, and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
     <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table class="qlines">${head}<tbody>
     ${inc.map(rowHtml).join("")}
@@ -2180,7 +2201,7 @@ function printQuote(q) {
   const put = (k, html) => { const b = $(`[data-pr="${k}"]`, pr); if (html) renderRich($(".rich", b), html); else b.remove(); };
   put("terms", q.terms_html || textToHtml(q.notes));
   put("annex", q.annexure_html);
-  window.print();
+  return pr;
 }
 
 // ---------------------------------------------------------------------

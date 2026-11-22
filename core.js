@@ -147,12 +147,12 @@ const P = {
 export const ic = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${P[n] || ""}"/></svg>`;
 
 // ---------- toast ----------
-export function toast(msg, bad = false) {
+export function toast(msg, bad = false, ms = 0) {
   let w = document.querySelector(".toasts");
   if (!w) { w = document.createElement("div"); w.className = "toasts"; w.setAttribute("role", "status"); document.body.append(w); }
   const t = document.createElement("div");
   t.className = "toast" + (bad ? " bad" : ""); t.textContent = msg; w.append(t);
-  setTimeout(() => t.remove(), bad ? 5200 : 3200);
+  setTimeout(() => t.remove(), ms || (bad ? 5200 : 3200));
 }
 // toast with one action button (e.g. "↩ Undo"); stays a bit longer so it can be clicked
 export function toastAction(msg, label, fn, ms = 8000) {

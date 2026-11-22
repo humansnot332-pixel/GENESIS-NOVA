@@ -11,6 +11,7 @@ import {
 import { L, isEn, getLang } from "./i18n.js";
 import { CONFIG } from "./config.js";
 import { filesHtml, wireFiles, loadFiles } from "./files.js";
+import { blobB64, saveBlob } from "./qpdf.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -64,19 +65,50 @@ export function trackMail(html) {
 const NO_TRACK = (html) => ({ html, token: null, links: null });
 
 // ---------------------------------------------------------------------
+//  Attachments (the quotation PDF): made while the composer is open
+// ---------------------------------------------------------------------
+const GMAIL_FILES_V = 5;                      // Gmail script version that attaches files to its drafts
+const OUTLOOK_MAX = 2.8e6;                    // Graph takes up to ~3 MB of attachment in one draft call
+const kb = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+// no automatic attaching possible (plain compose link / mail app) → the file is saved on this device to attach by hand
+function attachByHand(att) {
+  if (!att) return;
+  att.then((a) => { saveBlob(a.blob, a.name); toast(L(`📎 ${a.name} download ho gaya — mail mein attach karke Send karo`, `📎 ${a.name} downloaded — attach it to the mail and press Send`), false, 9000); },
+    () => toast(L("PDF nahi ban paya — Print se PDF save karke attach karo", "Couldn't make the PDF — save it from Print and attach it"), true));
+}
+
+// ---------------------------------------------------------------------
 //  Gmail draft with the team banner (made by the person's Gmail script)
 // ---------------------------------------------------------------------
-function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m }) {
+function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m, att = null, scriptV = 0 }) {
   // open the tab now (inside the click) — a tab opened later would be blocked
   const w = window.open("", "_blank");
   try { w.document.title = "Gmail draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Gmail draft ban raha hai…", "Making your Gmail draft…")}</b><br><span style="color:#667">${S.me.mail_webapp ? L("Template + Geninfo banner ke saath. Bas 2-3 second…", "With the template + Geninfo banner. Just 2-3 seconds…") : L("Template + Geninfo banner ke saath. ~30 second, ye tab apne aap khul jayega.", "With the template + Geninfo banner. ~30 seconds, this tab opens it automatically.")}</span></div>`; } catch { /* ignore */ }
   const plainUrl = composeUrl("gmail", parts);
   const go = (url) => { if (w && !w.closed) w.location.href = url; else if (!openTab(url)) toastAction(L("Gmail draft ready", "Gmail draft ready"), L("Kholo", "Open"), () => openTab(url), 20000); };
-  const html0 = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerHtml()}</div>`;
+  const html0 = `<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#222">${mdToHtml(text)}${bannerOn() ? bannerHtml() : ""}</div>`;
   const tr = bulk ? NO_TRACK(html0) : trackMail(html0), html = tr.html;   // one draft to many (BCC) can't tell who opened
-  sb.from("email_outbox").insert({ kind: "draft", to_addr: parts.to, cc: parts.cc || null, bcc: parts.bcc || null, subject: parts.subject, html, body: parts.body,
-    lead_id: !bulk && lead && canWork(lead) ? lead.id : null }).select("id").single().then(async ({ data: row, error }) => {
-    if (error) { go(plainUrl); return fail(error); }
+  // the PDF: kept in storage for a day, the Gmail script fetches it and attaches it to the draft
+  let hadFile = false;
+  const filesFor = async () => {
+    if (!att) return null;
+    let a;
+    try { a = await att; } catch { toast(L("PDF nahi ban paya — draft bina PDF ke ban raha hai", "Couldn't make the PDF — the draft is made without it"), true); return null; }
+    if (scriptV < GMAIL_FILES_V) {
+      saveBlob(a.blob, a.name);
+      toast(L(`📎 PDF download ho gaya — draft mein attach kar do. Agli baar apne aap lagega: Inbox → Gmail code update karo`, `📎 PDF downloaded — attach it to the draft. To attach it automatically next time: Inbox → update the Gmail code`), true, 12000);
+      return null;
+    }
+    const path = `out/${S.me.id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.pdf`;
+    const up = await sb.storage.from("crm-files").upload(path, a.blob, { contentType: "application/pdf", upsert: false });
+    const sg = up.error ? null : await sb.storage.from("crm-files").createSignedUrl(path, 2 * 86400);
+    if (up.error || sg?.error || !sg?.data?.signedUrl) { saveBlob(a.blob, a.name); toast(L("PDF upload nahi hua — download ho gaya, draft mein attach kar do", "Couldn't upload the PDF — it was downloaded, attach it to the draft"), true, 10000); return null; }
+    hadFile = true;
+    return [{ name: a.name, url: sg.data.signedUrl, mime: "application/pdf" }];
+  };
+  filesFor().then((files) => sb.from("email_outbox").insert({ kind: "draft", to_addr: parts.to, cc: parts.cc || null, bcc: parts.bcc || null, subject: parts.subject, html, body: parts.body,
+    lead_id: !bulk && lead && canWork(lead) ? lead.id : null, ...(files ? { files } : {}) }).select("id").single()).then(async ({ data: row, error }) => {
+    if (error) { go(plainUrl); if (hadFile) attachByHand(att); return fail(error); }
     logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu, track: tr }).catch(fail);
     const draftUrl = (d) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id || d.msg_id)}`;
     if (S.me.mail_webapp) {
@@ -86,18 +118,21 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
         if (mine) return go(draftUrl(mine));
       } catch { /* the timer will still pick it up */ }
     }
-    toast(L("⏳ Gmail draft ban raha hai — naye tab mein apne aap khulega (~30 sec)", "⏳ Making the Gmail draft — it opens in the new tab automatically (~30 sec)"));
+    const withFile = hadFile;
+    toast(withFile ? L("⏳ PDF ke saath Gmail draft ban raha hai — naye tab mein apne aap khulega (kabhi 5 min tak)", "⏳ Making the Gmail draft with the PDF — it opens in the new tab by itself (sometimes up to 5 min)")
+                   : L("⏳ Gmail draft ban raha hai — naye tab mein apne aap khulega (~30 sec)", "⏳ Making the Gmail draft — it opens in the new tab automatically (~30 sec)"));
     const t0 = Date.now();
-    while (Date.now() - t0 < 110000) {
+    while (Date.now() - t0 < (withFile ? 330000 : 110000)) {
       await new Promise((r) => setTimeout(r, 2500));
       const { data: d } = await sb.from("email_outbox").select("status, gmail_id, account, error").eq("id", row.id).single();
       if (d?.status === "drafted" && d.gmail_id) return go(draftUrl(d));
-      if (d?.status === "failed") { toast(L("Gmail draft nahi bana: ", "Couldn't make the Gmail draft: ") + (d.error || ""), true); return go(plainUrl); }
+      if (d?.status === "failed") { toast(L("Gmail draft nahi bana: ", "Couldn't make the Gmail draft: ") + (d.error || ""), true); if (withFile) attachByHand(att); return go(plainUrl); }
     }
     await sb.from("email_outbox").update({ status: "cancelled" }).eq("id", row.id).eq("status", "queued");
     toast(L("Gmail script jawab nahi de raha — bina banner ke Gmail khol diya", "The Gmail script didn't answer — opened Gmail without the banner"), true);
+    if (withFile) attachByHand(att);
     go(plainUrl);
-  });
+  }).catch((e) => { go(plainUrl); attachByHand(att); fail(e); });
   closeModal();
 }
 
@@ -114,7 +149,7 @@ async function bannerB64() {
   } catch { return null; }
 }
 const graphAddrs = (s) => String(s || "").split(/[,;\s]+/).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).map((address) => ({ emailAddress: { address } }));
-function openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId, fu }) {
+function openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId, fu, att = null }) {
   // open the tab now (inside the click) — a tab opened later would be blocked
   const w = window.open("", "_blank");
   try { w.document.title = "Outlook draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Outlook draft ban raha hai…", "Making your Outlook draft…")}</b><br><span style="color:#667">${L("Template + banner + open tracking ke saath. Bas 2-3 second…", "With the template, the banner and open tracking. Just 2-3 seconds…")}</span></div>`; } catch { /* ignore */ }
@@ -126,7 +161,7 @@ function openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId
     let token;
     try { token = await graphToken(false, MAIL_RW); }
     catch {
-      go(plainUrl); log(null);
+      go(plainUrl); log(null); attachByHand(att);
       toastAction(L("Outlook mein banner + open tracking ke liye ek baar permission do", "Allow Outlook once for the banner and open tracking"), L("Allow", "Allow"),
         () => graphToken(true, MAIL_RW).then(() => toast(L("✔ Ho gaya — agle mail se banner + tracking", "✔ Done — from the next mail: banner + tracking")), fail), 20000);
       return;
@@ -140,14 +175,22 @@ function openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId
       isReadReceiptRequested: !!tr.token && receiptOn(),
     };
     if (img) msg.attachments = [{ "@odata.type": "#microsoft.graph.fileAttachment", name: "geninfo-banner." + (img.type.split("/")[1] || "png"), contentType: img.type, contentBytes: img.data, isInline: true, contentId: "gnbanner" }];
+    let byHand = null;
+    if (att) {
+      try {
+        const a = await att;
+        if (a.bytes <= OUTLOOK_MAX) (msg.attachments ||= []).push({ "@odata.type": "#microsoft.graph.fileAttachment", name: a.name, contentType: "application/pdf", contentBytes: await blobB64(a.blob) });
+        else byHand = att;
+      } catch { byHand = att; }
+    }
     try {
       const r = await fetch("https://graph.microsoft.com/v1.0/me/messages", { method: "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify(msg) });
       if (!r.ok) throw new Error("Outlook " + r.status);
       const d = await r.json();
       if (!d.webLink) throw new Error("Outlook: no draft link");
-      go(d.webLink); log(tr);
+      go(d.webLink); log(tr); attachByHand(byHand);
     } catch {
-      go(plainUrl); log(null);
+      go(plainUrl); log(null); attachByHand(att);
       toast(L("Outlook draft nahi bana — bina banner ke Outlook khola", "Couldn't make the Outlook draft — opened Outlook without the banner"), true);
     }
   })();
@@ -252,6 +295,7 @@ export async function openComposer(opts) {
     <textarea class="input" id="cBody" style="min-height:300px;font-size:13.5px;line-height:1.55"></textarea>
     <div id="cPreview" class="script" style="display:none;max-height:340px;overflow:auto;background:var(--surface);border:1px solid var(--line)"></div>
     <div class="mu" style="font-size:12px;margin-top:4px">**text** = bold. Aap kuch bhi edit kar sakte ho — bhejne se pehle sab yahin badlo.</div>
+    ${isEmail && opts.attach ? `<div class="attrow" id="cAtt" aria-live="polite">📎 <span class="mu">${L("PDF ban raha hai…", "Making the PDF…")}</span></div>` : ""}
     ${isEmail && bannerOn() ? `<div class="sigtip" id="cSendInfo"><img src="${h(bannerUrl())}" alt=""><span>…</span></div>` : ""}
     ${lead && !bulk ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="cFu" ${lead.next_follow_up ? "" : "checked"}> 3 din baad follow-up reminder set karo</label>` : ""}
     <div id="cFallback"></div>`,
@@ -273,11 +317,46 @@ export async function openComposer(opts) {
     }
     body.dataset.dirty = "";
   };
-  apply(auto);
+  // the customer's online page (tick / untick items, total with GST, accept) is always in the mail
+  const addLink = () => {
+    const url = ctx.quote_link; if (!isEmail || !url) return;
+    const en = isEn() || /^(dear|hello|hi)\b/i.test(body.value.trim());
+    if (body.value.includes(url)) {      // the template has the link: make sure it also says what the customer can do there
+      if (!/tick/i.test(body.value)) body.value = body.value.replace(url, url + (en ? " (tick / untick items to see the total with GST, then accept)" : " (items tick / untick karke GST ke saath total dekhein, phir accept karein)"));
+      return;
+    }
+    const line = en ? `✅ View the quotation online — tick or untick items to see the total with GST, and accept it in one click:\n${url}`
+                    : `✅ Quotation online dekhein — items tick / untick karke GST ke saath total dekhein aur ek click mein accept karein:\n${url}`;
+    const i = body.value.indexOf("\n\n");
+    body.value = i < 0 ? body.value + "\n\n" + line : body.value.slice(0, i + 2) + line + "\n\n" + body.value.slice(i + 2);
+  };
+  const apply0 = apply;
+  const applyL = (t) => { apply0(t); addLink(); };
+  applyL(auto);
+  // the PDF is made now (a few seconds) so it is ready when Send is pressed
+  let att = null, attOn = !!(isEmail && opts.attach);
+  const drawAtt = (a, err) => {
+    const box = $("#cAtt", m); if (!box || !m.isConnected) return;
+    if (!attOn) { box.innerHTML = `📎 <span class="mu">${L("PDF nahi jayega", "No PDF attached")}</span> <button type="button" class="btn sm" id="cAttOn">${L("PDF wapas lagao", "Attach the PDF again")}</button>`; $("#cAttOn", m).onclick = () => { attOn = true; drawAtt(a, err); }; return; }
+    if (err) { box.innerHTML = `⚠️ <span>${L("PDF nahi ban paya", "Couldn't make the PDF")}</span> <button type="button" class="btn sm" id="cAttRe">${L("Dobara try", "Try again")}</button>`; $("#cAttRe", m).onclick = makeAtt; return; }
+    if (!a) { box.innerHTML = `📎 <span class="mu">${L("PDF ban raha hai…", "Making the PDF…")}</span>`; return; }
+    box.innerHTML = `📎 <b class="att-name">${h(a.name)}</b> <span class="mu">· ${a.pages} ${a.pages > 1 ? "pages" : "page"} · ${kb(a.bytes)}</span>
+      <button type="button" class="btn sm" id="cAttView">👁 ${L("Dekho", "View")}</button><button type="button" class="btn sm ghost" id="cAttOff" title="${h(L("Is mail mein PDF mat bhejo", "Don't attach the PDF to this mail"))}" aria-label="${h(L("PDF hatao", "Remove PDF"))}">✕</button>`;
+    $("#cAttView", m).onclick = () => { const u = URL.createObjectURL(a.blob); if (!openTab(u)) saveBlob(a.blob, a.name); setTimeout(() => URL.revokeObjectURL(u), 60000); };
+    $("#cAttOff", m).onclick = () => { attOn = false; drawAtt(a, err); };
+  };
+  function makeAtt() {
+    drawAtt(null, null);
+    att = Promise.resolve().then(() => opts.attach.make());
+    att.then((a) => drawAtt(a, null), (e) => { console.error(e); drawAtt(null, e); });
+    att.catch(() => {});
+  }
+  if (attOn) makeAtt();
+  const attNow = () => (attOn ? att : null);
   body.addEventListener("input", () => { body.dataset.dirty = "1"; });
   $("#cTpl", m).onchange = async (e) => {
     if (body.dataset.dirty && !(await confirmBox("Template badalne se aapke changes chale jayenge. Continue?", "Haan, badlo"))) return;
-    apply(list.find((t) => t.id === +e.target.value));
+    applyL(list.find((t) => t.id === +e.target.value));
   };
   $("#cBold", m).onclick = () => {
     const a = body.selectionStart, b = body.selectionEnd; if (a === b) return toast("Pehle text select karo");
@@ -291,13 +370,17 @@ export async function openComposer(opts) {
   };
   $("#cSave", m).onclick = () => saveAsTemplate(channel, sub?.value || "", body.value);
   // can this person's Gmail script make the draft (template + banner)?
-  let draftOk = false;
+  let draftOk = false, scriptV = 0;
   if (isEmail) sb.rpc("mail_status").then(({ data: ms }) => {
-    draftOk = !!ms?.draft_ok;
+    draftOk = !!ms?.draft_ok; scriptV = +ms?.script_v || 0;
     if ((S.me.mail_provider || "gmail") === "outlook") return outlookTip(m);
     const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
     const t = box.querySelector("span");
-    if (draftOk && S.me.mail_webapp) { box.classList.add("ok"); t.textContent = L("⚡ Gmail mein kholo — draft template + Geninfo banner ke saath turant khulega.", "⚡ Open in Gmail — the draft opens instantly with the template + the Geninfo banner."); return; }
+    if (draftOk && opts.attach && scriptV < GMAIL_FILES_V) {
+      t.innerHTML = L("📎 PDF Gmail draft mein <b>apne aap</b> lage — iske liye Gmail code ek baar update karo (abhi PDF download hoga, haath se attach karna padega).", "📎 For the PDF to attach <b>by itself</b> in the Gmail draft, update the Gmail code once (for now the PDF downloads, attach it by hand).");
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = L("Update", "Update"); b.onclick = () => gmailSetup(); box.append(b); return;
+    }
+    if (draftOk && S.me.mail_webapp) { box.classList.add("ok"); t.textContent = opts.attach ? L("⚡ Gmail mein kholo — draft template + banner + PDF ke saath khulega, wahan Send dabao.", "⚡ Open in Gmail — the draft opens with the template, the banner and the PDF; press Send there.") : L("⚡ Gmail mein kholo — draft template + Geninfo banner ke saath turant khulega.", "⚡ Open in Gmail — the draft opens instantly with the template + the Geninfo banner."); return; }
     if (draftOk) {
       box.classList.add("ok"); t.innerHTML = L("✔ Draft banner ke saath ~30 sec mein khulega. <b>Turant</b> chahiye? Ek baar web app set karo.", "✔ The draft opens with the banner in ~30 sec. Want it <b>instant</b>? Set up the web app once.");
       const b = document.createElement("button"); b.type = "button"; b.className = "btn sm"; b.textContent = L("⚡ Turant karo", "⚡ Make it instant"); b.onclick = () => gmailSetup(); box.append(b); return;
@@ -328,17 +411,18 @@ export async function openComposer(opts) {
     const bcc = bulk ? bulkList.map((l) => l.email).join(",") : "";
     const parts = { to: bulk ? S.me.email : toList.join(","), cc: cc.join(","), bcc, subject, body: mdToPlain(text) };
     // Gmail + banner + script ready → the script makes a real Gmail draft (template + banner) and we open it
-    if (provider === "gmail" && bannerOn() && draftOk) return openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, m });
+    if (provider === "gmail" && draftOk && (bannerOn() || attNow())) return openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, m, att: attNow(), scriptV });
     // Outlook connected → a real Outlook draft (template + banner + open tracking + read receipt)
     if (provider === "outlook" && outlookReady() && outlookConnected()) {
       if (S.me.mail_provider !== "outlook") { S.me.mail_provider = "outlook"; sb.from("profiles").update({ mail_provider: "outlook" }).eq("id", S.me.id).then(() => {}, () => {}); }
-      return openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId: tplId(), fu: $("#cFu", m)?.checked });
+      return openOutlookDraft({ parts, text, toList, cc, bulk, bulkList, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, att: attNow() });
     }
     let url = composeUrl(provider, parts), copied = false;
     if (url.length > URL_LIMIT[provider]) { url = composeUrl(provider, { ...parts, body: "" }); copyRich(text); copied = true; }
     if (!openTab(url)) showFallback(url, PROVIDERS.find((p) => p[0] === provider)[1]);
     if (provider !== S.me.mail_provider) { S.me.mail_provider = provider; sb.from("profiles").update({ mail_provider: provider }).eq("id", S.me.id).then(() => {}, () => {}); }
     logEmail({ provider, subject, text, toList, cc, opts, tplId: tplId(), bulkList, fu: $("#cFu", m)?.checked }).catch(fail);
+    if (attNow()) { attachByHand(attNow()); if (!$("#cFallback", m).innerHTML) closeModal(); return; }
     toast(copied ? L("Message lamba tha — body clipboard mein copy hai, compose mein Ctrl+V / Cmd+V karo", "Long message — the body is on your clipboard, paste it in the compose window") : `✉️ ${PROVIDERS.find((p) => p[0] === provider)[1]} mein draft ready — wahan Send dabao`);
     if (!$("#cFallback", m).innerHTML) closeModal();
   }));
@@ -526,7 +610,7 @@ export async function viewInbox(el, params = {}) {
     <button class="btn sm" id="ibGmail">${msOk ? L("⚙️ Gmail setup", "⚙️ Gmail setup") : "🔗 Gmail connect"}</button>
     ${olReady ? `<button class="btn sm" id="ibOutlook">${outlookConnected() ? "🔄 Outlook sync" : "🔗 Outlook connect"}</button>` : `<button class="btn sm ghost" id="ibOutHelp">Outlook?</button>`}
   </div></div>
-  ${msOk && (ms.script_v || 1) < 4 ? `<div class="banner" style="margin:0 0 14px">📎 <div><b>${L("Naya: mail ki photos aur files bhi CRM mein", "New: the pictures and files of mails come into the CRM too")}</b> — <span>${L("Customer ki photo / screenshot / PDF yahan dikhegi aur ticket ke saath engineer tak jaayegi (pichhle 30 din ki mails ki bhi). Gmail code ek baar update karo: <b>Naya code banao</b> → Apps Script mein paste → Save → <b>setup</b> Run.", "Customers' photos / screenshots / PDFs show here and go with the ticket to the engineer (also for the last 30 days). Update your Gmail code once: <b>Make a new code</b> → paste in Apps Script → Save → Run <b>setup</b>.")}</span></div><button class="btn sm primary right" id="ibUpd">${L("Update", "Update")}</button></div>` : ""}
+  ${msOk && (ms.script_v || 1) < 5 ? `<div class="banner" style="margin:0 0 14px">📎 <div><b>${L("Naya: quotation PDF Gmail draft mein apne aap + mail ki photos / files CRM mein", "New: the quotation PDF attaches itself to Gmail drafts + mail pictures / files come into the CRM")}</b> — <span>${L("Quotation Email karte hi PDF draft mein lagi milegi. Customer ki photo / screenshot / PDF yahan dikhegi aur ticket ke saath engineer tak jaayegi. Gmail code ek baar update karo: <b>Naya code banao</b> → Apps Script mein paste → Save → <b>setup</b> Run.", "When you email a quotation, its PDF is already in the draft. Customers' photos / screenshots / PDFs show here and go with the ticket to the engineer. Update your Gmail code once: <b>Make a new code</b> → paste in Apps Script → Save → Run <b>setup</b>.")}</span></div><button class="btn sm primary right" id="ibUpd">${L("Update", "Update")}</button></div>` : ""}
   <div class="toolbar">
     <div class="chips">${[["replies", "📩 Replies"], ["sent", "📤 Sent"], ["opened", L("👁 Khole gaye", "👁 Opened")], ["due", "⏰ Follow-up due"]].map(([k, l]) => `<button class="chip ${IB.tab === k ? "on" : ""}" data-ibt="${k}">${l}</button>`).join("")}</div>
     ${IB.tab === "replies" ? `<select class="input" id="ibF" style="width:auto">${[["open", "Saare replies"], ["unread", "Unread"], ["action", "Interested / Quote"], ["no", "Not interested"], ["auto", "Auto-reply / Bounce"], ["archived", "Archived"]].map(([k, l]) => `<option value="${k}" ${IB.f === k ? "selected" : ""}>${l}</option>`).join("")}</select>` : ""}
@@ -678,7 +762,7 @@ function removeSetup() {                 // ▶ sync band karna ho to ye Run kar
 }
 
 function call_(action, payload, qs) {
-  var res = UrlFetchApp.fetch(CRM_URL + "?v=4&action=" + action + (qs || ""), {
+  var res = UrlFetchApp.fetch(CRM_URL + "?v=5&action=" + action + (qs || ""), {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
@@ -717,7 +801,7 @@ function sendFiles_(ids) {
           var qs = "&id=" + encodeURIComponent(it.id) + "&name=" + encodeURIComponent(a.getName() || "file")
                  + "&mime=" + encodeURIComponent(a.getContentType() || "") + "&size=" + size + "&inline=" + p[1];
           if (size > 20 * 1048576) { call_("file", {}, qs + "&big=1"); return; }
-          answer_(UrlFetchApp.fetch(CRM_URL + "?v=4&action=file" + qs, { method: "post", contentType: "application/octet-stream",
+          answer_(UrlFetchApp.fetch(CRM_URL + "?v=5&action=file" + qs, { method: "post", contentType: "application/octet-stream",
             headers: { "x-mail-token": TOKEN }, payload: a.getBytes(), muteHttpExceptions: true }));
         });
         call_("file", {}, "&id=" + encodeURIComponent(it.id) + "&done=1");
@@ -757,6 +841,11 @@ function sendQueuedNow_() {
       if (img && o.banner) { opt.htmlBody = m.html.split(o.banner).join("cid:gnbanner"); opt.inlineImages = { gnbanner: img }; }
       if (m.cc) opt.cc = m.cc;
       if (m.bcc) opt.bcc = m.bcc;
+      var att = [];                       // CRM ki files (jaise quotation PDF) — draft mein attach
+      (m.files || []).forEach(function (f) {
+        try { att.push(UrlFetchApp.fetch(f.url).getBlob().setName(f.name).setContentType(f.mime || "application/pdf")); } catch (e) { }
+      });
+      if (att.length) opt.attachments = att;
       if (m.kind === "draft") {
         var d = GmailApp.createDraft(m.to, m.subject, m.body || " ", opt);
         res.push({ id: m.id, ok: true, draft: true, msg_id: d.getMessage().getId(), account: me });
@@ -835,8 +924,8 @@ export async function gmailSetup(done) {
         <li>Editor mein <b>Ctrl + A</b> dabao → <b>Delete</b> (pehle se likha <code>function myFunction() { }</code> poora hatana zaroori hai, warna <i>"Unexpected token"</i> error aata hai) → phir ye code paste karo → 💾 Save.</li>
         <li>${L('Left side ⚙️ <b>Project Settings</b> → <b>"Show appsscript.json manifest file"</b> tick karo → wapas <b>Editor</b> (&lt;&gt;) → <b>appsscript.json</b> kholo → <b>Ctrl + A</b> → neeche diya <b>appsscript.json</b> paste karo → 💾 Save. (Isse script aapke Gmail signature mein team ka banner laga sakta hai.)',
           'Left side ⚙️ <b>Project Settings</b> → tick <b>"Show appsscript.json manifest file"</b> → back to the <b>Editor</b> (&lt;&gt;) → open <b>appsscript.json</b> → <b>Ctrl + A</b> → paste the <b>appsscript.json</b> below → 💾 Save. (This lets the script put the team banner in your Gmail signature.)')}</li>
-        <li>${L('<b>Turant draft ke liye (ek baar):</b> upar <b>Deploy → New deployment</b> → ⚙️ <b>Web app</b> chuno → <i>Execute as:</i> <b>Me</b>, <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → <b>Web app URL</b> copy karke neeche wale box mein paste karo → Save.',
-          '<b>For instant drafts (once):</b> top <b>Deploy → New deployment</b> → ⚙️ choose <b>Web app</b> → <i>Execute as:</i> <b>Me</b>, <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → copy the <b>Web app URL</b> and paste it in the box below → Save.')}</li>
+        <li>${L('<b>Turant draft ke liye (ek baar):</b> upar <b>Deploy → New deployment</b> → ⚙️ <b>Web app</b> chuno → <i>Execute as:</i> <b>Me</b>, <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → <b>Web app URL</b> copy karke neeche wale box mein paste karo → Save. <b>Code update kiya?</b> Deploy → <b>Manage deployments</b> → ✏️ → Version: <b>New version</b> → Deploy (warna turant wala draft purane code se banega).',
+          '<b>For instant drafts (once):</b> top <b>Deploy → New deployment</b> → ⚙️ choose <b>Web app</b> → <i>Execute as:</i> <b>Me</b>, <i>Who has access:</i> <b>Anyone</b> → <b>Deploy</b> → copy the <b>Web app URL</b> and paste it in the box below → Save. <b>Updated the code?</b> Deploy → <b>Manage deployments</b> → ✏️ → Version: <b>New version</b> → Deploy (otherwise the instant draft runs the old code).')}</li>
         <li>Upar function list mein <b>setup</b> select karke <b>▶ Run</b> dabao → <b>Review permissions</b> → apna account → <i>Advanced → Go to project</i> → <b>Allow</b>.</li>
         <li>${L("Bas! Ab CRM mein <b>Gmail mein kholo</b> dabao — aapke Gmail mein draft khulega: template + neeche team ka banner. Admin banner badle to agle mail se naya. Replies har minute Inbox mein aate hain.", "Done! Now press <b>Open in Gmail</b> in the CRM — a draft opens in your Gmail: the template + the team banner underneath. When the Admin changes the banner, the next mail uses it. Replies reach the Inbox every minute.")}</li>
         <li class="mu">${L("Band karna ho: yahan <b>Disconnect</b> dabao (ya Apps Script mein <b>removeSetup</b> Run karo).", "To stop: press <b>Disconnect</b> here (or Run <b>removeSetup</b> in Apps Script).")}</li>

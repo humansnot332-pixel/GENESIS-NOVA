@@ -519,7 +519,7 @@ function paymentForm(i, done) {
 //  QUOTATION helpers: share link, order from quote
 // =====================================================================
 export const quoteUrl = (token) => new URL("quote.html#" + token, location.href.split("#")[0]).href;
-export async function shareQuote(q, channel) {
+export async function shareQuote(q, channel, extra = {}) {
   const { data: token, error } = await sb.rpc("share_quote", { p_id: q.id });
   if (error) return fail(error);
   const link = quoteUrl(token);
@@ -528,7 +528,7 @@ export async function shareQuote(q, channel) {
   if (lead && !(await ensureWork("lead", lead))) return;
   if (!lead) lead = { company: q.to_party?.name || "", contact_name: q.to_party?.contact || "", email: q.to_party?.email || "", products: [] };
   const prod = (q.items || []).filter((i) => !i.opt).map((i) => String(i.desc || "").split("\n")[0]).filter(Boolean).slice(0, 2).join(", ");
-  openComposer({ channel, lead, to: q.to_party?.email, stage: "quote", vars: { quote_link: link, quote_link_en: ` You can also view & accept it online: ${link}`, quote_link_hi: ` Online dekhein / accept karein: ${link}`, quote_no: q.quote_no, ...(prod ? { product: prod } : {}) } });
+  openComposer({ channel, lead, to: q.to_party?.email, stage: "quote", attach: extra.attach ? extra.attach(link) : null, vars: { quote_link: link, quote_link_en: ` You can also view it online — tick / untick items to see the total with GST, and accept it in one click: ${link}`, quote_link_hi: ` Online dekhein — items tick / untick karke GST ke saath total dekhein aur ek click mein accept karein: ${link}`, quote_no: q.quote_no, ...(prod ? { product: prod } : {}) } });
   return link;
 }
 export function quoteTrackHtml(q) {

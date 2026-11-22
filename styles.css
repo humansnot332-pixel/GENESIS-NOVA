@@ -807,3 +807,10 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .qdoc .qlines .qdt { font-style: italic; }
 .qdoc .qlines .qtot td { border-top: 0; }
 .qdoc .qlines td.nob { border: 0; background: none; }
+
+/* ---------- quotation PDF for mails ---------- */
+.pdf-stage { position: fixed; left: -20000px; top: 0; width: 794px; background: #fff; pointer-events: none; z-index: -1; }
+.qdoc .qlinkbox { margin: 10px 0 0; padding: 8px 12px; border: 1px solid #99d5cd; background: #effaf8; border-radius: 6px; font-size: 12px; line-height: 1.5; }
+.qdoc .qlinkbox a { color: #0f766e; word-break: break-all; }
+.attrow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); font-size: 13px; }
+.attrow .att-name { overflow-wrap: anywhere; }
