@@ -319,16 +319,22 @@ export async function openComposer(opts) {
   };
   // the customer's online page (tick / untick items, total with GST, accept) is always in the mail
   const addLink = () => {
-    const url = ctx.quote_link; if (!isEmail || !url) return;
+    if (!isEmail) return;
     const en = isEn() || /^(dear|hello|hi)\b/i.test(body.value.trim());
+    const ins = (line) => { const i = body.value.indexOf("\n\n"); body.value = i < 0 ? body.value + "\n\n" + line : body.value.slice(0, i + 2) + line + "\n\n" + body.value.slice(i + 2); };
+    if (opts.attach) {     // the PDF itself has the ticks — the mail only says so (no link)
+      if (!/tick/i.test(body.value)) ins(en ? "✅ In the attached PDF you can tick / untick items — the total with GST changes by itself. Save it and reply with it to confirm."
+                                            : "✅ Attached PDF mein hi items tick / untick karein — GST ke saath total apne aap badlega. PDF save karke reply mein bhej dein.");
+      return;
+    }
+    const url = ctx.quote_link; if (!url) return;
     if (body.value.includes(url)) {      // the template has the link: make sure it also says what the customer can do there
       if (!/tick/i.test(body.value)) body.value = body.value.replace(url, url + (en ? " (tick / untick items to see the total with GST, then accept)" : " (items tick / untick karke GST ke saath total dekhein, phir accept karein)"));
       return;
     }
     const line = en ? `✅ View the quotation online — tick or untick items to see the total with GST, and accept it in one click:\n${url}`
                     : `✅ Quotation online dekhein — items tick / untick karke GST ke saath total dekhein aur ek click mein accept karein:\n${url}`;
-    const i = body.value.indexOf("\n\n");
-    body.value = i < 0 ? body.value + "\n\n" + line : body.value.slice(0, i + 2) + line + "\n\n" + body.value.slice(i + 2);
+    ins(line);
   };
   const apply0 = apply;
   const applyL = (t) => { apply0(t); addLink(); };

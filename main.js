@@ -24,7 +24,8 @@ import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
-import { htmlToPdf } from "./qpdf.js";
+import { htmlToPdf, makeFillable } from "./qpdf.js";
+import { pickData, pickScript, fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -2107,7 +2108,7 @@ async function quoteEditor(q0) {
       syncAll();
       if (saveSig() !== savedSig) return toast(L("Pehle Save dabao — customer ko saved quotation hi jaati hai (PDF + online link)", "Press Save first — the customer gets the saved quotation (PDF + online link)"), true);
     }
-    const link = await shareQuote(q, ch, ch === "email" ? { attach: (url) => ({ name: pdfName(q), make: () => quotePdf(q, url) }) } : undefined);
+    const link = await shareQuote(q, ch, ch === "email" ? { attach: () => ({ name: pdfName(q), make: () => quotePdf(q) }) } : undefined);
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
   };
   $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
@@ -2163,36 +2164,47 @@ function printQuote(q) {
   window.print();
 }
 const pdfName = (q) => `Quotation ${String(q.quote_no || "draft").replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
-/** the quotation as a PDF file (same layout as Print) with the online link inside → { blob, name, pages, bytes } */
-async function quotePdf(q, link) {
-  const r = await htmlToPdf((root) => quoteDoc(q, root, { link }), { title: "Quotation " + (q.quote_no || ""), linkSel: ".qlinkbox a", url: link });
-  return { ...r, name: pdfName(q) };
+/** the quotation as a PDF file (same layout as Print) in which the customer ticks / unticks items and the
+ *  totals with GST change inside the PDF → { blob, name, pages, bytes } */
+async function quotePdf(q) {
+  const p = pickData(q.items || [], { inter: qCalc(q).inter, roundOff: q.round_off, showOptional: q.show_optional });
+  const r = await htmlToPdf((root) => quoteDoc(q, root, { pick: p }), { title: "Quotation " + (q.quote_no || ""), marks: "[data-pi], [data-tot]" });
+  const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand), words: amountWords(p.T.grand) };
+  p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
+  const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values });
+  return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
 }
 // the quotation document (Print / PDF): fills `pr`
-function quoteDoc(q, pr, { link = null } = {}) {
+function quoteDoc(q, pr, { link = null, pick = null } = {}) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
   const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
   // line table like the reference: Sr | Description | Taxation | HSN/SAC | Qty | Lic. Qty | Warranty | Price(Unit) | Taxable Value | Tax Amount | Total
   const n2 = (v) => (+v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const head = `<thead><tr><th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC Code</th><th class="c">Qty.</th><th class="c">Lic. Qty.</th><th class="c">Warranty</th><th class="r">Price(Unit)</th><th class="r">Taxable Value</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>`;
-  const rowHtml = (it, i) => { const tv = r2((+it.qty || 0) * (+it.price || 0)), ta = r2(tv * (+it.tax || 0) / 100);
-    return `<tr><td class="c">${i + 1}</td><td><b>${h(it.desc)}</b>${it.details ? `<div class="qdt">${h(it.details)}</div>` : ""}</td><td>GST @${h(+it.tax || 0)}%</td><td class="c">${h(it.hsn || "------")}</td>
+  const head = `<thead><tr>${pick ? `<th class="c tk" title="Tick">✓</th>` : ""}<th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC Code</th><th class="c">Qty.</th><th class="c">Lic. Qty.</th><th class="c">Warranty</th><th class="r">Price(Unit)</th><th class="r">Taxable Value</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>`;
+  const rowHtml = (it, i, idx) => { const tv = r2((+it.qty || 0) * (+it.price || 0)), ta = r2(tv * (+it.tax || 0) / 100);
+    return `<tr>${pick ? `<td class="c tk" data-pi="${idx}"></td>` : ""}<td class="c">${i + 1}</td><td><b>${h(it.desc)}</b>${pick && it.opt ? ` <span class="qopt-tag">Optional</span>` : ""}${it.details ? `<div class="qdt">${h(it.details)}</div>` : ""}</td><td>GST @${h(+it.tax || 0)}%</td><td class="c">${h(it.hsn || "------")}</td>
       <td class="c">${h(it.qty)}(${h(it.unit || "Number")})</td><td class="c">${h(it.lic || "N/A")}</td><td class="c">${h(it.warranty || "-----")}</td><td class="r">${n2(it.price)}</td><td class="r">${n2(tv)}</td><td class="r">${n2(ta)}</td><td class="r">${n2(tv + ta)}</td></tr>`; };
-  const tot = (l, v, strong) => `<tr class="qtot"><td colspan="8" class="nob"></td><td colspan="2" class="r">${strong ? `<b>${l}</b>` : l}</td><td class="r">${strong ? `<b>${v}</b>` : v}</td></tr>`;
+  const tot = (l, v, strong, key) => `<tr class="qtot"><td colspan="${pick ? 9 : 8}" class="nob"></td><td colspan="2" class="r">${strong ? `<b>${l}</b>` : l}</td><td class="r"${key ? ` data-tot="${key}"` : ""}>${strong ? `<b>${v}</b>` : v}</td></tr>`;
+  // PDF with ticks: every item in one table (optional ones unticked), a tax row for every GST rate in it, totals as boxes the PDF updates
+  const pickBody = () => `${pick.N.map((idx, k) => rowHtml(q.items[idx], k, idx)).join("")}
+    ${tot("Sub Total", fmtIN(pick.T.sub), false, "sub")}${pick.labels.map((l, k) => tot(h(l), fmtIN(pick.T.lines[k]), false, "l" + k)).join("")}
+    ${pick.O ? tot("Round off", fmtRound(pick.T.round), false, "round") : ""}
+    ${tot("Grand Total", fmtIN(pick.T.grand), true, "grand")}`;
   pr.innerHTML = `<div class="qdoc">
     <div class="hd"><div><h2>${h(co.name || CONFIG.COMPANY)}</h2><div>${h(co.address || "")}</div><div>GSTIN: ${h(co.gstin || "")} · PAN: ${h(co.pan || "")}</div></div>
       <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(q.quote_date ? niceDay(q.quote_date) : dOnly(q.created_at || new Date()))}</div></div></div>
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
     ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> — tick or untick items to see the total with GST, and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
+    ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Adobe Reader, Chrome, Edge, Firefox; some phone viewers don't update the total.)</span></div>` : ""}
     <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table class="qlines">${head}<tbody>
-    ${inc.map(rowHtml).join("")}
+    ${pick ? pickBody() : `${inc.map((it, i) => rowHtml(it, i)).join("")}
     ${tot("Sub Total", n2(c.sub))}${c.lines.map(([l, v]) => tot(h(l), n2(v))).join("")}
     ${c.round ? tot("Round off", (c.round > 0 ? "+" : "−") + Math.abs(c.round).toFixed(2)) : ""}
-    ${tot("Grand Total", inr(c.grand), true)}</tbody></table>
-    <p><b>Amount in words:</b> ${h(rupeesWords(c.grand))}</p>
-    ${opt.length ? `<div class="qopt"><h4>Optional items <span>— not included in the total above; tell us to add any of them</span></h4><table class="qlines">${head}<tbody>${opt.map(rowHtml).join("")}</tbody></table></div>` : ""}
+    ${tot("Grand Total", inr(c.grand), true)}`}</tbody></table>
+    <p class="qwords"><b>Amount in words:</b> <span${pick ? ` data-tot="words"` : ""}>${h(pick ? amountWords(pick.T.grand) : rupeesWords(c.grand))}</span></p>
+    ${opt.length && !pick ? `<div class="qopt"><h4>Optional items <span>— not included in the total above; tell us to add any of them</span></h4><table class="qlines">${head}<tbody>${opt.map((it, i) => rowHtml(it, i)).join("")}</tbody></table></div>` : ""}
     ${q.note_customer ? `<p style="white-space:pre-wrap"><b>Note:</b> ${h(q.note_customer)}</p>` : ""}
     <div class="qsec" data-pr="terms"><h4>Terms &amp; Conditions</h4><div class="rich"></div></div>
     <p><b>Bank:</b> ${h(co.bank || "")} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>
