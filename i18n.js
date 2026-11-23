@@ -14,6 +14,9 @@ export const L = (hi, en) => (LANG === "en" ? en : hi);
 
 // [Hinglish, English] — whole text nodes AND multi-word fragments of sentences
 const D = [
+  // ---------- lock release reasons (saved as Hinglish text, shown later in history / requests) ----------
+  ["Number band / galat", "Number off / wrong"], ["Interested nahi", "Not interested"], ["Baad mein call karo", "Call back later"],
+  ["Kahin aur se le liya", "Bought elsewhere"], ["Mera area / product nahi", "Not my area / product"],
   // ---------- navigation / titles ----------
   ["Aaj ki calling", "Today's calls"], ["Inbox (replies)", "Inbox (replies)"], ["Follow-ups & tasks", "Follow-ups & tasks"],
   ["Email / WA templates", "Email / WA templates"], ["Lock requests", "Lock requests"], ["Audit log", "Audit log"],
@@ -277,13 +280,23 @@ const FRAG = D.filter(([a]) => /\s/.test(a.trim()) && a.trim().length >= 6)
   .map(([a, b]) => [new RegExp("(^|[^\\p{L}])" + a.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=$|[^\\p{L}])", "gu"), b]);
 
 /** translate one piece of UI text (no-op in Hinglish mode) */
+// the same UI strings repeat on every render → remember each answer (the regex pass is the slow part)
+const MEMO = new Map();
 export function tr(text) {
   if (LANG !== "en" || !text || !/[a-z]/i.test(text)) return text;
   const lead = text.match(/^\s*/)[0], tail = text.match(/\s*$/)[0], core = text.trim().replace(/\s+/g, " ");
-  if (EXACT.has(core)) return lead + EXACT.get(core) + tail;
-  let out = core;
-  for (const [re, en] of FRAG) if (re.test(out)) { re.lastIndex = 0; out = out.replace(re, (_, pre) => pre + en); }
-  for (const [re, en] of RX) { re.lastIndex = 0; out = out.replace(re, en); }
+  let out = MEMO.get(core);
+  if (out === undefined) {
+    out = EXACT.get(core);
+    if (out === undefined) {
+      out = core;
+      // fragments are multi-word → a single word can only be changed by RX
+      if (core.includes(" ")) for (const [re, en] of FRAG) if (re.test(out)) { re.lastIndex = 0; out = out.replace(re, (_, pre) => pre + en); }
+      for (const [re, en] of RX) { re.lastIndex = 0; out = out.replace(re, en); }
+    }
+    if (MEMO.size > 20000) MEMO.clear();
+    MEMO.set(core, out);
+  }
   return out === core ? text : lead + out + tail;
 }
 

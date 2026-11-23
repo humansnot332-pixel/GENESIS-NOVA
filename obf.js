@@ -111,7 +111,7 @@ export async function openObf(id, done) {
       ${edit && isMgr() ? `<button type="button" class="btn sm ghost" id="obSug" style="margin-top:6px">💡 ${L("Vendor price list se cost bharo", "Fill costs from the vendor price list")}</button>` : ""}</div>
     <div class="obf-foot sec">
       <div class="obf-box"><b>${L("Customer details", "Customer details")}</b>
-        <label class="f">Vendor PO</label>${inp("vendor_po", o.vendor_po, 'maxlength="200" placeholder="Hamara PO vendor ko (baad mein bhi)"')}
+        <label class="f">Vendor PO</label>${inp("vendor_po", o.vendor_po, 'maxlength="200" placeholder="${h(L("Hamara PO vendor ko (baad mein bhi)", "Our PO to the vendor (can be added later)"))}"')}
         <div class="obf-auto"><span>${L("Purana baaki (Previous O/S)", "Previous O/S")}</span><b${+o.prev_outstanding > 0 ? ' class="m-bad"' : ""}>${inr(o.prev_outstanding || 0)}</b></div>
         <div class="obf-auto"><span>${L("Payment history (CRM se)", "Payment history (from the CRM)")}</span><b>${h(o.payment_history || "—")}</b></div>
         <label class="f">${L("Payment note", "Payment note")}</label><textarea class="input" data-o="payment_note" rows="2" maxlength="1000"${dis}>${h(o.payment_note || "")}</textarea>
@@ -234,7 +234,7 @@ export async function openObf(id, done) {
   });
   $("#obWa", m)?.addEventListener("click", () => {
     const c = calc(o), p = pctOf(c.sub, c.contribution);
-    const t = `🙏 OBF ${o.obf_no} approval ke liye\n${o.customer?.name || ""}\nGrand total: ${inr(o.grand_total)}\nContribution: ${inr(c.contribution)} (${(p ?? 0).toFixed(1)}%)\nPayment: ${o.payment_terms || "—"}${+o.prev_outstanding > 0 ? `\nPurana baaki: ${inr(o.prev_outstanding)}` : ""}\n👉 ${obfUrl(o.id)}`;
+    const t = `🙏 OBF ${o.obf_no} ${L("approval ke liye", "for approval")}\n${o.customer?.name || ""}\nGrand total: ${inr(o.grand_total)}\nContribution: ${inr(c.contribution)} (${(p ?? 0).toFixed(1)}%)\nPayment: ${o.payment_terms || "—"}${+o.prev_outstanding > 0 ? `\n${L("Purana baaki", "Previous outstanding")}: ${inr(o.prev_outstanding)}` : ""}\n👉 ${obfUrl(o.id)}`;
     window.open("https://wa.me/?text=" + encodeURIComponent(t), "_blank", "noopener");
   });
   return m;

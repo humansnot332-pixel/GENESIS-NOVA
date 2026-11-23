@@ -134,7 +134,7 @@ function renderLogin(mode = "login", msg = "") {
   fx?.stop(); fx = null;
   const cv = $("#authFx");
   if (cv) { try { fx = startLoginFx(cv, bc.login_animation || "server"); } catch { /* old browser: static background */ } }
-  sb.rpc("public_branding").then(({ data }) => {
+  (brandP ||= sb.rpc("public_branding").then((r) => r, () => ({}))).then(({ data }) => {
     if (!data) return;
     try { localStorage.setItem("crm_brand", JSON.stringify(data)); } catch { /* ignore */ }
     if (data.login_animation && data.login_animation !== (bc.login_animation || "server")) fx?.setMode(data.login_animation);
@@ -197,6 +197,7 @@ function stopApp() {
   started = false; closeModal(); closeDrawer();
 }
 
+let brandP = null; // the login screen can draw twice at boot → ask for the branding once
 const ME_COLS = "id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp";
 async function start() {
   fx?.stop(); fx = null;
@@ -210,7 +211,7 @@ async function start() {
     .eq("id", session.user.id).single();
   if (error || !me) { bootRest = null; return renderLogin("login", "Profile load nahi hua: " + (error?.message || "")); }
   if (!me.active) { bootRest = null; return renderPending(); }
-  S.me = me;
+  S.me = me; meAt = Date.now(); // just loaded → the focus / visibility re-check can wait
   // language: an explicit choice on this device wins (and is saved); otherwise follow the profile
   let chosen = null; try { chosen = localStorage.getItem("crm_lang"); } catch { /* ignore */ }
   if (chosen && chosen !== me.lang) { me.lang = getLang(); sb.from("profiles").update({ lang: me.lang }).eq("id", me.id).then(() => {}, () => {}); }
@@ -361,6 +362,7 @@ function renderShell() {
       </div>
     </aside>
     <div class="main">
+      <div id="nprog" aria-hidden="true"></div>
       <header class="top">
         <button class="btn ghost icon menu-btn" data-act="menu" aria-label="Menu">${ic("menu")}</button>
         <h1 id="title"></h1><div class="sp"></div>
@@ -434,14 +436,17 @@ function route() {
   // every page gets a fresh container: a slow page that finishes late writes into its own
   // (now detached) box and can never overwrite the page the user has moved on to
   const old = $("#page"), page = old.cloneNode(false);
-  if (old.dataset.r && !old.querySelector(":scope > .empty:only-child") && old.innerHTML.length < 600000) PAGE_CACHE.set(old.dataset.r, old.innerHTML);
+  if (old.dataset.r && !old.querySelector(":scope > .empty:only-child, :scope > .skel") && old.innerHTML.length < 600000) PAGE_CACHE.set(old.dataset.r, old.innerHTML);
   const cached = !S.params.id && PAGE_CACHE.get(S.route);
   page.dataset.r = S.route; page.classList.toggle("stale", !!cached);
-  page.innerHTML = cached || `<div class="empty">Loading…</div>`;
+  page.innerHTML = cached || SKELETON;
   old.replaceWith(page);
   closeDrawer();
   refreshBadges(false);
-  Promise.resolve(VIEWS[S.route](page, false, S.params)).then(() => {
+  const bar = $("#nprog"), tok = (route.tok = (route.tok || 0) + 1);
+  bar?.classList.remove("done"); bar?.classList.add("go");
+  const barDone = () => { if (route.tok !== tok || !bar) return; bar.classList.replace("go", "done"); };
+  Promise.resolve(VIEWS[S.route](page, false, S.params)).finally(barDone).then(() => {
     page.classList.remove("stale");
     if (!page.isConnected) return;
     if (!cached) enterAnim(page);
@@ -453,6 +458,8 @@ function route() {
   }).catch((e) => { page.classList.remove("stale"); if (cached && page.isConnected) page.innerHTML = `<div class="empty">—</div>`; fail(e); });
 }
 addEventListener("hashchange", route);
+// shown while a page loads for the first time: grey bars in the shape of a toolbar + table
+const SKELETON = `<div class="skel" aria-busy="true" aria-label="Loading"><div class="sk-bar"><i></i><i></i><i></i></div>${'<div class="sk-row"><i></i><i></i><i></i><i></i></div>'.repeat(7)}</div>`;
 // cards fade up in sequence and whole-number KPIs count up — only when a page is opened
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 function enterAnim(page) {
@@ -927,7 +934,7 @@ async function openLead(id, opt = {}) {
       ${canEdit || (l.products || []).length ? `<div class="lprods" id="lProds"></div>` : ""}
       ${canEdit ? `<div class="card" style="padding:14px">
         <div class="sec-t" style="margin:0 0 8px">Call ka result</div>
-        <textarea class="input" id="callNote" placeholder="Short note (optional) — kisse baat hui, kya bola…" maxlength="1000" style="min-height:56px;margin-bottom:8px"></textarea>
+        <textarea class="input" id="callNote" placeholder="${h(L("Short note (optional) — kisse baat hui, kya bola…", "Short note (optional) — who you spoke to, what they said…"))}" maxlength="1000" style="min-height:56px;margin-bottom:8px"></textarea>
         <div class="outcomes">${OUTCOMES.map(([k, lab, tone]) => `<button class="btn ${tone === "good" ? "primary" : ""} ${tone === "bad" ? "danger" : ""}" data-out="${k}">${h(lab)}</button>`).join("")}</div>
         <div class="row" style="margin-top:12px"><span class="mu" style="font-size:12.5px">Follow-up:</span>
           ${[["+3h", 3], ["Kal", 24], ["+3 din", 72], ["+1 hafta", 168]].map(([lab, hr]) => `<button class="chip" data-fu="${hr}">${lab}</button>`).join("")}
@@ -2171,7 +2178,7 @@ async function quoteEditor(q0) {
     syncAll();
     if (savedSig != null && saveSig() !== savedSig) return toast(L("Pehle Save dabao — PDF saved quotation ka banta hai", "Press Save first — the PDF is made from the saved quotation"), true);
     const tab = window.open("", "_blank");          // opened now (while it is still a click), filled when the PDF is ready
-    if (tab) { try { tab.document.title = "PDF…"; tab.document.body.innerHTML = '<p style="font:16px system-ui;padding:24px">📄 PDF ban raha hai…</p>'; } catch { /* ignore */ } }
+    if (tab) { try { tab.document.title = "PDF…"; tab.document.body.innerHTML = `<p style="font:16px system-ui;padding:24px">📄 ${L("PDF ban raha hai…", "Making the PDF…")}</p>`; } catch { /* ignore */ } }
     busy(e.target, async () => {
       try {
         const { data: token, error } = await sb.rpc("share_quote", { p_id: q.id });
@@ -2970,7 +2977,7 @@ VIEWS.automation = async (el) => {
   }));
 };
 ACT.runIngest = (b) => busy(b, async () => {
-  toast("Chal raha hai… 1-2 minute lag sakte hain");
+  toast(L("Chal raha hai… 1-2 minute lag sakte hain", "Running… this can take 1–2 minutes"));
   const r = await callFn("auto-ingest", {});
   if (r.skipped) toast("Skip: " + r.skipped, true);
   else toast(`✔ +${r.leadsAdded} leads, +${r.rfqsAdded} RFQs, ${r.assigned} assigned`);
@@ -3065,7 +3072,7 @@ ACT.palette = () => {
 //  Boot
 // ---------------------------------------------------------------------
 if (CONFIG.SUPABASE_URL.includes("YOUR-PROJECT")) {
-  root.innerHTML = `<div class="auth-form" style="min-height:100vh"><div style="max-width:480px"><div class="logo">G</div><h1>Setup baaki hai</h1><p class="mu"><span class="mono">config.js</span> mein apna Supabase URL aur anon key daalo. Steps <span class="mono">SETUP.md</span> mein hain.</p></div></div>`;
+  root.innerHTML = `<div class="auth-form" style="min-height:100vh"><div style="max-width:480px"><div class="logo">G</div><h1>${L("Setup baaki hai", "Setup needed")}</h1><p class="mu">${L('<span class="mono">config.js</span> mein apna Supabase URL aur anon key daalo. Steps <span class="mono">SETUP.md</span> mein hain.', 'Put your Supabase URL and anon key in <span class="mono">config.js</span>. The steps are in <span class="mono">SETUP.md</span>.')}</p></div></div>`;
 } else {
   start();
 }

@@ -857,3 +857,29 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .rucols { margin-top: 6px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 12px; }
 .rucols > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .rucols[open] > summary { margin-bottom: 8px; }
+
+/* ---------- v71 · motion: page-load bar, skeletons, smoother windows ---------- */
+#nprog { position: fixed; z-index: 200; top: 0; left: 0; height: 2px; width: 0; background: linear-gradient(90deg, var(--accent), #7cc4ff); box-shadow: 0 0 8px var(--accent); opacity: 0; pointer-events: none; }
+#nprog.go { opacity: 1; animation: nprog 1.6s cubic-bezier(.1,.6,.2,1) forwards; }
+#nprog.done { opacity: 0; width: 100%; transition: width .18s ease-out, opacity .3s .18s; }
+@keyframes nprog { from { width: 0; } to { width: 85%; } }
+.skel { padding: 4px 0; animation: fade .2s .08s both; }
+.sk-bar, .sk-row { display: flex; gap: 12px; margin-bottom: 12px; }
+.sk-bar i { height: 34px; border-radius: 10px; flex: 0 0 150px; } .sk-bar i:first-child { flex: 1 1 auto; max-width: 340px; }
+.sk-row { padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; }
+.sk-row i { height: 12px; border-radius: 6px; flex: 1; } .sk-row i:first-child { flex: 2; } .sk-row i:last-child { flex: .6; }
+.sk-bar i, .sk-row i { background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%); background-size: 300% 100%; animation: shimmer 1.2s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.page.stale { opacity: .78; transition: opacity .15s; }
+/* table rows and list items glide in on first draw (first ~12 only, so long lists stay instant) */
+.page.enter .tbl tbody tr:nth-child(-n+12) { animation: rowin .26s cubic-bezier(.2,.7,.2,1) both; }
+.page.enter .tbl tbody tr:nth-child(2) { animation-delay: .02s; } .page.enter .tbl tbody tr:nth-child(3) { animation-delay: .04s; } .page.enter .tbl tbody tr:nth-child(4) { animation-delay: .06s; } .page.enter .tbl tbody tr:nth-child(5) { animation-delay: .08s; } .page.enter .tbl tbody tr:nth-child(n+6) { animation-delay: .1s; }
+@keyframes rowin { from { opacity: 0; transform: translateY(6px); } }
+.drawer { animation: slide .24s cubic-bezier(.2,.8,.2,1); }
+.modal { animation: pop .2s cubic-bezier(.2,.8,.2,1); }
+.btn:active:not(:disabled), .chip:active, .nav a:active { transform: scale(.97); }
+.toast { animation: pop2 .24s cubic-bezier(.2,.8,.2,1); }
+.card, .kpi { will-change: auto; }
+@media (prefers-reduced-motion: reduce) {
+  #nprog, .skel, .sk-bar i, .sk-row i, .page.enter .tbl tbody tr { animation: none !important; transition: none !important; }
+}

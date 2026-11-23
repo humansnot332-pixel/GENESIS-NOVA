@@ -42,7 +42,7 @@ export async function enablePush() {
     "Notifications are blocked — phone Settings → Apps → Genesis Nova / Chrome → turn Notifications on"));
   const r = await navigator.serviceWorker.ready;
   const { key } = await callFn("push-send", { action: "key" });
-  if (!key) throw new Error("Push key nahi mili");
+  if (!key) throw new Error(L("Push key nahi mili", "Push key not found"));
   const k = bytes(key);
   let sub = await r.pushManager.getSubscription();
   if (sub && !sameKey(sub.options?.applicationServerKey, k)) { await sub.unsubscribe().catch(() => {}); sub = null; }
