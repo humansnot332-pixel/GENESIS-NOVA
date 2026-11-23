@@ -1839,7 +1839,7 @@ async function quoteEditor(q0) {
       <div><label class="f" for="qni">Internal note <span class="lbl-hint">🔒 ${L("sirf team — kabhi print nahi hota", "team only — never printed")}</span></label><textarea class="input" id="qni" maxlength="3000" rows="3" placeholder="${h(L("Jaise: discount approve hua · vendor price · follow-up", "e.g. discount approved · vendor price · follow-up"))}">${h(q.note_internal || "")}</textarea></div></div>
     <div class="grid2 sec qtc">${qtBox("annexure", q)}${qtBox("terms", q)}</div>
     <div id="qtplEd"></div>`,
-    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qtpdf" title="${h(L("Customer wala PDF — items tick / untick karke total badalta hai", "The customer's PDF — tick / untick items and the total changes"))}">⬇️ ${L("Tick wala PDF", "Tick PDF")}</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button><button class="btn" id="qcopy" title="${h(L("Isi jaisi nayi quotation", "A new quotation like this one"))}">📄 Copy</button>${q.status !== "lost" ? `<button class="btn" id="qobf" title="${h(L("Customer ne approve kiya → Order Booking Form", "Customer approved → Order Booking Form"))}">📋 OBF</button>` : ""}${q.status !== "lost" && isMgr() ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
+    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button><button class="btn" id="qcopy" title="${h(L("Isi jaisi nayi quotation", "A new quotation like this one"))}">📄 Copy</button>${q.status !== "lost" ? `<button class="btn" id="qobf" title="${h(L("Customer ne approve kiya → Order Booking Form", "Customer approved → Order Booking Form"))}">📋 OBF</button>` : ""}${q.status !== "lost" && isMgr() ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
   });
   const hooks = { items: () => {} };
   const amtHtml = (it) => inr(r2((+it.qty || 0) * (+it.price || 0))) + (it.opt ? `<div class="opt-tag">Optional</div>` : "");
@@ -2151,7 +2151,6 @@ async function quoteEditor(q0) {
     q.show_optional = $("#qso", m).checked;
   };
 
-  $("#qp", m)?.addEventListener("click", (e) => busy(e.target, async () => { syncAll(); await printQuote(q, savedSig == null || saveSig() === savedSig); }));
   // what the customer gets (PDF + online link) is the SAVED quotation → unsaved edits must be saved first
   const saveSig = () => JSON.stringify([q.items, q.to_party, q.terms_html, q.annexure_html, q.note_customer, q.quote_date, q.validity_days, q.payment_terms, q.delivery, q.ref, q.site, q.amc, q.round_off, q.show_optional]);
   let savedSig = null;
@@ -2166,17 +2165,26 @@ async function quoteEditor(q0) {
   };
   $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
   // download the same PDF the customer gets by email (ticks + totals that change)
-  $("#qtpdf", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+  // Print / PDF = the customer's PDF with tick boxes (totals change when items are ticked); it opens in a new tab,
+  // where it can be printed or saved — if the browser blocks the tab, it is downloaded instead
+  $("#qp", m)?.addEventListener("click", (e) => {
     syncAll();
     if (savedSig != null && saveSig() !== savedSig) return toast(L("Pehle Save dabao — PDF saved quotation ka banta hai", "Press Save first — the PDF is made from the saved quotation"), true);
-    const { data: token, error } = await sb.rpc("share_quote", { p_id: q.id });
-    if (error) throw error;
-    if (!q.share_token) { q.share_token = token; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
-    toast(L("📄 PDF ban raha hai…", "📄 Making the PDF…"));
-    const a = await quotePdf(q, "#" + token);
-    saveBlob(a.blob, a.name);
-    toast(L(`⬇️ ${a.name} download ho gaya — Chrome ya Adobe Acrobat Reader mein kholo`, `⬇️ ${a.name} downloaded — open it in Chrome or Adobe Acrobat Reader`));
-  }));
+    const tab = window.open("", "_blank");          // opened now (while it is still a click), filled when the PDF is ready
+    if (tab) { try { tab.document.title = "PDF…"; tab.document.body.innerHTML = '<p style="font:16px system-ui;padding:24px">📄 PDF ban raha hai…</p>'; } catch { /* ignore */ } }
+    busy(e.target, async () => {
+      try {
+        const { data: token, error } = await sb.rpc("share_quote", { p_id: q.id });
+        if (error) throw error;
+        if (!q.share_token) { q.share_token = token; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
+        const a = await quotePdf(q, "#" + token);
+        const url = URL.createObjectURL(a.blob);
+        if (tab && !tab.closed) { tab.location.href = url; setTimeout(() => URL.revokeObjectURL(url), 10 * 60e3); }
+        else { saveBlob(a.blob, a.name); URL.revokeObjectURL(url); }
+        toast(L("📄 PDF khul gaya — wahan se Print / Save karo. Items tick / untick karne pe total badalta hai (Chrome ya Adobe Acrobat Reader mein).", "📄 PDF opened — print or save it from there. Ticking items changes the total (in Chrome or Adobe Acrobat Reader)."), false, 7000);
+      } catch (err) { if (tab && !tab.closed) tab.close(); throw err; }
+    });
+  });
   $("#qmail", m)?.addEventListener("click", (e) => busy(e.target, () => shared("email")));
   $("#qwa", m)?.addEventListener("click", (e) => busy(e.target, () => shared("whatsapp")));
   $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
@@ -2221,26 +2229,6 @@ async function quoteEditor(q0) {
     toast(`Quotation ${res.data.quote_no} saved ✔`); closeModal(); quoteEditor(res.data);
     if (S.route === "quotes") VIEWS.quotes($("#page"));
   });
-}
-// Print = the same Proposal layout as the customer's PDF (the saved quotation); unsaved / no id → the older print layout
-async function printQuote(q, saved = true) {
-  if (q.id && saved) {
-    const { data: token } = await sb.rpc("share_quote", { p_id: q.id });
-    if (token) {
-      const fr = document.createElement("iframe");
-      fr.className = "pdf-stage"; fr.setAttribute("aria-hidden", "true"); fr.tabIndex = -1; fr.style.cssText = "width:1040px;height:1400px;border:0";
-      fr.src = new URL("quote.html#" + token + "&pdf=1&print=1", location.href.split("#")[0]).href;
-      document.body.append(fr);
-      const ok = await new Promise((res) => { const t0 = Date.now(); const tick = () => { let r = false; try { r = !!fr.contentWindow?.__pdfReady; } catch { /* loading */ } if (r) return res(true); if (Date.now() - t0 > 20000) return res(false); setTimeout(tick, 150); }; tick(); });
-      if (ok) { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.remove(), 60000); return; }
-      fr.remove();
-    }
-  }
-  const rep = await quoteRep(q);
-  let pr = document.getElementById("printRoot");
-  if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
-  quoteDoc(q, pr, { rep });
-  window.print();
 }
 // who made the quotation (its owner) — for "Prepared by" on the document; an old-ERP one has only the ERP name
 const repCache = new Map();
