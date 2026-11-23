@@ -253,29 +253,56 @@ const renBadge = (r) => {
   return d < 0 ? `<span class="badge bad">${L(`${-d} din overdue`, `${-d}d overdue`)}</span>` : d === 0 ? `<span class="badge bad">${L("Aaj", "Today")}</span>`
     : d <= 7 ? `<span class="badge bad">${L(`${d} din`, `${d} days`)}</span>` : d <= 30 ? `<span class="badge warn">${L(`${d} din`, `${d} days`)}</span>` : `<span class="badge">${L(`${d} din`, `${d} days`)}</span>`;
 };
+// renewal products are free text ("BIM Collaborate Pro - Single User CLOUD Commercial…") → one name per product for the filter
+const REN_GROUPS = [
+  [/autocad\s*lt/, "AutoCAD LT"], [/\baec\b/, "AEC Collection"], [/autocad/, "AutoCAD"], [/sketch\s*up/, "SketchUp"],
+  [/\bamc\b|annual maintenance/, "AMC"], [/microsoft|\bm365\b|office\s*365/, "Microsoft 365"], [/antivirus|seqrite|endpoint|\beps\b/, "Antivirus"],
+  [/3ds/, "3ds Max"], [/adobe|acrobat|creative cloud|photoshop/, "Adobe"], [/domain|hosting/, "Domain / hosting"], [/revit/, "Revit"],
+  [/navisworks/, "Navisworks"], [/tally/, "Tally"], [/v-?ray/, "V-Ray"], [/civil\s*3d/, "Civil 3D"], [/bim collab/, "BIM Collaborate Pro"],
+  [/forma/, "Forma"], [/cloudmail|e-?mail/, "Email / Cloudmail"], [/enscape/, "Enscape"], [/lumion/, "Lumion"], [/\bbuild\b/, "Autodesk Build"],
+];
+export const renGroup = (product) => {
+  const t = String(product || "").toLowerCase();
+  const g = REN_GROUPS.find(([re]) => re.test(t));
+  return g ? g[1] : String(product || "—").trim().replace(/\s+/g, " ").slice(0, 40);
+};
 export async function viewRenewals(el) {
-  const f = el.dataset.rf || "due";
+  const f = el.dataset.rf || "due", rp = el.dataset.rp || "";
   let q = sb.from("renewals").select("*").order("end_date").limit(1000);
   if (f === "due") q = q.eq("status", "active").lte("end_date", addDays(today(), 30));
   else if (f === "90") q = q.eq("status", "active").lte("end_date", addDays(today(), 90));
   else if (f === "mine") q = q.eq("status", "active").eq("owner_id", S.me.id);
   else if (f === "closed") q = q.in("status", ["renewed", "lost", "cancelled"]);
-  const { data, error } = await q; if (error) throw error;
+  const { data: rows, error } = await q; if (error) throw error;
+  // every renewal's product (for the filter's list + counts) and the active ones due in 30 days (for the cards)
+  const { data: allP } = await sb.from("renewals").select("product, status, end_date, amount").limit(5000);
+  const byProd = new Map(); (allP || []).forEach((r) => { const g = renGroup(r.product); byProd.set(g, (byProd.get(g) || 0) + 1); });
+  const prodList = [...byProd.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const inProd = (r) => !rp || renGroup(r.product) === rp;
+  const data = rows.filter(inProd);
   const leads = await leadsById(data.map((r) => r.lead_id));
-  const { data: stats } = await sb.from("renewals").select("end_date, amount").eq("status", "active").lte("end_date", addDays(today(), 30));
+  const stats = (allP || []).filter((r) => r.status === "active" && r.end_date <= addDays(today(), 30) && inProd(r));
   const ov = (stats || []).filter((r) => r.end_date < today()), wk = (stats || []).filter((r) => r.end_date >= today() && r.end_date <= addDays(today(), 7));
   el.innerHTML = `<div class="kpis">
       <div class="card kpi"><div class="l">${L("Overdue", "Overdue")}</div><div class="v" style="color:var(--bad)">${ov.length}</div><div class="s">${inrShort(ov.reduce((a, r) => a + +(r.amount || 0), 0))}</div></div>
       <div class="card kpi"><div class="l">${L("Is hafte", "This week")}</div><div class="v">${wk.length}</div><div class="s">${inrShort(wk.reduce((a, r) => a + +(r.amount || 0), 0))}</div></div>
       <div class="card kpi"><div class="l">${L("30 din mein", "Next 30 days")}</div><div class="v">${(stats || []).length}</div><div class="s">${inrShort((stats || []).reduce((a, r) => a + +(r.amount || 0), 0))} ${L("renewal value", "renewal value")}</div></div></div>
     <div class="toolbar"><div class="chips">${[["due", L("30 din / overdue", "30 days / overdue")], ["90", L("90 din", "90 days")], ["mine", L("Mere", "Mine")], ["all", L("Sab", "All")], ["closed", L("Renewed / lost", "Renewed / lost")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-rf="${k}">${h(l)}</button>`).join("")}</div>
+      <select class="input" id="rProd" style="width:auto;max-width:280px" aria-label="${h(L("Product filter", "Product filter"))}">
+        <option value="">🏷️ ${L("Saare products", "All products")} (${(allP || []).length})</option>
+        ${prodList.map(([g, n]) => `<option value="${h(g)}" ${g === rp ? "selected" : ""}>${h(g)} (${n})</option>`).join("")}
+        ${rp && !byProd.has(rp) ? `<option value="${h(rp)}" selected>${h(rp)} (0)</option>` : ""}</select>
+      ${rp ? `<button class="btn sm ghost" id="rProdX" title="${h(L("Product filter hatao", "Clear the product filter"))}">✕ ${h(rp)}</button>` : ""}
       <span class="sp" style="flex:1"></span><button class="btn primary" id="radd">${ic("plus")} Renewal</button></div>
+    ${rp ? `<div class="mu" style="font-size:12.5px;margin:-4px 0 10px">🏷️ ${h(rp)}: ${data.length} ${L("renewal is filter mein", data.length === 1 ? "renewal in this view" : "renewals in this view")}${data.length ? ` · ${inrShort(data.reduce((a, r) => a + +(r.amount || 0), 0))}` : ""}</div>` : ""}
     <div class="card"><div class="tbl-wrap">${!data.length ? empty("Is filter mein koi renewal nahi", "No renewals in this filter") : `<table class="tbl"><thead><tr><th>${L("Company", "Company")}</th><th>Product</th><th>${L("Type", "Type")}</th><th>${L("Expiry", "Expiry")}</th><th class="num">${L("Amount", "Amount")}</th><th>Owner</th><th></th></tr></thead><tbody>
     ${data.map((r) => { const l = leads.get(r.lead_id) || {}; return `<tr data-rid="${r.id}"><td class="co">${h(l.company || "#" + r.lead_id)}</td><td>${h(r.product)}${r.qty > 1 ? ` <span class="mu">× ${h(+r.qty)}</span>` : ""}${r.vendor ? `<div class="sub">${h(r.vendor)}</div>` : ""}</td><td>${h(RKIND.find((k) => k[0] === r.kind)?.[1] || r.kind)}</td>
       <td>${h(dOnly(r.end_date))}<div>${renBadge(r)}</div></td><td class="num">${r.amount != null ? inr(r.amount) : "—"}</td><td>${h(userName(r.owner_id))}</td>
       <td style="white-space:nowrap">${r.status === "active" ? `<button class="btn sm" data-rmail="${r.id}" title="Email reminder">${ic("mail")}</button> <button class="btn sm" data-rwa="${r.id}" title="WhatsApp">${ic("wa")}</button> <button class="btn sm primary" data-rdone="${r.id}">✔ ${L("Renewed", "Renewed")}</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`}</div></div>
     <p class="mu" style="font-size:12.5px">🔔 ${h(L("Expiry se 30, 15, 7 din pehle aur expiry ke din owner ko notification + task apne aap. Renewed dabao toh agla term (1 saal) apne aap ban jata hai.", "Owners get a notification + task 30, 15 and 7 days before expiry and on the day. Mark Renewed to create the next 1-year term automatically."))}</p>`;
   $$("[data-rf]", el).forEach((b) => b.onclick = () => { el.dataset.rf = b.dataset.rf; viewRenewals(el); });
+  $("#rProd", el).onchange = (e) => { el.dataset.rp = e.target.value; viewRenewals(el); };
+  $("#rProdX", el)?.addEventListener("click", () => { el.dataset.rp = ""; viewRenewals(el); });
   $("#radd", el).onclick = () => renewalForm({}, () => viewRenewals(el));
   const byId = (id) => data.find((r) => r.id === +id);
   el.onclick = async (e) => {
