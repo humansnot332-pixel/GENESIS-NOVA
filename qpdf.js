@@ -92,7 +92,7 @@ export function saveBlob(blob, name) {
  * text box laid over the printed value (white background), named "t_<key>". Ticking a box runs `script`
  * (PDF JavaScript), which fills the text boxes again.
  */
-export async function makeFillable(blob, marks, { checked = {}, script = "", values = {}, tickTop = false } = {}) {
+export async function makeFillable(blob, marks, { checked = {}, script = "", values = {}, tickTop = false, calc = null } = {}) {
   await loadFormLib();
   const { PDFDocument, StandardFonts, rgb, TextAlignment, PDFName, PDFHexString } = window.PDFLib;
   const doc = await PDFDocument.load(await blob.arrayBuffer());
@@ -100,6 +100,7 @@ export async function makeFillable(blob, marks, { checked = {}, script = "", val
   const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const teal = rgb(0.06, 0.46, 0.43), white = rgb(1, 1, 1);
   const action = script ? doc.context.register(doc.context.obj({ Type: "Action", S: "JavaScript", JS: PDFHexString.fromText(script) })) : null;
+  const calcOrder = [];   // total boxes with their own "calculate" script → the form's calculation order (/CO)
   for (const m of marks) {
     const pg = pages[m.page]; if (!pg) continue;
     const H = pg.getHeight();
@@ -108,7 +109,8 @@ export async function makeFillable(blob, marks, { checked = {}, script = "", val
       const cy = tickTop ? Math.min(m.h / 2, 11) : m.h / 2;     // tickTop: level with the item's first line
       cb.addToPage(pg, { x: m.x + (m.w - size) / 2, y: H - m.top - cy - size / 2, width: size, height: size, borderWidth: 1, borderColor: teal, backgroundColor: white, textColor: teal });
       if (checked[m.key.slice(2)]) cb.check();
-      // the click runs the script: /A (Acrobat, Firefox) and mouse-up /AA /U (Chrome / Edge) — running twice is harmless
+      // the click runs the script: /A (Acrobat, Firefox) and mouse-up /AA /U (Chrome) — running twice is harmless.
+      // (Microsoft Edge's built-in viewer runs no PDF scripts: the ticks work there, the totals cannot change.)
       if (action) cb.acroField.getWidgets().forEach((w) => { w.dict.set(PDFName.of("A"), action); w.dict.set(PDFName.of("AA"), doc.context.obj({ U: action })); });
     } else {
       const tf = form.createTextField("t_" + m.key), big = m.key === "grand", words = m.key === "words";
@@ -121,7 +123,13 @@ export async function makeFillable(blob, marks, { checked = {}, script = "", val
       tf.setText(String(values[m.key] ?? ""));
       tf.updateAppearances(big ? bold : font);
       tf.enableReadOnly();
+      const cs = calc ? calc(m.key) : "";
+      if (cs) {
+        tf.acroField.dict.set(PDFName.of("AA"), doc.context.obj({ C: doc.context.register(doc.context.obj({ Type: "Action", S: "JavaScript", JS: PDFHexString.fromText(cs) })) }));
+        calcOrder.push(tf.acroField.ref);
+      }
     }
   }
+  if (calcOrder.length) form.acroForm.dict.set(PDFName.of("CO"), doc.context.obj(calcOrder));
   return new Blob([await doc.save({ updateFieldAppearances: false })], { type: "application/pdf" });
 }

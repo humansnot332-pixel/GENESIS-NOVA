@@ -4,7 +4,7 @@
 //  The SAME functions below make the first values (in the CRM) and run inside
 //  the PDF (embedded as their source text), so both always agree.
 //  They are written in plain old JavaScript on purpose: PDF viewers
-//  (Adobe Reader, Chrome, Edge, Firefox) run older JavaScript than browsers.
+//  (Adobe Acrobat Reader, Chrome, Firefox) run older JavaScript than browsers.
 // =====================================================================
 
 /* D: [[taxable, gstRate]] per item index · N: shown item indices · on: {index: ticked}
@@ -60,6 +60,24 @@ export function pickData(items, { inter, roundOff, showOptional }) {
   R.forEach((r) => { if (inter) labels.push(`IGST ${r}%`); else labels.push(`CGST ${r / 2}%`, `SGST ${r / 2}%`); });
   const O = roundOff !== false;
   return { D, N, on, R, I: !!inter, O, labels, T: calcPick(D, N, on, R, !!inter, O) };
+}
+
+/** a total box's own "calculate" script — Acrobat (and pdf.js) run it whenever any tick changes,
+ *  the way PDF forms add up; key: sub | l0, l1… | round | grand | words */
+export function pickCalc(p, key) {
+  const C = JSON.stringify({ D: p.D, N: p.N, R: p.R, I: p.I, O: p.O });
+  const v = key === "sub" ? "fmtIN(T.sub)" : key === "round" ? "fmtRound(T.round)" : key === "grand" ? "fmtIN(T.grand)" : key === "words" ? "amountWords(T.grand)"
+    : /^l\d+$/.test(key) ? `fmtIN(T.lines[${+key.slice(1)}] || 0)` : null;
+  if (!v) return "";
+  return [calcPick, fmtIN, fmtRound, amountWords].map((f) => f.toString()).join("\n") + `
+var C = ${C};
+var doc = this;
+if (!doc || typeof doc.getField != "function") doc = event.target.doc;
+var on = {}, k, f;
+for (k = 0; k < C.N.length; k++) { f = doc.getField("it" + C.N[k]); on[C.N[k]] = !!(f && f.value != "Off"); }
+var T = calcPick(C.D, C.N, on, C.R, C.I, C.O);
+event.value = ${v};
+`;
 }
 
 /** the JavaScript put inside the PDF (runs when a box is ticked / unticked) */

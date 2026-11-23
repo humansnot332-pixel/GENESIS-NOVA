@@ -24,8 +24,8 @@ import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
-import { htmlToPdf, elementToPdf, makeFillable } from "./qpdf.js";
-import { pickData, pickScript, fmtIN, fmtRound, amountWords } from "./qpick.js";
+import { htmlToPdf, elementToPdf, makeFillable, saveBlob } from "./qpdf.js";
+import { pickData, pickScript, pickCalc, fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
 import { productPicker } from "./lprod.js";
 
@@ -1839,7 +1839,7 @@ async function quoteEditor(q0) {
       <div><label class="f" for="qni">Internal note <span class="lbl-hint">🔒 ${L("sirf team — kabhi print nahi hota", "team only — never printed")}</span></label><textarea class="input" id="qni" maxlength="3000" rows="3" placeholder="${h(L("Jaise: discount approve hua · vendor price · follow-up", "e.g. discount approved · vendor price · follow-up"))}">${h(q.note_internal || "")}</textarea></div></div>
     <div class="grid2 sec qtc">${qtBox("annexure", q)}${qtBox("terms", q)}</div>
     <div id="qtplEd"></div>`,
-    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button><button class="btn" id="qcopy" title="${h(L("Isi jaisi nayi quotation", "A new quotation like this one"))}">📄 Copy</button>${q.status !== "lost" ? `<button class="btn" id="qobf" title="${h(L("Customer ne approve kiya → Order Booking Form", "Customer approved → Order Booking Form"))}">📋 OBF</button>` : ""}${q.status !== "lost" && isMgr() ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
+    foot: `${q.id ? `<button class="btn" id="qp">${ic("print")} Print / PDF</button><button class="btn" id="qtpdf" title="${h(L("Customer wala PDF — items tick / untick karke total badalta hai", "The customer's PDF — tick / untick items and the total changes"))}">⬇️ ${L("Tick wala PDF", "Tick PDF")}</button><button class="btn" id="qlink" title="${L("Online link copy karo", "Copy online link")}">🔗 Link</button><button class="btn" id="qmail">${ic("mail")} Email</button><button class="btn" id="qwa">${ic("wa")} WhatsApp</button><button class="btn" id="qcopy" title="${h(L("Isi jaisi nayi quotation", "A new quotation like this one"))}">📄 Copy</button>${q.status !== "lost" ? `<button class="btn" id="qobf" title="${h(L("Customer ne approve kiya → Order Booking Form", "Customer approved → Order Booking Form"))}">📋 OBF</button>` : ""}${q.status !== "lost" && isMgr() ? `<button class="btn" id="qord">📦 ${L("Order banao", "Create order")}</button>` : ""}` : ""}${q.id && (isMgr() || q.owner_id === S.me.id) ? `<button class="btn danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no || "")}" data-co="${h(q.to_party?.name || "")}">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="qsave">Save</button>`,
   });
   const hooks = { items: () => {} };
   const amtHtml = (it) => inr(r2((+it.qty || 0) * (+it.price || 0))) + (it.opt ? `<div class="opt-tag">Optional</div>` : "");
@@ -2165,6 +2165,18 @@ async function quoteEditor(q0) {
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
   };
   $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
+  // download the same PDF the customer gets by email (ticks + totals that change)
+  $("#qtpdf", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+    syncAll();
+    if (savedSig != null && saveSig() !== savedSig) return toast(L("Pehle Save dabao — PDF saved quotation ka banta hai", "Press Save first — the PDF is made from the saved quotation"), true);
+    const { data: token, error } = await sb.rpc("share_quote", { p_id: q.id });
+    if (error) throw error;
+    if (!q.share_token) { q.share_token = token; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
+    toast(L("📄 PDF ban raha hai…", "📄 Making the PDF…"));
+    const a = await quotePdf(q, "#" + token);
+    saveBlob(a.blob, a.name);
+    toast(L(`⬇️ ${a.name} download ho gaya — Chrome ya Adobe Acrobat Reader mein kholo`, `⬇️ ${a.name} downloaded — open it in Chrome or Adobe Acrobat Reader`));
+  }));
   $("#qmail", m)?.addEventListener("click", (e) => busy(e.target, () => shared("email")));
   $("#qwa", m)?.addEventListener("click", (e) => busy(e.target, () => shared("whatsapp")));
   $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
@@ -2210,11 +2222,25 @@ async function quoteEditor(q0) {
     if (S.route === "quotes") VIEWS.quotes($("#page"));
   });
 }
-function printQuote(q) {
+async function printQuote(q) {
+  const rep = await quoteRep(q);
   let pr = document.getElementById("printRoot");
   if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
-  quoteDoc(q, pr);
+  quoteDoc(q, pr, { rep });
   window.print();
+}
+// who made the quotation (its owner) — for "Prepared by" on the document; an old-ERP one has only the ERP name
+const repCache = new Map();
+async function quoteRep(q) {
+  if (q.owner_id) {
+    if (!repCache.has(q.owner_id)) {
+      const { data } = await sb.from("profiles").select("full_name, designation, phone, email").eq("id", q.owner_id).maybeSingle();
+      repCache.set(q.owner_id, data ? { name: data.full_name, designation: data.designation, phone: data.phone, email: data.email } : null);
+    }
+    if (repCache.get(q.owner_id)) return repCache.get(q.owner_id);
+  }
+  const erp = String(q.note_internal || "").match(/Banayi:\s*([^·]+)/);
+  return erp ? { name: erp[1].trim() } : null;
 }
 const pdfName = (q) => `Quotation ${String(q.quote_no || "draft").replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
 /** the quotation as a PDF that looks exactly like the customer's online page (quote.html, drawn in a hidden
@@ -2259,21 +2285,22 @@ async function quotePdf(q, link) {
     const r = await elementToPdf(root, { width: full, title: "Quotation " + (q.quote_no || ""), marks: "td.ck[data-pk], [data-tot]" });
     const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand) };
     p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
-    const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, tickTop: true });
+    const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, tickTop: true, calc: (k) => pickCalc(p, k) });
     return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
   } finally { fr.remove(); }
 }
 // fallback (no online link): the print layout with ticks
 async function quotePdfPrint(q) {
   const p = pickData(q.items || [], { inter: qCalc(q).inter, roundOff: q.round_off, showOptional: q.show_optional });
-  const r = await htmlToPdf((root) => quoteDoc(q, root, { pick: p }), { title: "Quotation " + (q.quote_no || ""), marks: "[data-pi], [data-tot]" });
+  const rep = await quoteRep(q);
+  const r = await htmlToPdf((root) => quoteDoc(q, root, { pick: p, rep }), { title: "Quotation " + (q.quote_no || ""), marks: "[data-pi], [data-tot]" });
   const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand), words: amountWords(p.T.grand) };
   p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
-  const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values });
+  const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, calc: (k) => pickCalc(p, k) });
   return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
 }
 // the quotation document (Print / PDF): fills `pr`
-function quoteDoc(q, pr, { link = null, pick = null } = {}) {
+function quoteDoc(q, pr, { link = null, pick = null, rep = null } = {}) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
   const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
   // line table like the reference: Sr | Description | Taxation | HSN/SAC | Qty | Lic. Qty | Warranty | Price(Unit) | Taxable Value | Tax Amount | Total
@@ -2294,7 +2321,7 @@ function quoteDoc(q, pr, { link = null, pick = null } = {}) {
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
     ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> — tick or untick items to see the total with GST, and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
-    ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Open in Chrome, Adobe Reader or Edge — Mac Preview, Safari and phone viewers don't update the total.)</span></div>` : ""}
+    ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Open in Google Chrome or Adobe Acrobat Reader — Microsoft Edge, Mac Preview, Safari and phone viewers don't update the total.)</span></div>` : ""}
     <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table class="qlines">${head}<tbody>
     ${pick ? pickBody() : `${inc.map((it, i) => rowHtml(it, i)).join("")}
@@ -2306,6 +2333,7 @@ function quoteDoc(q, pr, { link = null, pick = null } = {}) {
     ${q.note_customer ? `<p style="white-space:pre-wrap"><b>Note:</b> ${h(q.note_customer)}</p>` : ""}
     <div class="qsec" data-pr="terms"><h4>Terms &amp; Conditions</h4><div class="rich"></div></div>
     <p><b>Bank:</b> ${h(co.bank || "")} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>
+    ${rep?.name ? `<p class="qrep"><b>Prepared by:</b> ${h(rep.name)}${rep.designation ? ", " + h(rep.designation) : ""}${rep.phone ? " · 📞 " + h(rep.phone) : ""}${rep.email ? " · ✉ " + h(rep.email) : ""}</p>` : ""}
     <p>For <b>${h(co.name || "")}</b><br><br>Authorised Signatory<br><span style="font-size:11px">Contact: ${h(co.contact || "")} ${h(co.mobile || "")} · ${h(co.email || "")}</span></p>
     <div class="qannex" data-pr="annex"><div class="hd2"><b>ANNEXURE</b><span>Quotation No. ${h(q.quote_no || "")} · ${h(dOnly(q.created_at || new Date()))}</span></div><div class="rich"></div></div></div>`;
   const put = (k, html) => { const b = $(`[data-pr="${k}"]`, pr); if (html) renderRich($(".rich", b), html); else b.remove(); };

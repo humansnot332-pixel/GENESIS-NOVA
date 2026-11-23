@@ -81,7 +81,7 @@ function render(q) {
     <div><b>To:</b> ${h(to.name || "")}${to.address ? "<br>" + h(to.address) : ""}${to.state ? ", " + h(to.state) : ""}${to.gstin ? "<br>GSTIN: " + h(to.gstin) : ""}${to.contact ? "<br>Kind Attn: " + h(to.contact) : ""}</div>
     ${q.site?.address ? `<div style="margin-top:6px"><b>Delivery / site:</b> ${h(q.site.address)}</div>` : ""}
     ${termRows(q).length ? `<div class="terms">${termRows(q).map(([k, v]) => `<div><span class="mu">${h(k)}</span><b>${h(v)}</b></div>`).join("")}</div>` : ""}
-    ${canPick ? `<p class="pickhint">${pdfMode ? "✔ <b>Tick the items you want in this PDF</b> — the total with GST updates by itself. Then save the PDF and reply to our email with it to confirm.<br><span class=\"mu\">Open it in <b>Google Chrome, Adobe Acrobat Reader or Microsoft Edge</b> — Mac Preview, Safari and phone viewers show the ticks but do not update the total.</span>"
+    ${canPick ? `<p class="pickhint">${pdfMode ? "✔ <b>Tick the items you want in this PDF</b> — the total with GST updates by itself. Then save the PDF and reply to our email with it to confirm.<br><span class=\"mu\">Open it in <b>Google Chrome or Adobe Acrobat Reader</b> — Microsoft Edge, Mac Preview, Safari and phone viewers show the ticks but do not update the total.</span>"
       : "✔ <b>Tick the items you want</b> — the total with GST updates instantly. Accepting confirms exactly your selection."}</p>
     <div class="tw pick"><table>${head(true)}<tbody>
       ${all.map((it, k) => `<tr data-row="${it.n}" class="${it.opt ? "" : "on"}"><td class="ck"${pdfMode ? ` data-pk="${it.n}"` : ""}><input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include ${h(String(it.desc || "item").slice(0, 80))}"></td>${rowHtml(it, k).replace('<pre class="pn">', it.opt ? '<span class="otag">Optional</span><pre class="pn">' : '<pre class="pn">')}</tr>`).join("")}
@@ -97,8 +97,8 @@ function render(q) {
     ${q.note ? `<div class="blk"><b class="t">Note</b><pre>${h(q.note)}</pre></div>` : ""}
     <div class="blk" id="qTerms" hidden><b class="t">Terms &amp; Conditions</b><div class="rich"></div></div>
     ${co.bank ? `<p class="mu"><b>Bank:</b> ${h(co.bank)} · A/c ${h(co.acno || "")} · ${h(co.branch || "")} · IFSC ${h(co.ifsc || "")}</p>` : ""}
-    <p style="margin-top:18px">Your contact: <b>${h(rep.name || "")}</b>${rep.designation ? ", " + h(rep.designation) : ""}<br>
-      <span class="mu">${rep.phone ? `📞 <a href="tel:${h(String(rep.phone).replace(/[^\d+]/g, ""))}">${h(rep.phone)}</a>` : ""} ${rep.email ? ` · ✉️ <a href="mailto:${h(rep.email)}">${h(rep.email)}</a>` : ""}</span></p>
+    ${rep.name ? `<p class="qrep" style="margin-top:18px"><span class="mu">Prepared by / your contact:</span> <b>${h(rep.name)}</b>${rep.designation ? ", " + h(rep.designation) : ""}<br>
+      <span class="mu">${rep.phone ? `📞 <a href="tel:${h(String(rep.phone).replace(/[^\d+]/g, ""))}">${h(rep.phone)}</a>` : ""}${rep.phone && rep.email ? " · " : ""}${rep.email ? `✉️ <a href="mailto:${h(rep.email)}">${h(rep.email)}</a>` : ""}</span></p>` : ""}
     ${pdfMode ? "" : respBox(q)}
   </div>
   <div class="card annex" id="qAnnex" hidden${pdfMode ? " data-pdf-break" : ""}><div class="hd"><h2>ANNEXURE</h2><div class="mu">Quotation No. ${h(q.quote_no)} · ${h(dt(q.date))}</div></div><div class="rich"></div></div>
