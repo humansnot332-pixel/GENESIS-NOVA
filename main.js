@@ -2554,7 +2554,7 @@ ACT.distribute = async (b) => {
 const CO_FIELDS = [
   ["name", "Company naam (quotation pe)", "Company name (on quotations)"], ["state", "State (GST ke liye zaroori)", "State (needed for GST)"],
   ["gstin", "GSTIN", "GSTIN"], ["pan", "PAN", "PAN"], ["address", "Address", "Address"],
-  ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"],
+  ["contact", "Contact person", "Contact person"], ["mobile", "Mobile", "Mobile"], ["email", "Email", "Email"], ["website", "Website", "Website"], ["msme", "MSME No. (quotation pe)", "MSME No. (on quotations)"],
   ["bank", "Bank", "Bank"], ["acno", "Account no.", "Account no."], ["ifsc", "IFSC", "IFSC"], ["branch", "Branch", "Branch"],
 ];
 // ---- email banners: Admin keeps up to 5 and picks the one the whole team uses ----
@@ -2757,7 +2757,7 @@ async function wireBackupCard(el) {
   });
 }
 VIEWS.company = async (el) => {
-  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding", "email_banner", "mail_track"]);
+  const { data } = await sb.from("settings").select("key, value").in("key", ["company", "payment_terms_days", "outlook", "branding", "email_banner", "mail_track", "erp_access"]);
   const m = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
   if (m.email_banner) S.settings.email_banner = m.email_banner;
   if (m.mail_track) S.settings.mail_track = m.mail_track;
@@ -2769,6 +2769,9 @@ VIEWS.company = async (el) => {
     </div>${ro ? "" : `<div class="row" style="margin-top:14px"><button class="btn primary" id="coSave">Save</button></div>`}</fieldset></div></div>
     ${bannerCard(ro)}
     ${trackCard(m.mail_track || {}, ro)}
+    ${isMgr() ? `<div class="card sec" style="max-width:860px"><div class="card-h"><h3>📦 ${L("Purana ERP data", "Old ERP data")}</h3></div><div class="card-b">
+      <p class="mu" style="font-size:12.5px;margin-top:0">${L("Har employee ko sirf apni quotations, renewals aur OBF dikhte hain (Admin / Manager ko sab). ERP se aayi quotations aur renewals abhi sirf Admin / Manager dekh sakte hain. Chalu karoge toh sab employees inhe <b>dekh</b> sakenge — badal nahi sakenge.", "Each employee sees only their own quotations, renewals and OBFs (Admin / Manager see all). Quotations and renewals from the old ERP are for Admin / Manager only. Turn this on and every employee can <b>see</b> them — not change them.")}</p>
+      <label class="check"><input type="checkbox" id="erpPub" ${m.erp_access?.public ? "checked" : ""} ${ro ? "disabled" : ""}> ${L("ERP ka purana data sab employees ko dikhao", "Show the old ERP data to every employee")}</label></div></div>` : ""}
     ${brandCard(m.branding || {}, ro)}
     ${outlookCard(m.outlook || {}, ro)}
     ${isAdmin() ? `<div class="card" style="max-width:860px" id="bkCard"><div class="card-h"><h3>💾 ${L("Backup", "Backup")}</h3><span class="sp"></span>
@@ -2779,6 +2782,12 @@ VIEWS.company = async (el) => {
   wireOutlookCard(el, m.outlook || {});
   wireBrandCard(el, m.branding || {});
   if (!ro) { wireBannerCard(el); wireTrackCard(el); }
+  $("#erpPub", el)?.addEventListener("change", (e) => busy(null, async () => {
+    const on = e.target.checked;
+    const { error } = await sb.from("settings").upsert({ key: "erp_access", value: { public: on }, updated_by: S.me.id, updated_at: new Date().toISOString() });
+    if (error) { e.target.checked = !on; throw error; }
+    toast(on ? L("✔ ERP data ab sab employees ko dikhega", "✔ ERP data is now visible to every employee") : L("ERP data ab sirf Admin / Manager ko", "ERP data is now for Admin / Manager only"));
+  }));
   if (isAdmin()) wireBackupCard(el);
   $("#coSave", el)?.addEventListener("click", (e) => busy(e.target, async () => {
     const v = { ...c }; $$("[data-co]", el).forEach((i) => { v[i.dataset.co] = i.value.trim(); });
