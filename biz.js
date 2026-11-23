@@ -12,6 +12,7 @@ import { openComposer, ensureWork } from "./comms.js";
 import { L, isEn } from "./i18n.js";
 import { filesHtml, wireFiles, loadFiles, uploadTicketFiles } from "./files.js";
 import { pushCard } from "./push.js";
+import { loadCatalog } from "./lprod.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -51,7 +52,7 @@ function wireLeadPicker(m, id) {
 let PROD = null, COSTS = null;
 export async function loadProducts(force = false) {
   if (PROD && !force) return PROD;
-  const { data } = await sb.from("products").select("id, brand, name, model, category, hsn, gst_rate, unit, sell_price, active, notes").order("brand").order("name").limit(5000);
+  const { data } = await sb.from("products").select("id, brand, name, model, category, hsn, gst_rate, unit, sell_price, active, notes, pitch, pitch_hi").order("brand").order("name").limit(5000);
   PROD = data || [];
   if (isMgr()) { const { data: c } = await sb.rpc("product_costs"); COSTS = new Map((c || []).map((x) => [x.id, x])); }
   return PROD;
@@ -163,6 +164,9 @@ async function productForm(p, done) {
       <div><label class="f">🔒 Cost price ₹</label><input class="input" type="number" min="0" step="0.01" name="cost_price" value="${h(c?.cost_price ?? "")}"></div>
       <div><label class="f">${L("Selling price", "Selling price")} ₹</label><input class="input" type="number" min="0" step="0.01" name="sell_price" value="${h(p.sell_price ?? "")}"></div></div>
       <label class="f">Notes</label><input class="input" name="notes" value="${h(p.notes || "")}" maxlength="1000">
+      <div class="grid2">
+        <div><label class="f" for="pPitch">✨ ${L("Customer ke liye ek line (English) — email / WhatsApp mein jaati hai", "One line for the customer (English) — goes into the email / WhatsApp")}</label><input class="input" id="pPitch" name="pitch" value="${h(p.pitch || "")}" maxlength="300" placeholder="e.g. genuine Autodesk subscription with quick activation and renewal reminders"></div>
+        <div><label class="f" for="pPitchH">✨ ${L("Wahi line Hinglish mein", "The same line in Hinglish")}</label><input class="input" id="pPitchH" name="pitch_hi" value="${h(p.pitch_hi || "")}" maxlength="300" placeholder="e.g. genuine subscription — turant activation aur renewal reminder"></div></div>
       <label class="row check" style="margin-top:10px"><input type="checkbox" name="active" ${p.active === false ? "" : "checked"}> ${L("Active (quotation mein dikhega)", "Active (shown in quotations)")}</label>
       ${p.id ? `<div class="sec"><div class="sec-t">🔒 ${L("Vendor / distributor prices — sabse sasta upar", "Vendor / distributor prices — cheapest first")}</div>
         <table class="tbl"><thead><tr><th>Vendor</th><th class="num">Price</th><th>${L("Valid till", "Valid till")}</th><th>${L("Update", "Updated")}</th><th></th></tr></thead><tbody>
@@ -172,12 +176,13 @@ async function productForm(p, done) {
   });
   $("#psave", m).onclick = (e) => busy(e.target, async () => {
     const f = formData(m); if (!f.name) return toast(L("Product naam daalo", "Enter product name"), true);
-    const row = { brand: f.brand, name: f.name, model: f.model, category: f.category, hsn: f.hsn, gst_rate: +f.gst_rate, unit: f.unit || "Nos", sell_price: f.sell_price == null ? null : +f.sell_price, notes: f.notes, active: !!f.active };
+    const row = { brand: f.brand, name: f.name, model: f.model, category: f.category, hsn: f.hsn, gst_rate: +f.gst_rate, unit: f.unit || "Nos", sell_price: f.sell_price == null ? null : +f.sell_price, notes: f.notes, active: !!f.active,
+      pitch: (f.pitch || "").trim().slice(0, 300) || null, pitch_hi: (f.pitch_hi || "").trim().slice(0, 300) || null };
     const r = p.id ? await sb.from("products").update(row).eq("id", p.id).select("id").single() : await sb.from("products").insert(row).select("id").single();
     if (r.error) throw r.error;
     const c2 = await sb.from("product_cost").upsert({ product_id: r.data.id, cost_price: f.cost_price == null ? null : +f.cost_price, updated_at: new Date().toISOString() });
     if (c2.error) throw c2.error;
-    toast(L("Product saved ✔", "Product saved ✔")); closeModal(); PROD = null; done?.();
+    toast(L("Product saved ✔", "Product saved ✔")); closeModal(); PROD = null; loadCatalog(true).catch(() => {}); done?.();
   });
   $("#pdel", m)?.addEventListener("click", async () => {
     if (!(await confirmBox(L(`"${prodLabel(p)}" delete karna hai?`, `Delete "${prodLabel(p)}"?`), "Delete"))) return;

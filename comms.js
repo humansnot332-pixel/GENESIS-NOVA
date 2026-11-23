@@ -12,6 +12,7 @@ import { L, isEn, getLang } from "./i18n.js";
 import { CONFIG } from "./config.js";
 import { filesHtml, wireFiles, loadFiles } from "./files.js";
 import { blobB64, saveBlob } from "./qpdf.js";
+import { loadCatalog, productMessage, templateFit, productPicker } from "./lprod.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -226,12 +227,13 @@ function pickStage({ channel, lead, rfq, reply }) {
   if (lead?.email_count > 0 && !lead?.reply_count) return "followup";
   return "new";
 }
-function tplOptions(list, sel) {
+function tplOptions(list, sel, autoLabel = "") {
   const cur = getLang(), other = cur === "en" ? "hinglish" : "en", nm = { en: "English", hinglish: "Hinglish" };
   const o = (arr) => arr.map((t) => `<option value="${t.id}" ${t.id === sel ? "selected" : ""}>${h(t.name)}</option>`).join("");
   const grp = (label, arr) => (arr.length ? `<optgroup label="${label}">${o(arr)}</optgroup>` : "");
   const lg = (t) => t.lang || "en";
-  return `<option value="">— Blank (sirf signature) —</option>`
+  return (autoLabel ? `<option value="auto" ${sel === "auto" ? "selected" : ""}>✨ ${h(autoLabel)}</option>` : "")
+    + `<option value="">— Blank (sirf signature) —</option>`
     + grp(`Company templates · ${nm[cur]}`, list.filter((t) => t.is_shared && lg(t) === cur))
     + grp(`Mere templates · ${nm[cur]}`, list.filter((t) => !t.is_shared && lg(t) === cur))
     + grp(`Company templates · ${nm[other]}`, list.filter((t) => t.is_shared && lg(t) === other))
@@ -253,8 +255,23 @@ export async function openComposer(opts) {
   const list = [...all.filter((t) => (t.lang || "en") === getLang()), ...all.filter((t) => (t.lang || "en") !== getLang())];
   const stage = opts.stage || pickStage({ channel, lead, rfq, reply });
   const mine = (t) => (t.lang || "en") === getLang();
-  const auto = reply ? null : (list.find((t) => mine(t) && t.is_shared && t.stage === stage) || list.find((t) => mine(t) && t.stage === stage)
+  const stageT = reply ? null : (list.find((t) => mine(t) && t.is_shared && t.stage === stage) || list.find((t) => mine(t) && t.stage === stage)
     || list.find((t) => t.is_shared && t.stage === stage) || list[0]);
+  // the lead's products write the message: a template tagged with those products, else one built from them
+  // (only for the selling stages — quotation / RFQ / reply mails keep their own templates)
+  const prodOn = !!(lead && !bulk && !reply && !rfq && !opts.attach && !opts.stage);
+  let prods = prodOn ? [...(lead.products || [])] : [];
+  if (prodOn) await loadCatalog().catch(() => {});
+  const sellStage = ["new", "followup", "interested", "demo"].includes(stage);
+  const genT = () => ({ id: "auto", ...productMessage({ channel, hinglish: getLang() !== "en", stage, products: prods }) });
+  const prodT = () => {
+    if (!prods.length) return null;
+    const sc = (t) => templateFit(t, prods) * 10 + (t.stage === stage ? 5 : 0) + (t.is_shared ? 1 : 0);
+    return list.filter((t) => mine(t) && templateFit(t, prods) > 0 && (!t.stage || t.stage === stage || sellStage)).sort((a, b) => sc(b) - sc(a))[0] || null;
+  };
+  const pickAuto = () => reply ? null : (prodT() || (prods.length && sellStage ? genT() : stageT));
+  const autoLabel = () => prods.length ? `${prods.slice(0, 3).join(", ")}${prods.length > 3 ? ` +${prods.length - 3}` : ""} — ${L("products se bana (auto)", "written from the products (auto)")}` : "";
+  const auto = pickAuto();
   const ctx = { ...tplContext({ lead: bulk ? null : lead, rfq }), ...(opts.vars || {}) };
   if (bulk) { ctx.company = L("aapki company", "your organization"); ctx.contact_name = ""; }
   const isEmail = channel === "email";
@@ -286,7 +303,8 @@ export async function openComposer(opts) {
       : `<div class="grid2"><div><label class="f" for="cTo">To</label><input class="input" id="cTo" value="${h(to)}" placeholder="name@company.com" autocomplete="off"></div>
          <div><label class="f" for="cCc">CC (optional)</label><input class="input" id="cCc" placeholder="comma separated"></div></div>`}` : `
       <label class="f" for="cPh">WhatsApp number</label><select class="input" id="cPh">${phones.map((p) => `<option value="${h(p)}">${h(p)}${isMobile(p) ? " · mobile" : " · landline?"}</option>`).join("") || "<option value=''>—</option>"}</select>`}
-    <div class="grid2"><div><label class="f" for="cTpl">Template</label><select class="input" id="cTpl">${tplOptions(list, auto?.id)}</select></div>
+    ${prodOn ? `<div class="cprod" id="cProd"></div><div id="cProdPick" hidden style="margin-top:8px"></div>` : ""}
+    <div class="grid2"><div><label class="f" for="cTpl">Template</label><select class="input" id="cTpl">${tplOptions(list, auto?.id, autoLabel())}</select></div>
       ${isEmail ? `<div><label class="f" for="cSub">Subject</label><input class="input" id="cSub" maxlength="300"></div>` : `<div></div>`}</div>
     <div class="row" style="margin:12px 0 4px"><label class="f" style="margin:0" for="cBody">Message</label><span class="sp" style="flex:1"></span>
       <button type="button" class="btn sm" id="cBold" title="Selected text bold"><b>B</b></button>
@@ -360,10 +378,47 @@ export async function openComposer(opts) {
   if (attOn) makeAtt();
   const attNow = () => (attOn ? att : null);
   body.addEventListener("input", () => { body.dataset.dirty = "1"; });
+  let curT = auto;
   $("#cTpl", m).onchange = async (e) => {
-    if (body.dataset.dirty && !(await confirmBox("Template badalne se aapke changes chale jayenge. Continue?", "Haan, badlo"))) return;
-    applyL(list.find((t) => t.id === +e.target.value));
+    if (body.dataset.dirty && !(await confirmBox("Template badalne se aapke changes chale jayenge. Continue?", "Haan, badlo"))) { $("#cTpl", m).value = curT?.id ?? ""; return; }
+    curT = e.target.value === "auto" ? genT() : list.find((t) => t.id === +e.target.value);
+    applyL(curT);
   };
+  // ---- the lead's products: shown above the template, changed right here (saved to the lead too) ----
+  if (prodOn) {
+    let saveTimer = 0, picker = null;
+    const drawProd = (note = "") => {
+      const box = $("#cProd", m); if (!box) return;
+      box.innerHTML = `🏷️ <b>${L("Products", "Products")}:</b> ${prods.map((p) => `<span class="badge acc">${h(p)}</span>`).join("") || `<span class="mu">${L("koi nahi — product chuno, message unhi ke hisaab se banega", "none — pick the products and the message is written for them")}</span>`}
+        <button type="button" class="btn sm" id="cProdEd" aria-expanded="${!$("#cProdPick", m).hidden}">${$("#cProdPick", m).hidden ? (prods.length ? "✏️ " + L("Badlo", "Change") : "＋ " + L("Product jodo", "Add products")) : "✔ " + L("Ho gaya", "Done")}</button>
+        ${note ? `<span class="mu" style="font-size:12px">${note}</span>` : ""}`;
+      $("#cProdEd", m).onclick = () => { const pk = $("#cProdPick", m); pk.hidden = !pk.hidden; if (!pk.hidden && !picker) picker = productPicker(pk, prods, onProds); drawProd(); if (!pk.hidden) setTimeout(() => $(".ppick-q", pk)?.focus(), 30); };
+    };
+    const regen = () => { curT = pickAuto(); $("#cTpl", m).innerHTML = tplOptions(list, curT?.id, autoLabel()); applyL(curT); };
+    const onProds = (sel) => {
+      prods = [...sel];
+      const keep = $("#cTpl", m).value;
+      $("#cTpl", m).innerHTML = tplOptions(list, keep === "auto" && !prods.length ? "" : keep, autoLabel());
+      let note = "";
+      if (!body.dataset.dirty) regen();
+      else note = `<button type="button" class="btn sm ghost" id="cProdRe">↻ ${L("Naye products se message dobara banao", "Rewrite the message for these products")}</button>`;
+      if (canWork(lead)) {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => sb.from("leads").update({ products: prods }).eq("id", lead.id).then(({ error }) => {
+          if (error) return fail(error);
+          lead.products = [...prods]; HOOK.softRefresh();
+          const n = $("#cProdSaved", m); if (n) n.textContent = "✔ " + L("lead mein saved", "saved to the lead");
+        }), 700);
+        note += `<span class="mu" id="cProdSaved" style="font-size:12px"></span>`;
+      }
+      drawProd(note);
+      $("#cProdRe", m)?.addEventListener("click", async () => {
+        if (!(await confirmBox(L("Aapke changes chale jayenge — naya message banayein?", "Your edits will be lost — write a new message?"), L("Haan, banao", "Yes, rewrite")))) return;
+        regen();
+      });
+    };
+    drawProd();
+  }
   $("#cBold", m).onclick = () => {
     const a = body.selectionStart, b = body.selectionEnd; if (a === b) return toast("Pehle text select karo");
     body.setRangeText("**" + body.value.slice(a, b).replace(/\*\*/g, "") + "**", a, b, "select"); body.dataset.dirty = "1"; body.focus();
@@ -374,7 +429,9 @@ export async function openComposer(opts) {
     p.style.display = on ? "block" : "none"; body.style.display = on ? "none" : "block";
     $("#cPrev", m).textContent = on ? "✏️ Edit" : "👁 Preview";
   };
-  $("#cSave", m).onclick = () => saveAsTemplate(channel, sub?.value || "", body.value);
+  // a message not edited by hand is saved with its {{variables}} (works for every lead); tagged with the lead's products
+  $("#cSave", m).onclick = () => saveAsTemplate(channel, body.dataset.dirty || !curT ? sub?.value || "" : curT.subject || "", body.dataset.dirty || !curT ? body.value : curT.body,
+    { products: prods, stage: prods.length ? stage : null });
   // can this person's Gmail script make the draft (template + banner)?
   let draftOk = false, scriptV = 0;
   if (isEmail) sb.rpc("mail_status").then(({ data: ms }) => {
@@ -479,17 +536,20 @@ async function logEmail({ provider, subject, text, toList, cc, opts, tplId, bulk
   opts.onSent?.();
 }
 
-function saveAsTemplate(channel, subject, body) {
+function saveAsTemplate(channel, subject, body, { products = [], stage = null } = {}) {
   const m = modal({
     title: "Template save karo",
-    body: `<label class="f">Naam</label><input class="input" id="tN" maxlength="80" placeholder="e.g. Workstation offer">
+    body: `<label class="f">Naam</label><input class="input" id="tN" maxlength="80" placeholder="e.g. Workstation offer" value="${h(products.length ? products.slice(0, 3).join(" + ") + (channel === "email" ? " — intro mail" : " — WhatsApp") : "")}">
+      ${products.length ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="tP" checked> ${L("In products ke leads pe apne aap aaye", "Pick it automatically for leads with these products")}: <b>${h(products.join(", "))}</b></label>` : ""}
       ${isMgr() ? `<label class="check" style="margin-top:10px"><input type="checkbox" id="tS"> Poori team ke liye (company template)</label>` : ""}
       <p class="mu" style="font-size:12.5px">Tip: company naam ki jagah <span class="mono">{{company}}</span>, contact ke liye <span class="mono">{{contact_name|Sir/Madam}}</span> likho — har lead ke liye apne aap bhar jayega.</p>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="tGo">Save</button>`,
   });
   $("#tGo", m).onclick = (e) => busy(e.target, async () => {
     const name = $("#tN", m).value.trim(); if (!name) return toast("Naam daalo", true);
-    const { error } = await sb.from("message_templates").insert({ channel, name, subject: subject || null, body, is_shared: !!$("#tS", m)?.checked, owner_id: S.me.id, lang: getLang() });
+    const tag = !!$("#tP", m)?.checked;
+    const { error } = await sb.from("message_templates").insert({ channel, name, subject: subject || null, body, is_shared: !!$("#tS", m)?.checked, owner_id: S.me.id, lang: getLang(),
+      ...(tag ? { products: products.slice(0, 30), stage } : {}) });
     if (error) throw error; tplAt = 0; closeModal(); toast("Template saved ✔");
   });
 }
@@ -508,6 +568,7 @@ export async function viewTemplates(el) {
     <div class="queue">${list.map((t) => `
       <div class="card" style="padding:14px 16px;min-width:0"><div class="row tpl-row" style="flex-wrap:nowrap">
         <div style="min-width:0;flex:1"><b>${h(t.name)}</b> ${t.is_shared ? '<span class="badge acc">Company</span>' : '<span class="badge">Mera</span>'} ${t.stage ? `<span class="badge">${h(t.stage)}</span>` : ""} <span class="badge">${(t.lang || "en") === "en" ? "EN" : "Hinglish"}</span>
+          ${(t.products || []).length ? `<div style="margin-top:4px">🏷️ ${t.products.map((p) => `<span class="badge info" style="margin:0 4px 2px 0">${h(p)}</span>`).join("")}</div>` : ""}
           ${t.subject ? `<div class="mu" style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Subject: ${h(fillTemplate(t.subject, sample))}</div>` : ""}</div>
         <button class="btn sm" data-tv="${t.id}">👁</button>
         ${(!t.is_shared && t.owner_id === S.me.id) || isMgr() ? `<button class="btn sm" data-te="${t.id}">Edit</button>` : ""}
@@ -542,15 +603,18 @@ function templateEditor(t, done) {
         <button type="button" class="btn sm" id="eB"><b>B</b></button></div>
       <textarea class="input" id="eBody" style="min-height:300px;font-size:13.5px">${h(t.body || "")}</textarea>
       <p class="mu" style="font-size:12px"><span class="mono">**bold**</span> · <span class="mono">{{contact_name|Sir/Madam}}</span> = contact naam, nahi ho toh "Sir/Madam"</p>
+      <label class="f">🏷️ ${L("Kin products ke liye — in products wale lead pe ye template apne aap chunega (khaali = sab ke liye)", "For which products — picked automatically for leads with these products (empty = for everyone)")}</label><div id="eP"></div>
       ${isMgr() ? `<label class="check"><input type="checkbox" id="eSh" ${t.is_shared ? "checked" : ""}> Company template (poori team dekh payegi)</label>` : ""}`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="eGo">Save</button>`,
   });
   const ta = $("#eBody", m);
+  const tagP = productPicker($("#eP", m), t.products || [], () => {}, { cats: true });
   $("#eVar", m).onchange = (e) => { if (!e.target.value) return; ta.setRangeText(`{{${e.target.value}}}`, ta.selectionStart, ta.selectionEnd, "end"); e.target.value = ""; ta.focus(); };
   $("#eB", m).onclick = () => { const a = ta.selectionStart, b = ta.selectionEnd; if (a === b) return; ta.setRangeText("**" + ta.value.slice(a, b) + "**", a, b, "select"); };
   $("#eGo", m).onclick = (e) => busy(e.target, async () => {
     const row = { channel: t.channel, lang: $("#eL", m).value, name: $("#eN", m).value.trim(), use_for: $("#eU", m).value, stage: $("#eS", m).value || null,
-      subject: isEmail ? $("#eSub", m).value.trim() || null : null, body: ta.value.trim(), is_shared: isMgr() ? $("#eSh", m).checked : false };
+      subject: isEmail ? $("#eSub", m).value.trim() || null : null, body: ta.value.trim(), is_shared: isMgr() ? $("#eSh", m).checked : false,
+      products: (await tagP).get().slice(0, 30) };
     if (!row.name || !row.body) return toast("Naam aur message zaroori hain", true);
     const res = t.id ? await sb.from("message_templates").update(row).eq("id", t.id) : await sb.from("message_templates").insert({ ...row, owner_id: S.me.id });
     if (res.error) throw res.error;

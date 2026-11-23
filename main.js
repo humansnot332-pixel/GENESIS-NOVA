@@ -18,7 +18,7 @@ import {
   marginHtml, shareQuote, quoteTrackHtml, orderFromQuote, ticketForm, ticketView,
 } from "./biz.js";
 import { CONFIG } from "./config.js";
-import { SCRIPTS, SCRIPTS_EN, PRODUCTS } from "./data.js";
+import { SCRIPTS, SCRIPTS_EN } from "./data.js";
 import { L, isEn, getLang, setLang, tr } from "./i18n.js";
 import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
@@ -27,6 +27,7 @@ import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } f
 import { htmlToPdf, elementToPdf, makeFillable } from "./qpdf.js";
 import { pickData, pickScript, fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
+import { productPicker } from "./lprod.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 // ---------- brand ----------
@@ -944,7 +945,7 @@ async function openLead(id, opt = {}) {
           <dt>Deal value</dt><dd>${l.deal_value ? inr(l.deal_value) : "—"}</dd>
           <dt>Industry</dt><dd>${h(l.industry || "—")}</dd>
           ${l.gstin || l.address || l.state ? `<dt>GSTIN</dt><dd class="mono" data-raw>${h(l.gstin || "—")}</dd><dt>Address</dt><dd data-raw>${h([l.address, l.state, l.pincode].filter(Boolean).join(", ") || "—")}</dd>` : ""}
-          <dt>Products</dt><dd>${(l.products || []).map((p) => `<span class="badge" style="margin:0 4px 4px 0">${h(p)}</span>`).join("") || "—"}</dd>
+          <dt>Products</dt><dd>${(l.products || []).map((p) => `<span class="badge" style="margin:0 4px 4px 0">${h(p)}</span>`).join("") || "—"}${canEdit ? ` <button class="btn sm" data-prods>${(l.products || []).length ? "✏️ " + L("Badlo", "Change") : "＋ " + L("Product jodo", "Add products")}</button>` : ""}</dd>
           <dt>Email</dt><dd>${h(see ? l.email || "—" : l.email ? maskEmail(l.email) : "—")}</dd>
           <dt>Emails</dt><dd>${l.email_count || 0} bheje · ${l.reply_count || 0} replies${l.last_reply_at ? " · last reply " + h(ago(l.last_reply_at)) : ""}</dd>
           <dt>Website</dt><dd>${l.website && /^https?:\/\//i.test(l.website) ? `<a href="${h(l.website)}" target="_blank" rel="noopener noreferrer">${h(l.website)}</a>` : h(l.website || "—")}</dd>
@@ -985,6 +986,7 @@ async function openLead(id, opt = {}) {
   const after = () => { softRefresh(); refreshBadges(); };
   d.querySelector("[data-dclose]").onclick = closeDrawer;
   $$("[data-mail]", d).forEach((x) => x.onclick = () => { closeDrawer(); location.hash = "#/inbox/" + x.dataset.mail; });
+  d.querySelector("[data-prods]")?.addEventListener("click", () => editLeadProducts(l, reopen));
   $$("[data-comp]", d).forEach((b) => b.onclick = async () => {
     if (!(await ensureWork("lead", l))) return;
     openComposer({ channel: b.dataset.comp, lead: l, onSent: reopen });
@@ -1093,7 +1095,6 @@ function nextInQueue(cur) {
 
 function leadForm(l = {}, done) {
   const isNew = !l.id;
-  const prods = Object.entries(PRODUCTS).flatMap(([g, list]) => list.map((p) => p.n));
   const m = modal({
     title: isNew ? "Naya lead" : "Edit lead", wide: true,
     body: `<form id="lf"><div class="grid2">
@@ -1114,7 +1115,7 @@ function leadForm(l = {}, done) {
       <div><label class="f">Address</label><input class="input" name="address" maxlength="500" value="${h(l.address || "")}"></div>
       <div><label class="f">Pincode</label><input class="input" name="pincode" maxlength="12" value="${h(l.pincode || "")}"></div>
     </div>
-    <label class="f">Products interest</label><div class="chips">${prods.map((p) => `<label class="chip ${(l.products || []).includes(p) ? "on" : ""}"><input type="checkbox" class="sr" name="products" data-multi="1" value="${h(p)}" ${(l.products || []).includes(p) ? "checked" : ""}>${h(p)}</label>`).join("")}</div>
+    <label class="f">${L("Products (jo customer ko chahiye) — email / WhatsApp inhi ke hisaab se banega", "Products (what the customer needs) — the email / WhatsApp is written from these")}</label><div id="lpP"></div>
     <label class="f">Notes</label><textarea class="input" name="notes" maxlength="5000">${h(l.notes || "")}</textarea>
     ${isNew && isMgr() ? `<label class="f">${L("Ye lead kisko?", "Who gets this lead?")}</label><select class="input" name="give_to">
       <option value="pool">🔓 ${L("Free pool mein daalo (koi bhi telecaller le sakta hai)", "Free pool (any telecaller can take it)")}</option>
@@ -1122,11 +1123,11 @@ function leadForm(l = {}, done) {
       ${assignable().filter((u) => u.id !== S.me.id).map((u) => `<option value="${u.id}">👤 ${h(u.full_name)} ${L("ko assign karo", "")}</option>`).join("")}</select>` : ""}</form>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="lsave">Save</button>`,
   });
-  $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
+  const pp = productPicker($("#lpP", m), l.products || []);
   m.querySelector("#lsave").onclick = (e) => busy(e.target, async () => {
     const f = formData($("#lf", m));
     if (!f.company) return toast("Company naam zaroori hai", true);
-    f.products = f.products || [];
+    f.products = (await pp).get();
     if (f.gstin) f.gstin = f.gstin.toUpperCase().replace(/\s/g, "");
     f.tags = f.tags ? f.tags.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10) : [];
     f.deal_value = f.deal_value ? Number(f.deal_value) : null;
@@ -1145,6 +1146,23 @@ function leadForm(l = {}, done) {
     if (res.error) throw res.error;
     closeModal(); toast(isNew ? (give === "pool" ? L("Lead pool mein add ho gaya ✔", "Lead added to the pool ✔") : "Lead add ho gaya ✔") : "Saved ✔"); softRefresh();
     if (isNew) openLead(res.data.id); else done?.();
+  });
+}
+
+// the lead's products, changed from the drawer — the composer writes the email / WhatsApp from these
+function editLeadProducts(l, done) {
+  const m = modal({
+    title: `${L("Products", "Products")} — ${l.company}`, wide: true,
+    body: `<p class="mu" style="margin:0 0 10px;font-size:13px">${L("Jo customer ko chahiye wo chuno. Email / WhatsApp mein inhi products ki lines apne aap aayengi.", "Pick what the customer needs. The email / WhatsApp gets a line for each of these products.")}</p><div id="lpQ"></div>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="lpGo">Save</button>`,
+  });
+  const pp = productPicker($("#lpQ", m), l.products || []);
+  setTimeout(() => $(".ppick-q", m)?.focus(), 50);
+  $("#lpGo", m).onclick = (e) => busy(e.target, async () => {
+    const products = (await pp).get();
+    const { error } = await sb.from("leads").update({ products }).eq("id", l.id);
+    if (error) throw error;
+    closeModal(); toast(L("Products saved ✔", "Products saved ✔")); softRefresh(); done?.();
   });
 }
 
