@@ -921,6 +921,7 @@ async function openLead(id, opt = {}) {
         ${see || lk.free ? `<button class="btn" data-comp="email">${ic("mail")} Email</button><button class="btn" data-comp="whatsapp">${ic("wa")} WhatsApp</button>` : ""}
         ${see ? (l.alt_phones || []).map((p) => `<a class="btn sm" href="${h(telHref(p))}">${h(p)}</a>`).join("") : ""}
       </div>
+      ${canEdit || (l.products || []).length ? `<div class="lprods" id="lProds"></div>` : ""}
     </div>
     <div class="drawer-b">
       ${canEdit ? `<div class="card" style="padding:14px">
@@ -945,7 +946,7 @@ async function openLead(id, opt = {}) {
           <dt>Deal value</dt><dd>${l.deal_value ? inr(l.deal_value) : "—"}</dd>
           <dt>Industry</dt><dd>${h(l.industry || "—")}</dd>
           ${l.gstin || l.address || l.state ? `<dt>GSTIN</dt><dd class="mono" data-raw>${h(l.gstin || "—")}</dd><dt>Address</dt><dd data-raw>${h([l.address, l.state, l.pincode].filter(Boolean).join(", ") || "—")}</dd>` : ""}
-          <dt>Products</dt><dd>${(l.products || []).map((p) => `<span class="badge" style="margin:0 4px 4px 0">${h(p)}</span>`).join("") || "—"}${canEdit ? ` <button class="btn sm" data-prods>${(l.products || []).length ? "✏️ " + L("Badlo", "Change") : "＋ " + L("Product jodo", "Add products")}</button>` : ""}</dd>
+          <dt>Products</dt><dd>${(l.products || []).map((p) => `<span class="badge" style="margin:0 4px 4px 0">${h(p)}</span>`).join("") || "—"}</dd>
           <dt>Email</dt><dd>${h(see ? l.email || "—" : l.email ? maskEmail(l.email) : "—")}</dd>
           <dt>Emails</dt><dd>${l.email_count || 0} bheje · ${l.reply_count || 0} replies${l.last_reply_at ? " · last reply " + h(ago(l.last_reply_at)) : ""}</dd>
           <dt>Website</dt><dd>${l.website && /^https?:\/\//i.test(l.website) ? `<a href="${h(l.website)}" target="_blank" rel="noopener noreferrer">${h(l.website)}</a>` : h(l.website || "—")}</dd>
@@ -986,7 +987,7 @@ async function openLead(id, opt = {}) {
   const after = () => { softRefresh(); refreshBadges(); };
   d.querySelector("[data-dclose]").onclick = closeDrawer;
   $$("[data-mail]", d).forEach((x) => x.onclick = () => { closeDrawer(); location.hash = "#/inbox/" + x.dataset.mail; });
-  d.querySelector("[data-prods]")?.addEventListener("click", () => editLeadProducts(l, reopen));
+  drawLeadProducts($("#lProds", d), l, canEdit, reopen);
   $$("[data-comp]", d).forEach((b) => b.onclick = async () => {
     if (!(await ensureWork("lead", l))) return;
     openComposer({ channel: b.dataset.comp, lead: l, onSent: reopen });
@@ -1147,6 +1148,37 @@ function leadForm(l = {}, done) {
     closeModal(); toast(isNew ? (give === "pool" ? L("Lead pool mein add ho gaya ✔", "Lead added to the pool ✔") : "Lead add ho gaya ✔") : "Saved ✔"); softRefresh();
     if (isNew) openLead(res.data.id); else done?.();
   });
+}
+
+// products a lead of this category usually needs — one tap adds them
+const PROD_HINTS = {
+  "Design software": ["AutoCAD LT", "SketchUp Pro", "Revit", "Lumion Pro", "Enscape", "AEC Collection"],
+  "Security": ["Endpoint security / antivirus", "Firewall (UTM) supply & setup", "CCTV / IP camera installation", "Email security"],
+  "IT Hardware": ["Laptops", "Desktops & Workstations", "Servers", "Printers & Plotters", "UPS & Power"],
+  "Networking & CCTV": ["Networking", "CCTV & Surveillance", "Structured cabling", "Firewall (appliance)"],
+};
+// the strip at the top of the lead: its products + one-tap suggestions + the full picker
+function drawLeadProducts(box, l, canEdit, reopen) {
+  if (!box) return;
+  const list = l.products || [];
+  const has = (n) => list.some((x) => x.toLowerCase() === n.toLowerCase());
+  const hints = canEdit ? (PROD_HINTS[l.category] || PROD_HINTS["Design software"]).filter((n) => !has(n)).slice(0, list.length ? 3 : 4) : [];
+  box.classList.toggle("none", !list.length);
+  box.innerHTML = `<div class="lprods-h"><span class="lprods-t">🏷️ ${L("Customer ko kya chahiye", "What the customer needs")}</span>
+      ${canEdit ? `<button type="button" class="btn sm ${list.length ? "" : "primary"}" data-pedit>${list.length ? "✏️ " + L("Badlo", "Change") : "＋ " + L("Product jodo", "Add products")}</button>` : ""}</div>
+    <div class="lprods-c">${list.map((p) => `<span class="pchip">${h(p)}${canEdit ? `<button type="button" data-pdel="${h(p)}" aria-label="${h(L("Hatao", "Remove") + " " + p)}">✕</button>` : ""}</span>`).join("")}
+      ${hints.map((n) => `<button type="button" class="pchip add" data-padd="${h(n)}">＋ ${h(n)}</button>`).join("")}</div>
+    ${list.length ? `<div class="lprods-f">✨ ${L("Email / WhatsApp inhi products ke hisaab se apne aap banega", "Email / WhatsApp are written for these products")}</div>`
+      : canEdit ? `<div class="lprods-f">${L("Product chuno — Email / WhatsApp message unhi ke hisaab se apne aap banega", "Pick the products — the Email / WhatsApp message is written for them")}</div>` : ""}`;
+  const save = async (products, btn) => {
+    btn?.setAttribute("disabled", "");
+    const { error } = await sb.from("leads").update({ products }).eq("id", l.id);
+    if (error) { btn?.removeAttribute("disabled"); return fail(error); }
+    l.products = products; drawLeadProducts(box, l, canEdit, reopen); softRefresh();
+  };
+  box.querySelector("[data-pedit]")?.addEventListener("click", () => editLeadProducts(l, reopen));
+  box.querySelectorAll("[data-padd]").forEach((b) => b.onclick = () => save([...list, b.dataset.padd].slice(0, 20), b));
+  box.querySelectorAll("[data-pdel]").forEach((b) => b.onclick = () => save(list.filter((x) => x !== b.dataset.pdel), b));
 }
 
 // the lead's products, changed from the drawer — the composer writes the email / WhatsApp from these
