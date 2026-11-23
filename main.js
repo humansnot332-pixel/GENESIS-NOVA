@@ -921,9 +921,9 @@ async function openLead(id, opt = {}) {
         ${see || lk.free ? `<button class="btn" data-comp="email">${ic("mail")} Email</button><button class="btn" data-comp="whatsapp">${ic("wa")} WhatsApp</button>` : ""}
         ${see ? (l.alt_phones || []).map((p) => `<a class="btn sm" href="${h(telHref(p))}">${h(p)}</a>`).join("") : ""}
       </div>
-      ${canEdit || (l.products || []).length ? `<div class="lprods" id="lProds"></div>` : ""}
     </div>
     <div class="drawer-b">
+      ${canEdit || (l.products || []).length ? `<div class="lprods" id="lProds"></div>` : ""}
       ${canEdit ? `<div class="card" style="padding:14px">
         <div class="sec-t" style="margin:0 0 8px">Call ka result</div>
         <textarea class="input" id="callNote" placeholder="Short note (optional) — kisse baat hui, kya bola…" maxlength="1000" style="min-height:56px;margin-bottom:8px"></textarea>
