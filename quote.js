@@ -2,14 +2,17 @@
 // The link is quote.html#<token>; the token never leaves the browser in URLs/referrers.
 import { CONFIG } from "./config.js";
 import { renderRich, textToHtml } from "./rte.js";
-import { pickData, fmtIN, fmtRound } from "./qpick.js";
+import { pickData, fmtIN, fmtRound, amountWords } from "./qpick.js";
 
 const app = document.getElementById("app");
 const token = decodeURIComponent(location.hash.slice(1).split("&")[0] || "");
 // &pdf=1 → the CRM turns this page into the PDF it mails (tick boxes + totals become PDF form fields); never counts as a view
 const pdfMode = /[#&]pdf=1\b/.test(location.hash);
 const preview = pdfMode || /[#&]p=1\b/.test(location.hash);
+// &print=1 (with pdf=1) → the same layout for the CRM's Print button: printed tick marks instead of PDF boxes
+const printMode = pdfMode && /[#&]print=1\b/.test(location.hash);
 if (pdfMode) document.documentElement.classList.add("pdfmode");
+if (printMode) document.documentElement.classList.add("printmode");
 const h = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = (n) => Math.round((+n + Number.EPSILON) * 100) / 100;
@@ -169,13 +172,76 @@ function render(q) {
   });
 }
 
+
+// =====================================================================
+//  The PDF / print layout — Genesis's ERP "Proposal" format (blue bars, From / To / Ship To,
+//  Quotation Details + query contact, items, totals, statutory details, terms + signatory),
+//  with a tick box on every item: ticking / unticking changes the totals inside the PDF.
+// =====================================================================
+function renderProposal(q) {
+  const co = q.company || {}, to = q.to || {}, rep = q.rep || {};
+  const all = (q.items || []).map((it, k) => ({ ...it, n: Number.isInteger(it.i) ? it.i : k }));
+  const items = []; all.forEach((it) => { items[it.n] = it; });
+  const a = String(co.state || "").trim().toLowerCase(), b = String(to.state || "").trim().toLowerCase();
+  const p = pickData(items, { inter: !!(a && b && a !== b), roundOff: q.round_off, showOptional: true });
+  const kv = (rows) => `<table class="kv"><tbody>${rows.filter(([, v]) => v != null && v !== "").map(([k, v]) => `<tr><td>${h(k)}</td><td>${h(v)}</td></tr>`).join("")}</tbody></table>`;
+  const det = [["Quotation No.", q.quote_no], ["Quotation Date", niceDay(q.date)], ["Quotation Validity", `${+q.validity_days || 7} Days`], ...termRows(q)];
+  const half = Math.ceil(det.length / 2);
+  const who = rep.name ? [["Name", rep.name + (rep.designation ? ` (${rep.designation})` : "")], ["Mobile No.", rep.phone || "Not Applicable"], ["Email", rep.email || co.email || ""]]
+    : [["Name", co.contact || co.name], ["Mobile No.", co.mobile || ""], ["Email", co.email || ""]];
+  const pan = (g) => /^\d{2}[A-Z]{5}\d{4}[A-Z]/i.test(g || "") ? String(g).slice(2, 12).toUpperCase() : "N/A";
+  const ship = q.site?.address ? [to.name, q.site.address] : [to.name, [to.address, to.state].filter(Boolean).join(", ")];
+  const tick = (it) => printMode ? `<span class="pbox">${it.opt ? "☐" : "☑"}</span>` : `<input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include">`;
+  const rows = p.N.map((idx, k) => { const it = items[idx];
+    let r = rowHtml(it, k); if (it.opt) r = r.replace("</pre>", `</pre><span class="otag">Optional — tick to add</span>`);
+    return `<tr><td class="ck"${printMode ? "" : ` data-pk="${idx}"`}>${tick(it)}</td>${r}</tr>`; }).join("");
+  const tot = (l, v, key, cls = "") => `<tr class="${cls}"><td>${l}</td><td class="r"${printMode ? "" : ` data-tot="${key}"`}>${v}</td></tr>`;
+  document.title = `Quotation ${q.quote_no} · ${co.name || ""}`;
+  app.innerHTML = `<div class="card prop">
+    <div class="bar title">Quotation # ${h(q.quote_no)}</div>
+    <div class="box grid3">
+      <div class="from"><div><span class="lbl">From:</span>${co.logo ? `<img src="${h(co.logo)}" alt="">` : ""}</div><div><div class="co">${h(co.name || "")}</div>${h(co.address || "")}</div></div>
+      <div><span class="lbl">To:</span><div class="co">${h(to.name || "")}</div>${h([to.address, to.state].filter(Boolean).join(", "))}${to.contact ? `<br><b>Contact</b> : ${h(to.contact)}` : ""}</div>
+      <div><span class="lbl">Ship To:</span><div class="co">${h(ship[0] || "")}</div>${h(ship[1] || "")}</div>
+    </div>
+    <div class="bar"><span>Quotation Details</span><span>For Quotation Query Contact</span></div>
+    <div class="box grid3 dgrid">${kv(det.slice(0, half))}${kv(det.slice(half))}${kv(who)}</div>
+    ${printMode ? "" : `<p class="pickhint">✔ <b>Tick the items you want in this PDF</b> — Sub Total, GST and Grand Total change by themselves. Then save the PDF and reply to our email with it to confirm.<br><span class="mu">Open it in <b>Google Chrome or Adobe Acrobat Reader</b> — Microsoft Edge, Mac Preview, Safari and phone viewers show the ticks but do not update the total.</span></p>`}
+    <table class="items"><thead><tr><th class="ck">✓</th><th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC<br>Code</th><th>Qty.</th><th>Lic.<br>Qty.</th><th>Warranty</th><th class="r">Price(Unit)</th><th class="r">Total</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    <div class="sum"><div class="words"><b>Amount Payable (in Words) :</b> <span class="wv"${printMode ? "" : ` data-tot="words"`}>${h(amountWords(p.T.grand))}</span></div>
+      <table class="tots"><tbody>${tot("<b>Sub Total</b>", `<b>${fmtIN(p.T.sub)}</b>`, "sub")}${p.labels.map((l, k) => tot(h(l), fmtIN(p.T.lines[k]), "l" + k)).join("")}
+        ${p.O ? tot("Round off", fmtRound(p.T.round), "round") : ""}${tot("<b>Grand Total(₹)</b>", `<b>${fmtIN(p.T.grand)}</b>`, "grand", "grand")}</tbody></table></div>
+    ${q.note ? `<div class="bar">Note</div><div class="box"><pre>${h(q.note)}</pre></div>` : ""}
+    <div class="bar">Statutory &amp; Tax Details</div>
+    <div class="box grid3 dgrid">
+      <div><div class="th">${h(co.name || "")}</div>${kv([["PAN", co.pan], ["GST No.", co.gstin], ["MSME No.", co.msme]])}</div>
+      <div><div class="th">${h(to.name || "")}</div>${kv([["GST No.", to.gstin || "N/A"], ["PAN", pan(to.gstin)]])}</div>
+      <div><div class="th">Our Bank Details</div>${kv([["Name", co.bank], ["A/C No.", co.acno], ["Branch", co.branch], ["Code", co.ifsc]])}</div>
+    </div>
+    <div class="bar">Terms And Conditions</div>
+    <div class="box tc"><div class="rich" id="pTerms"></div>
+      <div class="sign"><b>For ${h(co.name || "")}</b>${co.stamp ? `<img src="${h(co.stamp)}" alt="">` : "<div style=\"height:70px\"></div>"}<b>Authorised Signatory</b></div></div>
+    <div class="foot">Computer Generated Quotation. Signature &amp; Stamp Not Required.</div>
+  </div>
+  <div class="card annex prop" id="qAnnex" hidden data-pdf-break><div class="bar title">ANNEXURE · Quotation # ${h(q.quote_no)}</div><div class="box"><div class="rich"></div></div></div>`;
+  const terms = q.terms_html || textToHtml(q.notes);
+  if (terms) renderRich(document.getElementById("pTerms"), terms);
+  if (q.annexure_html) { renderRich(document.querySelector("#qAnnex .rich"), q.annexure_html); document.getElementById("qAnnex").hidden = false; }
+  window.__pick = p;
+}
+
 (async () => {
   if (!token) { app.innerHTML = `<div class="center"><h1>Link incomplete</h1><p class="mu">Please open the full link that was shared with you.</p></div>`; return; }
   try {
     const q = await call("view");
     if (q.error) { if (pdfMode) window.__pdfError = q.error; app.innerHTML = `<div class="center"><h1>Quotation not found</h1><p class="mu">This link is invalid or has been withdrawn. Please contact your sales representative.</p></div>`; return; }
-    render(q);
-    if (pdfMode) { await document.fonts?.ready; window.__pdfReady = true; }
+    if (pdfMode) renderProposal(q); else render(q);
+    if (pdfMode) {
+      await document.fonts?.ready;
+      await Promise.all([...document.images].map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; })));
+      window.__pdfReady = true;
+    }
   } catch (e) {
     if (pdfMode) window.__pdfError = String(e?.message || e);
     app.innerHTML = `<div class="center"><h1>Could not load</h1><p class="mu">Please check your internet connection and refresh.</p></div>`;

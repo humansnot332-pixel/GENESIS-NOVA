@@ -2151,7 +2151,7 @@ async function quoteEditor(q0) {
     q.show_optional = $("#qso", m).checked;
   };
 
-  $("#qp", m)?.addEventListener("click", () => { syncAll(); printQuote(q); });
+  $("#qp", m)?.addEventListener("click", (e) => busy(e.target, async () => { syncAll(); await printQuote(q, savedSig == null || saveSig() === savedSig); }));
   // what the customer gets (PDF + online link) is the SAVED quotation → unsaved edits must be saved first
   const saveSig = () => JSON.stringify([q.items, q.to_party, q.terms_html, q.annexure_html, q.note_customer, q.quote_date, q.validity_days, q.payment_terms, q.delivery, q.ref, q.site, q.amc, q.round_off, q.show_optional]);
   let savedSig = null;
@@ -2222,7 +2222,20 @@ async function quoteEditor(q0) {
     if (S.route === "quotes") VIEWS.quotes($("#page"));
   });
 }
-async function printQuote(q) {
+// Print = the same Proposal layout as the customer's PDF (the saved quotation); unsaved / no id → the older print layout
+async function printQuote(q, saved = true) {
+  if (q.id && saved) {
+    const { data: token } = await sb.rpc("share_quote", { p_id: q.id });
+    if (token) {
+      const fr = document.createElement("iframe");
+      fr.className = "pdf-stage"; fr.setAttribute("aria-hidden", "true"); fr.tabIndex = -1; fr.style.cssText = "width:1040px;height:1400px;border:0";
+      fr.src = new URL("quote.html#" + token + "&pdf=1&print=1", location.href.split("#")[0]).href;
+      document.body.append(fr);
+      const ok = await new Promise((res) => { const t0 = Date.now(); const tick = () => { let r = false; try { r = !!fr.contentWindow?.__pdfReady; } catch { /* loading */ } if (r) return res(true); if (Date.now() - t0 > 20000) return res(false); setTimeout(tick, 150); }; tick(); });
+      if (ok) { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.remove(), 60000); return; }
+      fr.remove();
+    }
+  }
   const rep = await quoteRep(q);
   let pr = document.getElementById("printRoot");
   if (!pr) { pr = document.createElement("div"); pr.id = "printRoot"; pr.className = "print-root"; document.body.append(pr); }
@@ -2283,7 +2296,7 @@ async function quotePdf(q, link) {
     fr.style.height = Math.ceil(root.scrollHeight + 40) + "px";
     await new Promise((r) => setTimeout(r, 80));
     const r = await elementToPdf(root, { width: full, title: "Quotation " + (q.quote_no || ""), marks: "td.ck[data-pk], [data-tot]" });
-    const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand) };
+    const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand), words: amountWords(p.T.grand) };
     p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
     const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, tickTop: true, calc: (k) => pickCalc(p, k) });
     return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
