@@ -248,6 +248,7 @@ function importProducts(done) {
 // =====================================================================
 const RKIND = [["subscription", "Subscription"], ["amc", "AMC"], ["licence", "Licence"], ["warranty", "Warranty"], ["domain", "Domain / hosting"], ["other", "Other"]];
 const renBadge = (r) => {
+  if (r.status === "unconfirmed") return `<span class="badge warn" title="${h(L("Old ERP se andaze ki date — customer se confirm karo", "Date guessed from the old ERP — confirm with the customer"))}">❓ ${L("Confirm baaki", "Not confirmed")}</span>`;
   if (r.status !== "active") return `<span class="badge ${r.status === "renewed" ? "good" : "bad"}">${h(r.status)}</span>`;
   const d = daysTo(r.end_date);
   return d < 0 ? `<span class="badge bad">${L(`${-d} din overdue`, `${-d}d overdue`)}</span>` : d === 0 ? `<span class="badge bad">${L("Aaj", "Today")}</span>`
@@ -273,10 +274,14 @@ export async function viewRenewals(el) {
   else if (f === "90") q = q.eq("status", "active").lte("end_date", addDays(today(), 90));
   else if (f === "mine") q = q.eq("status", "active").eq("owner_id", S.me.id);
   else if (f === "closed") q = q.in("status", ["renewed", "lost", "cancelled"]);
+  else if (f === "erp") q = q.eq("status", "unconfirmed");
+  else q = q.neq("status", "unconfirmed");
   const { data: rows, error } = await q; if (error) throw error;
   // every renewal's product (for the filter's list + counts) and the active ones due in 30 days (for the cards)
   const { data: allP } = await sb.from("renewals").select("product, status, end_date, amount").limit(5000);
-  const byProd = new Map(); (allP || []).forEach((r) => { const g = renGroup(r.product); byProd.set(g, (byProd.get(g) || 0) + 1); });
+  const nErp = (allP || []).filter((r) => r.status === "unconfirmed").length;
+  const scope = (allP || []).filter((r) => (f === "erp") === (r.status === "unconfirmed"));
+  const byProd = new Map(); scope.forEach((r) => { const g = renGroup(r.product); byProd.set(g, (byProd.get(g) || 0) + 1); });
   const prodList = [...byProd.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const inProd = (r) => !rp || renGroup(r.product) === rp;
   const data = rows.filter(inProd);
@@ -287,18 +292,20 @@ export async function viewRenewals(el) {
       <div class="card kpi"><div class="l">${L("Overdue", "Overdue")}</div><div class="v" style="color:var(--bad)">${ov.length}</div><div class="s">${inrShort(ov.reduce((a, r) => a + +(r.amount || 0), 0))}</div></div>
       <div class="card kpi"><div class="l">${L("Is hafte", "This week")}</div><div class="v">${wk.length}</div><div class="s">${inrShort(wk.reduce((a, r) => a + +(r.amount || 0), 0))}</div></div>
       <div class="card kpi"><div class="l">${L("30 din mein", "Next 30 days")}</div><div class="v">${(stats || []).length}</div><div class="s">${inrShort((stats || []).reduce((a, r) => a + +(r.amount || 0), 0))} ${L("renewal value", "renewal value")}</div></div></div>
-    <div class="toolbar"><div class="chips">${[["due", L("30 din / overdue", "30 days / overdue")], ["90", L("90 din", "90 days")], ["mine", L("Mere", "Mine")], ["all", L("Sab", "All")], ["closed", L("Renewed / lost", "Renewed / lost")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-rf="${k}">${h(l)}</button>`).join("")}</div>
+    <div class="toolbar"><div class="chips">${[["due", L("30 din / overdue", "30 days / overdue")], ["90", L("90 din", "90 days")], ["mine", L("Mere", "Mine")], ["all", L("Sab", "All")], ["closed", L("Renewed / lost", "Renewed / lost")], ...(nErp || f === "erp" ? [["erp", `❓ ${L("ERP — confirm karo", "ERP — to confirm")} (${nErp})`]] : [])].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-rf="${k}">${h(l)}</button>`).join("")}</div>
       <select class="input" id="rProd" style="width:auto;max-width:280px" aria-label="${h(L("Product filter", "Product filter"))}">
-        <option value="">🏷️ ${L("Saare products", "All products")} (${(allP || []).length})</option>
+        <option value="">🏷️ ${L("Saare products", "All products")} (${scope.length})</option>
         ${prodList.map(([g, n]) => `<option value="${h(g)}" ${g === rp ? "selected" : ""}>${h(g)} (${n})</option>`).join("")}
         ${rp && !byProd.has(rp) ? `<option value="${h(rp)}" selected>${h(rp)} (0)</option>` : ""}</select>
       ${rp ? `<button class="btn sm ghost" id="rProdX" title="${h(L("Product filter hatao", "Clear the product filter"))}">✕ ${h(rp)}</button>` : ""}
       <span class="sp" style="flex:1"></span><button class="btn primary" id="radd">${ic("plus")} Renewal</button></div>
+    ${f === "erp" ? `<div class="banner" style="margin:0 0 12px;background:var(--warn-soft);border-color:transparent">❓ <div><b>${L("Ye renewals purane ERP se andaze se bane hain", "These renewals were guessed from the old ERP")}</b><br><span class="mu">${L("Date = aakhri quotation + 1 saal, isliye sach nahi bhi ho sakti. Jab tak aap confirm nahi karte, inka na overdue count hota hai, na reminder jaata hai, na quotation banti hai. Customer se poochke ✔ Haan, hai (date / amount sahi karke) ya ✕ Nahi hai dabao.", "Date = last quotation + 1 year, so it may be wrong. Until you confirm one, it is not counted as overdue, sends no reminder and makes no quotation. Ask the customer, then press ✔ Yes, it's real (fix date / amount) or ✕ Not a renewal.")}</span></div></div>` : ""}
     ${rp ? `<div class="mu" style="font-size:12.5px;margin:-4px 0 10px">🏷️ ${h(rp)}: ${data.length} ${L("renewal is filter mein", data.length === 1 ? "renewal in this view" : "renewals in this view")}${data.length ? ` · ${inrShort(data.reduce((a, r) => a + +(r.amount || 0), 0))}` : ""}</div>` : ""}
     <div class="card"><div class="tbl-wrap">${!data.length ? empty("Is filter mein koi renewal nahi", "No renewals in this filter") : `<table class="tbl"><thead><tr><th>${L("Company", "Company")}</th><th>Product</th><th>${L("Type", "Type")}</th><th>${L("Expiry", "Expiry")}</th><th class="num">${L("Amount", "Amount")}</th><th>Owner</th><th></th></tr></thead><tbody>
     ${data.map((r) => { const l = leads.get(r.lead_id) || {}; return `<tr data-rid="${r.id}"><td class="co">${h(l.company || "#" + r.lead_id)}</td><td>${h(r.product)}${r.qty > 1 ? ` <span class="mu">× ${h(+r.qty)}</span>` : ""}${r.vendor ? `<div class="sub">${h(r.vendor)}</div>` : ""}</td><td>${h(RKIND.find((k) => k[0] === r.kind)?.[1] || r.kind)}</td>
       <td>${h(dOnly(r.end_date))}<div>${renBadge(r)}</div></td><td class="num">${r.amount != null ? inr(r.amount) : "—"}</td><td>${h(userName(r.owner_id))}</td>
-      <td style="white-space:nowrap">${r.status === "active" ? `<button class="btn sm" data-rmail="${r.id}" title="Email reminder">${ic("mail")}</button> <button class="btn sm" data-rwa="${r.id}" title="WhatsApp">${ic("wa")}</button> <button class="btn sm primary" data-rdone="${r.id}">✔ ${L("Renewed", "Renewed")}</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`}</div></div>
+      <td style="white-space:nowrap">${r.status === "unconfirmed" ? `<button class="btn sm primary" data-rok="${r.id}">✔ ${L("Haan, hai", "Yes, it's real")}</button> <button class="btn sm danger" data-rno="${r.id}">✕ ${L("Nahi hai", "Not a renewal")}</button>`
+        : r.status === "active" ? `<button class="btn sm" data-rmail="${r.id}" title="Email reminder">${ic("mail")}</button> <button class="btn sm" data-rwa="${r.id}" title="WhatsApp">${ic("wa")}</button> <button class="btn sm primary" data-rdone="${r.id}">✔ ${L("Renewed", "Renewed")}</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`}</div></div>
     <p class="mu" style="font-size:12.5px">🔔 ${h(L("Expiry se 30, 15, 7 din pehle aur expiry ke din owner ko notification + task apne aap. Renewed dabao toh agla term (1 saal) apne aap ban jata hai.", "Owners get a notification + task 30, 15 and 7 days before expiry and on the day. Mark Renewed to create the next 1-year term automatically."))}</p>`;
   $$("[data-rf]", el).forEach((b) => b.onclick = () => { el.dataset.rf = b.dataset.rf; viewRenewals(el); });
   $("#rProd", el).onchange = (e) => { el.dataset.rp = e.target.value; viewRenewals(el); };
@@ -306,6 +313,17 @@ export async function viewRenewals(el) {
   $("#radd", el).onclick = () => renewalForm({}, () => viewRenewals(el));
   const byId = (id) => data.find((r) => r.id === +id);
   el.onclick = async (e) => {
+    const u = e.target.closest("[data-rok],[data-rno]");
+    if (u) {
+      e.stopPropagation();
+      const r = byId(u.dataset.rok || u.dataset.rno);
+      if (u.dataset.rok) return renewalForm({ ...r, status: "active", confirming: true }, () => viewRenewals(el));
+      if (!(await confirmBox(L(`"${r.product}" ka renewal hai hi nahi? Ye list se hat jayega.`, `No "${r.product}" renewal for this customer? It will be removed from the list.`), L("Haan, hatao", "Yes, remove")))) return;
+      const { data: gone, error } = await sb.from("renewals").delete().eq("id", r.id).select("id");
+      if (error) return fail(error);
+      if (!gone?.length) return toast(L("Hata nahi paye — sirf owner ya manager hata sakta hai", "Couldn't remove — only the owner or a manager can"), true);
+      toast(L("Hata diya ✔", "Removed ✔")); return viewRenewals(el);
+    }
     const b = e.target.closest("[data-rmail],[data-rwa],[data-rdone]");
     if (b) {
       e.stopPropagation();
@@ -344,7 +362,8 @@ export async function renewalForm(r, done) {
   const lead = r.lead_id ? (await leadsById([r.lead_id])).get(r.lead_id) : null;
   const m = modal({
     title: r.id ? `🔁 ${r.product}` : L("Naya renewal / AMC", "New renewal / AMC"), wide: true,
-    body: `<label class="f">${L("Company", "Company")} *</label>${leadPickerHtml("rLead", lead)}
+    body: `${r.confirming ? `<div class="banner" style="margin:0 0 10px;background:var(--warn-soft);border-color:transparent">❓ <div>${L("Purane ERP ka andaza: <b>expiry date aur amount customer se confirm karke sahi karo</b>, phir Save. Save ke baad reminders isi date se chalenge.", "Guessed from the old ERP: <b>check the expiry date and amount with the customer</b>, then Save. Reminders then run from this date.")}</div></div>` : ""}
+      <label class="f">${L("Company", "Company")} *</label>${leadPickerHtml("rLead", lead)}
       <div class="grid3 sec"><div><label class="f">Product *</label><input class="input" name="product" value="${h(r.product || "")}" maxlength="200" placeholder="Microsoft 365 Business Std, AMC – 20 PCs…"></div>
       <div><label class="f">${L("Type", "Type")}</label><select class="input" name="kind">${opt(RKIND, r.kind || "subscription")}</select></div>
       <div><label class="f">Qty</label><input class="input" type="number" min="0" name="qty" value="${h(r.qty ?? 1)}"></div>
@@ -353,7 +372,7 @@ export async function renewalForm(r, done) {
       <div><label class="f">${L("Amount", "Amount")} ₹</label><input class="input" type="number" min="0" name="amount" value="${h(r.amount ?? "")}"></div>
       <div><label class="f">Vendor</label><input class="input" name="vendor" value="${h(r.vendor || "")}" maxlength="120"></div>
       <div><label class="f">Owner</label><select class="input" name="owner_id">${opt(assignable().map((u) => [u.id, u.full_name]), r.owner_id || S.me.id)}</select></div>
-      ${r.id ? `<div><label class="f">Status</label><select class="input" name="status">${opt([["active", "Active"], ["renewed", "Renewed"], ["lost", "Lost"], ["cancelled", "Cancelled"]], r.status)}</select></div>` : ""}</div>
+      ${r.id ? `<div><label class="f">Status</label><select class="input" name="status">${opt([["active", "Active"], ["renewed", "Renewed"], ["lost", "Lost"], ["cancelled", "Cancelled"], ["unconfirmed", L("❓ ERP — confirm baaki", "❓ ERP — not confirmed")]], r.status)}</select></div>` : ""}</div>
       <label class="f">Notes</label><textarea class="input" name="notes" maxlength="1000">${h(r.notes || "")}</textarea>`,
     foot: `${r.id ? `<button class="btn danger" id="rdel">${ic("trash")} Delete</button>` : ""}<span style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="rsave">Save</button>`,
   });
@@ -363,7 +382,7 @@ export async function renewalForm(r, done) {
     if (!lead_id) return toast(L("List se company chuno", "Pick a company from the list"), true);
     if (!f.product || !f.end_date) return toast(L("Product aur expiry date zaroori", "Product and expiry date are required"), true);
     const row = { lead_id, product: f.product, kind: f.kind, qty: +f.qty || 1, start_date: f.start_date, end_date: f.end_date, amount: f.amount == null ? null : +f.amount, vendor: f.vendor, owner_id: f.owner_id, notes: f.notes };
-    if (r.id) { row.status = f.status; if (f.end_date !== r.end_date) row.reminder_stage = 999; }
+    if (r.id) { row.status = f.status; if (f.end_date !== r.end_date || r.confirming) row.reminder_stage = 999; }
     const res = r.id ? await sb.from("renewals").update(row).eq("id", r.id).select("id") : await sb.from("renewals").insert(row).select("id");
     if (res.error) throw res.error;
     if (r.id && !res.data?.length) return toast(L("Save nahi hua — permission nahi", "Not saved — no permission"), true);
@@ -767,7 +786,7 @@ export async function viewDuplicates(el) {
 // =====================================================================
 export async function leadPanel(box, lead, reopen) {
   const [{ data: rn }, { data: od }, { data: iv }, { data: tk }, { data: vs }, { data: qs, count: qn }] = await Promise.all([
-    sb.from("renewals").select("*").eq("lead_id", lead.id).eq("status", "active").order("end_date"),
+    sb.from("renewals").select("*").eq("lead_id", lead.id).in("status", ["active", "unconfirmed"]).order("end_date"),
     sb.from("orders").select("id, order_no, amount, status, created_at").eq("lead_id", lead.id).order("created_at", { ascending: false }).limit(10),
     sb.from("invoice_balances").select("*").eq("lead_id", lead.id).order("invoice_date", { ascending: false }).limit(10),
     sb.from("tickets").select("id, ticket_no, title, status").eq("lead_id", lead.id).in("status", ["open", "in_progress", "waiting"]),
@@ -781,7 +800,7 @@ export async function leadPanel(box, lead, reopen) {
   box.innerHTML = `<div class="card sec"><div class="card-h"><h3>💼 ${L("Account", "Account")}</h3><span class="sp"></span>
       ${can ? `<button class="btn sm" data-lp="visit">📍 ${L("Check-in", "Check-in")}</button>` : ""}<button class="btn sm" data-lp="ren">${ic("plus")} ${L("Renewal", "Renewal")}</button><button class="btn sm" data-lp="tkt">${ic("plus")} Ticket</button></div>
     <div class="card-b" style="padding:6px 16px">
-      ${(rn || []).map((r) => `<div class="row lp-row" data-lpr="${r.id}">🔁 <span style="flex:1">${h(r.product)}</span>${renBadge(r)}<span class="mu">${h(dOnly(r.end_date))}</span></div>`).join("")}
+      ${(rn || []).map((r) => `<div class="row lp-row" data-lpr="${r.id}">🔁 <span style="flex:1">${h(r.product)}</span>${renBadge(r)}<span class="mu">${r.status === "unconfirmed" ? "~ " : ""}${h(dOnly(r.end_date))}</span></div>`).join("")}
       ${due.map((i) => `<div class="row lp-row">🧾 <span style="flex:1" class="mono">${h(i.invoice_no)}</span><span class="badge ${PAYB[i.pay_status]}">${h(i.pay_status)}</span><b>${inr(i.balance)}</b> <span class="mu">${L("baaki", "due")}</span></div>`).join("")}
       ${(od || []).slice(0, 3).map((o) => `<div class="row lp-row">📦 <span style="flex:1" class="mono">${h(o.order_no)}</span><span class="badge">${h(o.status)}</span>${inr(o.amount)}</div>`).join("")}
       ${(tk || []).map((t) => `<div class="row lp-row" data-lpt="${t.id}">🛠 <span style="flex:1">${h(t.ticket_no)} · ${h(t.title)}</span>${tBadge(t.status)}</div>`).join("")}
@@ -795,6 +814,6 @@ export async function leadPanel(box, lead, reopen) {
     if (b.dataset.lp === "tkt") return ticketForm({ lead_id: lead.id }, reopen);
     if (b.dataset.lp === "allq") return HOOK.quotesFor?.(lead.id, lead.company);
   });
-  $$("[data-lpr]", box).forEach((r) => r.onclick = () => renewalForm(rn.find((x) => x.id === +r.dataset.lpr), reopen));
+  $$("[data-lpr]", box).forEach((r) => r.onclick = () => { const x = rn.find((y) => y.id === +r.dataset.lpr); renewalForm(x.status === "unconfirmed" ? { ...x, status: "active", confirming: true } : x, reopen); });
   $$("[data-lpt]", box).forEach((r) => r.onclick = () => { location.hash = "#/support/" + r.dataset.lpt; });
 }
