@@ -12,7 +12,7 @@ import { L, isEn, getLang } from "./i18n.js";
 import { CONFIG } from "./config.js";
 import { filesHtml, wireFiles, loadFiles } from "./files.js";
 import { blobB64, saveBlob } from "./qpdf.js";
-import { loadCatalog, productMessage, templateFit, productPicker } from "./lprod.js";
+import { loadCatalog, productMessage, templateFit, productPicker, detectItems, replyDrafts } from "./lprod.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -357,6 +357,7 @@ export async function openComposer(opts) {
   const apply0 = apply;
   const applyL = (t) => { apply0(t); addLink(); };
   applyL(auto);
+  if (opts.draft?.body) { body.value = fillTemplate(opts.draft.body, ctx); if (sub && opts.draft.subject) sub.value = fillTemplate(opts.draft.subject, ctx); body.dataset.dirty = ""; }
   // the PDF is made now (a few seconds) so it is ready when Send is pressed
   let att = null, attOn = !!(isEmail && opts.attach);
   const drawAtt = (a, err) => {
@@ -748,6 +749,7 @@ async function readMail(id, pane, refresh) {
       ${r.thread_url ? `<a class="btn sm" href="${h(r.thread_url)}" target="_blank" rel="noopener noreferrer">${r.provider === "outlook" ? "Outlook" : "Gmail"} mein kholo ↗</a>` : ""}</div></div>
     <div class="ib-body">${h(onlyReply(r.body || r.snippet || "")).replace(/\n/g, "<br>")}</div>
     <div id="ibFiles"></div>
+    ${mine ? `<div class="smartrep" id="ibSmart" aria-live="polite"></div>` : ""}
     ${mine ? `<div class="ib-actions">
       <button class="btn primary" data-a="reply">${ic("mail")} Reply</button>
       ${lead ? `<button class="btn" data-a="wa">${ic("wa")} WhatsApp</button>` : ""}
@@ -762,6 +764,48 @@ async function readMail(id, pane, refresh) {
   const files = await loadFiles("email_id", id);
   const fb = $("#ibFiles", pane);
   if (fb && files.length) { fb.innerHTML = filesHtml(files, `📎 ${files.length} ${L("photo / file", files.length > 1 ? "attachments" : "attachment")}`); wireFiles(fb, files); }
+  // ⚡ ready replies: what the mail asks (price / interest / no / out-of-office / bounce) + the products and quantities in it
+  if (mine) drawSmart().catch(() => {});
+  async function drawSmart() {
+    const box = $("#ibSmart", pane); if (!box) return;
+    await loadCatalog().catch(() => {});
+    const text = onlyReply(r.body || r.snippet || ""), items = detectItems(`${r.subject || ""}\n${text}`);
+    const sm = replyDrafts({ intent: r.intent, text: `${r.subject || ""} ${text}`, lead, items });
+    if (!box.isConnected || (!sm.drafts.length && !sm.actions.length && !sm.note)) { box.remove(); return; }
+    const A = {
+      quote: `📄 ${L("Quotation banao", "Make quotation")}${items.length ? ": " + h(items.map((x) => `${x.qty} × ${x.name}`).join(", ")) : ""}`,
+      lost: `🚫 ${L("Lead Lost karo", "Mark lead lost")}`, fu90: `⏰ ${L("3 mahine baad yaad dilao", "Remind in 3 months")}`,
+      fu3: `⏰ ${L("3 din baad follow-up", "Follow up in 3 days")}`, fixmail: `✏️ ${L("Lead ka email theek karo", "Fix the lead's email")}`,
+    };
+    box.innerHTML = `<div class="smartrep-h">⚡ <b>${L("Jawab tayyar", "Ready replies")}</b> <span class="mu">— ${L("ek click, phir bhejne se pehle badal bhi sakte ho", "one click, edit before sending")}</span></div>
+      ${sm.note ? `<div class="mu" style="font-size:12.5px;margin-top:6px">${h(sm.note)}</div>` : ""}
+      ${items.length ? `<div class="smartrep-items">🏷️ ${L("Mail mein", "In the mail")}: ${items.map((x) => `<span class="badge acc">${x.qtyKnown ? x.qty + " × " : ""}${h(x.name)}</span>`).join(" ")}</div>` : ""}
+      <div class="smartrep-b">${sm.drafts.map((d, i) => `<button type="button" class="btn sm ${i ? "" : "primary"}" data-sd="${i}" title="${h(d.body.split("\n").slice(2, 4).join(" ").replace(/\*\*/g, "").slice(0, 160))}">✉️ ${h(d.label)}</button>`).join("")}
+        ${sm.actions.map((k) => `<button type="button" class="btn sm" data-sa="${k}">${A[k]}</button>`).join("")}</div>`;
+    $$("[data-sd]", box).forEach((b) => b.onclick = async () => {
+      const d = sm.drafts[+b.dataset.sd];
+      if (lead && !canWork(lead) && !lockOf(lead).free) return openComposer({ channel: "email", reply: r, draft: d, onSent: refresh });
+      if (lead && lockOf(lead).free) await ensureWork("lead", lead);
+      openComposer({ channel: "email", reply: r, lead: lead || undefined, rfq: r.rfqs || undefined, draft: d, onSent: refresh });
+    });
+    $$("[data-sa]", box).forEach((b) => b.onclick = () => smartAct(b.dataset.sa, items).catch(fail));
+  }
+  async function smartAct(k, items) {
+    if (!lead || !(await ensureWork("lead", lead))) return;
+    if (k === "lost") return act("no");
+    if (k === "fu3" || k === "fu90") {
+      const days = k === "fu3" ? 3 : 90;
+      const { error: e1 } = await sb.from("leads").update({ next_follow_up: new Date(Date.now() + days * 864e5).toISOString() }).eq("id", lead.id);
+      if (e1) return fail(e1); return toast(L(`⏰ ${days} din baad ka follow-up set`, `⏰ Follow-up set in ${days} days`));
+    }
+    if (k === "fixmail") return HOOK.openLead(lead.id);
+    if (k === "quote") {
+      const { data: full } = await sb.from("leads").select("company, contact_name, email, address, area, city, state, gstin").eq("id", lead.id).single();
+      const l = full || lead;
+      return HOOK.newQuote?.({ lead_id: lead.id, to_party: { name: l.company, contact: l.contact_name, email: l.email || r.counterpart, address: l.address || [l.area, l.city].filter(Boolean).join(", "), state: l.state || "Maharashtra", gstin: l.gstin || "" },
+        items: items.length ? items.map((x) => ({ desc: x.desc, hsn: x.hsn, qty: x.qty, price: x.price, tax: x.tax })) : [] });
+    }
+  }
   const act = async (a) => {
     if (a === "reply") {
       if (lead && !canWork(lead) && !lockOf(lead).free) return openComposer({ channel: "email", reply: r, onSent: refresh });

@@ -239,6 +239,7 @@ HOOK.openLead = (id, o) => openLead(id, o);
 HOOK.softRefresh = () => softRefresh();
 HOOK.refreshBadges = () => refreshBadges();
 HOOK.openRfq = (r) => rfqForm(r);
+HOOK.newQuote = (q0) => quoteEditor(q0);
 // Inbox → "Make ticket": the new ticket opens right away (with the mail's pictures / files)
 HOOK.openTicket = (t) => ticketForm(t, (row) => row?.id && ticketView(row.id));
 HOOK.go = (link) => { if (location.hash === link) route(); else location.hash = link; };

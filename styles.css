@@ -846,3 +846,14 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .pchip.add:hover { background: var(--accent-soft); }
 .pchip.add[disabled] { opacity: .5; cursor: default; }
 .lprods-f { font-size: 12px; color: var(--mu); margin-top: 8px; }
+
+/* inbox: ready replies */
+.smartrep { margin: 12px 0 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); border-radius: var(--r-sm); background: var(--accent-soft); }
+.smartrep-h { font-size: 13px; }
+.smartrep-items { margin-top: 6px; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.smartrep-b { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* renewals Excel update */
+.rucols { margin-top: 6px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 12px; }
+.rucols > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.rucols[open] > summary { margin-bottom: 8px; }

@@ -213,7 +213,9 @@ export async function openObf(id, done) {
     const note = $("#obNote", m).value.trim();
     if (!ok && !note) { $("#obNote", m).focus(); return toast(L("Wapas bhejne ki wajah likho", "Write why you are sending it back"), true); }
     const { data: r, error: e2 } = await sb.rpc("obf_decide", { p_id: o.id, p_approve: ok, p_note: note || null }); if (e2) throw e2;
-    toast(ok ? L(`✅ Approve — order ${r.order_no} ban gaya, team ko bata diya`, `✅ Approved — order ${r.order_no} created, the team is told`) : L("↩️ Wapas bhej diya", "↩️ Sent back"));
+    toast(ok ? L(`✅ Approve — order ${r.order_no} ban gaya, team ko bata diya`, `✅ Approved — order ${r.order_no} created, the team is told`)
+      + (ok && r.renewals ? L(` · 🔁 ${r.renewals} renewal apne aap set: ${r.renewal_names}`, ` · 🔁 ${r.renewals} renewal(s) set by themselves: ${r.renewal_names}`) : "")
+      : L("↩️ Wapas bhej diya", "↩️ Sent back"), false, ok && r.renewals ? 9000 : 0);
     done?.(); openObf(o.id, done);
   });
   $("#obOk", m)?.addEventListener("click", decideNow(true));

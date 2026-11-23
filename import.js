@@ -385,22 +385,7 @@ async function loadFile(f, el) {
       IM.kind = "erp_backup"; IM.erp = fromErpBackup(j);
       await prepareErp(); IM.step = "review"; return viewImport(el);
     }
-    // go by what is inside the file, not its name (".xls" is often an HTML table, xlsx gets renamed, …)
-    const buf = await f.arrayBuffer(), b = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
-    if (b[0] === 0x50 && b[1] === 0x4b) {
-      if (!window.DecompressionStream) throw new Error(L("Ye browser purana hai — Chrome / Edge latest use karo, ya CSV upload karo", "This browser is too old — use the latest Chrome / Edge, or upload a CSV"));
-      IM.sheets = await readXlsx(buf);
-    } else if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) IM.sheets = (await import("./legacy.js")).readXls(buf);
-    else {
-      const X = await import("./legacy.js"), text = X.decodeText(buf), head = text.slice(0, 3000);
-      if (/^\s*BEGIN:VCARD/i.test(head) || /\.vcf$/i.test(f.name)) IM.sheets = X.readVcf(text);
-      else if (/<ENVELOPE|<TALLYMESSAGE|<TALLYREQUEST/i.test(head)) IM.sheets = X.readTally(text);
-      else if (/urn:schemas-microsoft-com:office:spreadsheet/i.test(head)) IM.sheets = X.readSpreadsheetML(text);
-      else if (/<(table|html)[\s>]/i.test(text.slice(0, 20000))) IM.sheets = X.readHtmlTables(text);
-      else if (/^\s*</.test(head)) throw new Error(L("Ye XML file pehchani nahi — Tally ke liye: Export → Masters → Ledgers (XML) chuno", "This XML file isn't recognised — for Tally choose Export → Masters → Ledgers (XML)"));
-      else IM.sheets = readDelimited(text);
-    }
-    IM.sheets = IM.sheets.filter((s) => s.rows.length > 1);
+    IM.sheets = await readTableFile(f);
     if (!IM.sheets.length) throw new Error(L("File mein data nahi mila", "No data found in the file"));
     // pick the sheet whose header matches best
     let best = 0, bs = -1;
@@ -409,6 +394,29 @@ async function loadFile(f, el) {
     IM.step = "map"; viewImport(el);
   } catch (e) { fail(e); reset(); viewImport(el); }
 }
+// any table file (Excel .xlsx / .xls, CSV, HTML / SpreadsheetML tables, Tally XML, vCard) → [{ name, rows }]
+// (also used by the Renewals page's Excel update)
+export async function readTableFile(f) {
+  let sheets = [];
+    // go by what is inside the file, not its name (".xls" is often an HTML table, xlsx gets renamed, …)
+    const buf = await f.arrayBuffer(), b = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
+    if (b[0] === 0x50 && b[1] === 0x4b) {
+      if (!window.DecompressionStream) throw new Error(L("Ye browser purana hai — Chrome / Edge latest use karo, ya CSV upload karo", "This browser is too old — use the latest Chrome / Edge, or upload a CSV"));
+      sheets = await readXlsx(buf);
+    } else if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) sheets = (await import("./legacy.js")).readXls(buf);
+    else {
+      const X = await import("./legacy.js"), text = X.decodeText(buf), head = text.slice(0, 3000);
+      if (/^\s*BEGIN:VCARD/i.test(head) || /\.vcf$/i.test(f.name)) sheets = X.readVcf(text);
+      else if (/<ENVELOPE|<TALLYMESSAGE|<TALLYREQUEST/i.test(head)) sheets = X.readTally(text);
+      else if (/urn:schemas-microsoft-com:office:spreadsheet/i.test(head)) sheets = X.readSpreadsheetML(text);
+      else if (/<(table|html)[\s>]/i.test(text.slice(0, 20000))) sheets = X.readHtmlTables(text);
+      else if (/^\s*</.test(head)) throw new Error(L("Ye XML file pehchani nahi — Tally ke liye: Export → Masters → Ledgers (XML) chuno", "This XML file isn't recognised — for Tally choose Export → Masters → Ledgers (XML)"));
+      else sheets = readDelimited(text);
+    }
+  return sheets.filter((x) => x.rows.length > 1);
+}
+export { toISODate, headerRow };
+
 function selectSheet(i) {
   IM.sheet = i; const rows = IM.sheets[i].rows; IM.hdr = headerRow(rows);
   const hd = rows[IM.hdr]; IM.kind = detectKind(hd);

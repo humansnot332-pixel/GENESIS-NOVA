@@ -303,7 +303,7 @@ export async function viewRenewals(el) {
         ${prodList.map(([g, n]) => `<option value="${h(g)}" ${g === rp ? "selected" : ""}>${h(g)} (${n})</option>`).join("")}
         ${rp && !byProd.has(rp) ? `<option value="${h(rp)}" selected>${h(rp)} (0)</option>` : ""}</select>
       ${rp ? `<button class="btn sm ghost" id="rProdX" title="${h(L("Product filter hatao", "Clear the product filter"))}">✕ ${h(rp)}</button>` : ""}
-      <span class="sp" style="flex:1"></span><button class="btn primary" id="radd">${ic("plus")} Renewal</button></div>
+      <span class="sp" style="flex:1"></span>${isMgr() ? `<button class="btn" id="rUp" title="${h(L("Vendor portal / AMC Excel se expiry dates ek saath sahi karo", "Fix expiry dates in one go from a vendor-portal / AMC Excel"))}">⬆️ ${L("Excel se update", "Update from Excel")}</button>` : ""}<button class="btn primary" id="radd">${ic("plus")} Renewal</button></div>
     ${f === "erp" ? `<div class="banner" style="margin:0 0 12px;background:var(--warn-soft);border-color:transparent">❓ <div><b>${L("Ye renewals purane ERP se andaze se bane hain", "These renewals were guessed from the old ERP")}</b><br><span class="mu">${L("Date = aakhri quotation + 1 saal, isliye sach nahi bhi ho sakti. Jab tak aap confirm nahi karte, inka na overdue count hota hai, na reminder jaata hai, na quotation banti hai. Customer se poochke ✔ Haan, hai (date / amount sahi karke) ya ✕ Nahi hai dabao.", "Date = last quotation + 1 year, so it may be wrong. Until you confirm one, it is not counted as overdue, sends no reminder and makes no quotation. Ask the customer, then press ✔ Yes, it's real (fix date / amount) or ✕ Not a renewal.")}</span></div></div>` : ""}
     ${rs ? `<div class="mu" style="font-size:12.5px;margin:-4px 0 10px">🔍 “${h(rs)}”: ${data.length} ${L("mile", data.length === 1 ? "found" : "found")} ${["erp", "closed"].includes(f) ? "" : L("— saare renewals mein dhoondha (sirf 30 din wale nahi)", "— searched all renewals (not only the next 30 days)")}</div>` : ""}
     ${rp ? `<div class="mu" style="font-size:12.5px;margin:-4px 0 10px">🏷️ ${h(rp)}: ${data.length} ${L("renewal is filter mein", data.length === 1 ? "renewal in this view" : "renewals in this view")}${data.length ? ` · ${inrShort(data.reduce((a, r) => a + +(r.amount || 0), 0))}` : ""}</div>` : ""}
@@ -322,6 +322,7 @@ export async function viewRenewals(el) {
   }, 350); };
   $("#rProdX", el)?.addEventListener("click", () => { el.dataset.rp = ""; viewRenewals(el); });
   $("#radd", el).onclick = () => renewalForm({}, () => viewRenewals(el));
+  $("#rUp", el)?.addEventListener("click", () => import("./renup.js").then((x) => x.renewalUpload(() => viewRenewals(el))).catch(fail));
   const byId = (id) => data.find((r) => r.id === +id);
   el.onclick = async (e) => {
     const u = e.target.closest("[data-rok],[data-rno]");
