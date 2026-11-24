@@ -69,7 +69,7 @@ const NO_TRACK = (html) => ({ html, token: null, links: null });
 //  Attachments (the quotation PDF): made while the composer is open
 // ---------------------------------------------------------------------
 const GMAIL_FILES_V = 5;                      // Gmail script version that attaches files to its drafts
-const GMAIL_FAST_V = 6;                       // Gmail script version that keeps the banner picture (no download per draft)
+const GMAIL_FAST_V = 7;                       // Gmail script version: banner kept (v6) + the CRM server runs in Mumbai next to the database (v7)
 // Apps Script sleeps after a few idle minutes and the first call then takes several seconds →
 // wake the person's web app as soon as an email window opens, so "Gmail mein kholo" answers fast
 let gasWarmAt = 0, gasWarmP = null;
@@ -925,7 +925,7 @@ function removeSetup() {                 // ▶ sync band karna ho to ye Run kar
 }
 
 function call_(action, payload, qs) {
-  var res = UrlFetchApp.fetch(CRM_URL + "?v=6&action=" + action + (qs || ""), {
+  var res = UrlFetchApp.fetch(CRM_URL + "?v=7&forceFunctionRegion=ap-south-1&action=" + action + (qs || ""), {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
@@ -966,7 +966,7 @@ function sendFiles_(ids) {
           var qs = "&id=" + encodeURIComponent(it.id) + "&name=" + encodeURIComponent(a.getName() || "file")
                  + "&mime=" + encodeURIComponent(a.getContentType() || "") + "&size=" + size + "&inline=" + p[1];
           if (size > 20 * 1048576) { call_("file", {}, qs + "&big=1"); return; }
-          answer_(UrlFetchApp.fetch(CRM_URL + "?v=6&action=file" + qs, { method: "post", contentType: "application/octet-stream",
+          answer_(UrlFetchApp.fetch(CRM_URL + "?v=7&forceFunctionRegion=ap-south-1&action=file" + qs, { method: "post", contentType: "application/octet-stream",
             headers: { "x-mail-token": TOKEN }, payload: a.getBytes(), muteHttpExceptions: true }));
         });
         call_("file", {}, "&id=" + encodeURIComponent(it.id) + "&done=1");
@@ -983,7 +983,7 @@ function sendFiles_(ids) {
 
 function doGet(e) {                     // CRM "Gmail mein kholo" dabate hi isse bulata hai → draft turant
   WEB_ = true;
-  var out = { ok: true, v: 6 };
+  var out = { ok: true, v: 7 };
   try { out.done = sendQueued_() || []; } catch (err) { out.ok = false; out.error = String(err && err.message || err); }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
