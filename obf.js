@@ -142,7 +142,7 @@ export async function openObf(id, done) {
           <div><label class="f">HSN</label><input class="input" data-i="${i}" data-f="hsn" value="${h(it.hsn || "")}" maxlength="12"${dis}></div></div>
         <div class="obl-calc">Total <b class="obl-tot">${num(tot)}</b> · GST <span class="obl-gst">${num(g)} (${h(it.tax)}%)</span></div></div>
       <div><div class="obl-2"><div><label class="f">${L("Cost / unit", "Cost / unit")} ₹ *</label><input class="input${edit && noCost ? " need" : ""}" type="number" min="0" data-i="${i}" data-f="cost" value="${h(it.cost ?? "")}"${dis}></div>
-          <div><label class="f">Vendor</label><input class="input" data-i="${i}" data-f="vendor" value="${h(it.vendor || "")}" maxlength="120"${dis}></div></div>
+          <div><label class="f">Vendor</label><input class="input" data-i="${i}" data-f="vendor" value="${h(it.vendor || "")}" maxlength="120" list="obVendors" autocomplete="off" placeholder="${h(L("Vendor list se chuno", "Pick from the vendor list"))}"${dis}></div></div>
         <label class="f">Remarks</label><textarea class="input" data-i="${i}" data-f="remarks" rows="2" maxlength="300" placeholder="${h(L("jaise: cpu 16467 + mbd 6150 + ram 15750…", "e.g. cpu 16467 + mbd 6150 + ram 15750…"))}"${dis}>${h(it.remarks || "")}</textarea>
         <div class="obl-cn">${cnHtml(tot, cn)}</div></div></div>`;
   };
@@ -196,7 +196,19 @@ export async function openObf(id, done) {
     customer: o.customer, items: o.items, extra_charges: +o.extra_charges || 0, subtotal: c.sub, tax_total: c.tax, grand_total: c.grand,
     commission: o.commission == null || o.commission === "" ? null : +o.commission, commission_to: o.commission_to || null,
     payment_terms: o.payment_terms || null, vendor_po: o.vendor_po || null, payment_note: o.payment_note || null, remarks: o.remarks || null }; };
-  const save = async () => { const { error: e } = await sb.from("obfs").update(row()).eq("id", o.id); if (e) throw e; };
+  // vendor names from the directory, so every PO goes to a known vendor (email → the PO mails itself; its rate is remembered)
+  if (!m.querySelector("#obVendors")) {
+    const dl = document.createElement("datalist"); dl.id = "obVendors"; m.append(dl);
+    sb.from("vendors").select("name, area, phone").eq("active", true).order("name").limit(3000)
+      .then(({ data }) => { dl.innerHTML = (data || []).map((v) => `<option value="${h(v.name)}">${h([v.area, v.phone].filter(Boolean).join(" · "))}</option>`).join(""); }, () => {});
+  }
+  // a number typed in the vendor box (a cost, by mistake) would become a vendor called "20000"
+  const badVendor = () => o.items.findIndex((it) => String(it.vendor || "").trim() && !/[a-z]/i.test(it.vendor));
+  const save = async () => {
+    const bv = badVendor();
+    if (bv >= 0) { $(`[data-i="${bv}"][data-f="vendor"]`, m)?.focus(); throw new Error(L("Vendor ke khaane mein naam likho, number nahi (cost alag khaane mein)", "Write the vendor's name in the Vendor box, not a number (cost has its own box)")); }
+    const { error: e } = await sb.from("obfs").update(row()).eq("id", o.id); if (e) throw e;
+  };
   $("#obSave", m)?.addEventListener("click", (e) => busy(e.target, async () => { await save(); toast(L("✔ Draft save ho gaya", "✔ Draft saved")); done?.(); }));
   $("#obSend", m)?.addEventListener("click", (e) => busy(e.target, async () => {
     const miss = o.items.findIndex((it) => it.cost == null || it.cost === "");

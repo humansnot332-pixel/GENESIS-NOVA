@@ -26,12 +26,13 @@ function calc(items) {
 // ---------------------------------------------------------------- list
 export async function viewPurchase(el) {
   const f = el.dataset.f || "open";
+  if (f === "vendors") return viewVendors(el);
   let q = sb.from("purchase_orders").select("id, po_no, vendor_name, status, grand_total, po_date, expected_at, sent_at, received_at, notes, owner_id").order("created_at", { ascending: false }).limit(300);
   if (f === "open") q = q.in("status", ["draft", "sent"]); else if (f === "received") q = q.eq("status", "received");
   const { data, error } = await q; if (error) throw error;
   const today = new Date().toISOString().slice(0, 10);
   const late = (p) => p.status === "sent" && (p.expected_at || (p.sent_at && new Date(new Date(p.sent_at).getTime() + 7 * 864e5).toISOString().slice(0, 10))) < today;
-  el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Khule", "Open")], ["received", L("Maal aa gaya", "Received")], ["all", L("Sab", "All")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-pf="${k}">${h(l)}</button>`).join("")}</div>
+  el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Khule", "Open")], ["received", L("Maal aa gaya", "Received")], ["all", L("Sab", "All")], ["vendors", "📇 " + L("Vendors", "Vendors")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-pf="${k}">${h(l)}</button>`).join("")}</div>
     <span class="sp" style="flex:1"></span><span class="mu" style="font-size:12.5px">📦 ${L("OBF approve hote hi har vendor ka PO apne aap banta hai", "Every vendor gets a PO by itself when an OBF is approved")}</span></div>
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>${L("Koi vendor PO nahi", "No vendor POs")}</b>${L("OBF mein vendor + cost bharo — approve hote hi PO yahan aa jayega.", "Fill vendor + cost in the OBF — the PO shows up here once it is approved.")}</div>`
     : `<table class="tbl"><thead><tr><th>PO</th><th>Vendor</th><th>Status</th><th class="num">Total</th><th>${L("Kiske liye", "For")}</th><th>${L("Kab tak", "Due")}</th></tr></thead><tbody>
@@ -40,6 +41,69 @@ export async function viewPurchase(el) {
       <td class="sub">${p.status === "received" ? "✅ " + h(ago(p.received_at)) : p.expected_at ? h(dOnly(p.expected_at)) : p.sent_at ? h(ago(p.sent_at)) : "—"}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
   $$("[data-pf]", el).forEach((b) => b.onclick = () => { el.dataset.f = b.dataset.pf; viewPurchase(el); });
   $$("[data-po]", el).forEach((r) => r.onclick = () => openPo(+r.dataset.po, () => viewPurchase(el)));
+}
+
+// ---------------------------------------------------------------- vendor directory
+// everyone can look a vendor up (call / mail); managers also see how many prices the CRM has learned from POs
+const telOf = (p) => String(p || "").split(",")[0].replace(/[^\d+]/g, "");
+async function viewVendors(el) {
+  const mgr = isMgr(), q = (el.dataset.vq || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const [{ data, error }, { data: pos }, vp] = await Promise.all([
+    sb.from("vendors").select("id, code, name, contact, email, phone, landline, gstin, pan, address, area, city, state, pincode, kind, active").order("name").limit(3000),
+    sb.from("purchase_orders").select("vendor_id").limit(5000),
+    mgr ? sb.from("vendor_prices").select("vendor").limit(20000) : Promise.resolve({ data: [] }),
+  ]);
+  if (error) throw error;
+  const poN = {}; (pos || []).forEach((p) => { poN[p.vendor_id] = (poN[p.vendor_id] || 0) + 1; });
+  const vk = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const prN = {}; (vp.data || []).forEach((r) => { prN[vk(r.vendor)] = (prN[vk(r.vendor)] || 0) + 1; });
+  const rows = (data || []).filter((v) => !q.length || q.every((w) => [v.code, v.name, v.contact, v.email, v.phone, v.area, v.city, v.gstin].join(" ").toLowerCase().includes(w)));
+  el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Khule", "Open")], ["received", L("Maal aa gaya", "Received")], ["all", L("Sab", "All")], ["vendors", "📇 " + L("Vendors", "Vendors")]].map(([k, l]) => `<button class="chip ${k === "vendors" ? "on" : ""}" data-pf="${k}">${h(l)}</button>`).join("")}</div>
+    <input class="input" id="vq" placeholder="${h(L("Vendor / contact / area / GSTIN search…", "Search vendor / contact / area / GSTIN…"))}" value="${h(el.dataset.vq || "")}" style="max-width:300px">
+    <span class="mu">${(rows.length).toLocaleString("en-IN")} vendors</span><span class="sp" style="flex:1"></span>
+    ${mgr ? `<button class="btn" id="vErp">⬆️ ${L("ERP list", "ERP list")}</button>` : ""}<button class="btn primary" id="vAdd">＋ Vendor</button></div>
+  <div class="card"><div class="tbl-wrap">${!rows.length ? `<div class="empty"><b>${L("Koi vendor nahi mila", "No vendor found")}</b></div>` : `<table class="tbl"><thead><tr><th>Vendor</th><th>${L("Phone", "Phone")}</th><th>Email</th><th>${L("Area", "Area")}</th><th>GSTIN</th><th class="num">POs</th>${mgr ? `<th class="num">🔒 ${L("Prices", "Prices")}</th>` : ""}</tr></thead><tbody>
+    ${rows.slice(0, 500).map((v) => `<tr data-vd="${v.id}"><td><div class="co">${h(v.name)}${v.active === false ? ` <span class="badge bad">${L("Band", "Inactive")}</span>` : ""}</div><div class="sub">${h([v.code, v.contact].filter(Boolean).join(" · "))}</div></td>
+      <td style="white-space:nowrap">${v.phone ? `<a href="tel:${h(telOf(v.phone))}" data-stop>${h(String(v.phone).split(",")[0])}</a>` : ""}${v.landline ? `<div class="sub">${h(v.landline)}</div>` : ""}</td>
+      <td class="sub">${v.email ? `<a href="mailto:${h(v.email)}" data-stop>${h(v.email)}</a>` : "—"}</td>
+      <td class="sub">${h([v.area, v.city && v.city !== v.area ? v.city : "", v.pincode].filter(Boolean).join(", ") || "—")}</td>
+      <td class="mono sub">${h(v.gstin || "—")}</td><td class="num">${poN[v.id] || ""}</td>${mgr ? `<td class="num">${prN[vk(v.name)] || ""}</td>` : ""}</tr>`).join("")}</tbody></table>`}</div></div>
+  <p class="mu" style="font-size:12.5px">💡 ${L("OBF mein vendor isi list se chuno — har PO ke baad us vendor ka rate apne aap yaad rehta hai, agli OBF mein cost aur margin khud bharte hain.", "Pick the OBF vendor from this list — after each PO the CRM remembers that vendor's rate, so the next OBF fills cost and margin by itself.")}</p>`;
+  $$("[data-pf]", el).forEach((b) => b.onclick = () => { el.dataset.f = b.dataset.pf; viewPurchase(el); });
+  const vq = $("#vq", el); let t;
+  vq.oninput = () => { clearTimeout(t); t = setTimeout(() => { el.dataset.vq = vq.value; viewVendors(el).then(() => { const n = $("#vq", el); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }); }, 250); };
+  $$("[data-stop]", el).forEach((a) => a.onclick = (e) => e.stopPropagation());
+  $$("[data-vd]", el).forEach((r) => r.onclick = () => vendorForm((data || []).find((v) => v.id === +r.dataset.vd), () => viewVendors(el)));
+  $("#vAdd", el).onclick = () => vendorForm({}, () => viewVendors(el));
+  $("#vErp", el)?.addEventListener("click", () => import("./catimp.js").then((x) => x.openCatalogImport(() => viewVendors(el))));
+}
+function vendorForm(v, done) {
+  const F = [["name", L("Vendor / company *", "Vendor / company *"), 120], ["contact", L("Contact person", "Contact person"), 120], ["phone", L("Mobile", "Mobile"), 120], ["landline", "Landline", 60],
+    ["email", "Email", 200], ["gstin", "GSTIN", 15], ["pan", "PAN", 10], ["code", L("Vendor code", "Vendor code"), 20], ["area", L("Area", "Area"), 80], ["city", L("City", "City"), 80],
+    ["state", L("State", "State"), 60], ["pincode", "Pincode", 10]];
+  const m = modal({ title: v.id ? "🏭 " + v.name : L("🏭 Naya vendor", "🏭 New vendor"), wide: true,
+    body: `<div class="grid3">${F.map(([k, l, n]) => `<div><label class="f" for="vf_${k}">${h(l)}</label><input class="input" id="vf_${k}" maxlength="${n}" value="${h(v[k] || "")}"></div>`).join("")}</div>
+      <label class="f" for="vf_address">${L("Address", "Address")}</label><textarea class="input" id="vf_address" rows="2" maxlength="500">${h(v.address || "")}</textarea>
+      ${v.id ? `<label class="qtdef" style="margin-top:8px"><input type="checkbox" id="vf_active"${v.active === false ? "" : " checked"}> ${L("Active (OBF / PO mein dikhe)", "Active (shown in OBF / PO)")}</label>` : ""}`,
+    foot: `${v.id && isMgr() ? `<button class="btn danger" id="vfDel">${L("Delete", "Delete")}</button>` : ""}<span class="sp" style="flex:1"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="vfSave">Save</button>` });
+  $("#vfSave", m).onclick = (e) => busy(e.target, async () => {
+    const row = Object.fromEntries(F.map(([k]) => [k, $("#vf_" + k, m).value.trim() || null]));
+    row.address = $("#vf_address", m).value.trim() || null;
+    if (!row.name || !/[a-z]/i.test(row.name)) { $("#vf_name", m).focus(); return toast(L("Vendor ka sahi naam daalo", "Enter the vendor's name"), true); }
+    if (row.gstin) row.gstin = row.gstin.toUpperCase();
+    if (row.pan) row.pan = row.pan.toUpperCase();
+    if (row.email) row.email = row.email.toLowerCase();
+    if (v.id) row.active = $("#vf_active", m).checked;
+    const res = v.id ? await sb.from("vendors").update({ ...row, updated_at: new Date().toISOString() }).eq("id", v.id) : await sb.from("vendors").insert(row);
+    if (res.error) { if (res.error.code === "23505") return toast(L("Ye vendor code pehle se kisi aur ka hai", "That vendor code is already used"), true); throw res.error; }
+    closeModal(); toast("Saved ✔"); done?.();
+  });
+  $("#vfDel", m)?.addEventListener("click", (e) => busy(e.target, async () => {
+    if (!(await confirmBox(L(`"${v.name}" delete karna hai?`, `Delete "${v.name}"?`), "Delete"))) return;
+    const { error } = await sb.from("vendors").delete().eq("id", v.id);
+    if (error) return toast(L("Is vendor ke PO hain — delete nahi hoga, 'Active' hata do", "This vendor has POs — untick 'Active' instead"), true);
+    closeModal(); done?.();
+  }));
 }
 
 // ---------------------------------------------------------------- one PO

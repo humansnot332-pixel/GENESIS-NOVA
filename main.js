@@ -14,7 +14,7 @@ import {
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
-  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct, prodLabel,
+  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct, prodLabel, quotedHint,
   marginHtml, shareQuote, quoteTrackHtml, orderFromQuote, ticketForm, ticketView,
 } from "./biz.js";
 import { CONFIG } from "./config.js";
@@ -1918,6 +1918,8 @@ async function quoteEditor(q0) {
         const last = lastPrice(it.desc);                 // what this customer was quoted before wins over the list price
         if (last) { it._hint = `${L("pichhli baar", "last quoted")} ${inr(last.price)} · ${last.no} · ${niceDay(isoDay(new Date(last.at)))}`; if (!+it.price) it.price = last.price; }
         if (!+it.price && p.sell_price != null) it.price = +p.sell_price;
+        // no list price → what it was last quoted at (to anyone) in the ERP + CRM quotations
+        if (!+it.price && p.quoted_last) { it.price = +p.quoted_last; it._hint ||= quotedHint(p).replace(/^📈 /, ""); }
         setTimeout(drawItems, 0);
       }
       else { drawTotals(); hooks.items(); }

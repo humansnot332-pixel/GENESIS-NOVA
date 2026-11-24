@@ -52,16 +52,21 @@ function wireLeadPicker(m, id) {
 let PROD = null, COSTS = null;
 export async function loadProducts(force = false) {
   if (PROD && !force) return PROD;
-  const { data } = await sb.from("products").select("id, brand, name, model, category, hsn, gst_rate, unit, sell_price, active, notes, pitch, pitch_hi").order("brand").order("name").limit(5000);
+  const { data } = await sb.from("products").select("id, brand, name, model, category, hsn, gst_rate, unit, sell_price, active, notes, pitch, pitch_hi, erp_id, sku, erp_category, quoted_n, quoted_won, quoted_last, quoted_last_at").order("brand").order("name").limit(5000);
   PROD = data || [];
   if (isMgr()) { const { data: c } = await sb.rpc("product_costs"); COSTS = new Map((c || []).map((x) => [x.id, x])); }
   return PROD;
 }
-export const prodLabel = (p) => [p.brand, p.name, p.model].filter(Boolean).join(" ");
+// "Microsoft" + "Microsoft 365 Business" → "Microsoft 365 Business" (the brand only once)
+export const prodLabel = (p) => [p.brand && !String(p.name || "").toLowerCase().startsWith(String(p.brand).toLowerCase() + " ") ? p.brand : "", p.name, p.model].filter(Boolean).join(" ");
+const oldLabel = (p) => [p.brand, p.name, p.model].filter(Boolean).join(" ");
+// how often a product was quoted (ERP + CRM quotations) — shown on the price list and used as a price hint
+export const quotedHint = (p) => !p?.quoted_n ? "" : `📈 ${p.quoted_n}× ${L("quote hua", "quoted")}${p.quoted_won ? ` · ${p.quoted_won} won` : ""}${p.quoted_last ? ` · ${L("last", "last")} ${inr(p.quoted_last)}` : ""}${p.quoted_last_at ? ` (${new Date(p.quoted_last_at + "T00:00:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" })})` : ""}`;
 export const costOf = (p) => { const c = COSTS?.get(p.id); return c ? (c.best_price != null && (c.cost_price == null || +c.best_price < +c.cost_price) ? +c.best_price : c.cost_price != null ? +c.cost_price : null) : null; };
 export function findProduct(desc) {
   const d = String(desc || "").trim().toLowerCase(); if (!d || !PROD) return null;
-  return PROD.find((p) => prodLabel(p).toLowerCase() === d) || PROD.find((p) => d.startsWith(prodLabel(p).toLowerCase())) || null;
+  return PROD.find((p) => prodLabel(p).toLowerCase() === d || oldLabel(p).toLowerCase() === d || String(p.name).toLowerCase() === d)
+    || PROD.find((p) => d.startsWith(prodLabel(p).toLowerCase()) || d.startsWith(oldLabel(p).toLowerCase())) || null;
 }
 export function productDatalist() {
   return `<datalist id="prodDL">${(PROD || []).filter((p) => p.active).map((p) => `<option value="${h(prodLabel(p))}">${p.sell_price ? h(inr(p.sell_price)) : ""}</option>`).join("")}</datalist>`;
@@ -77,45 +82,58 @@ export function marginHtml(items) {
 
 // brand look (initials badge colours) and the order sections appear in
 const BRAND = { autodesk: ["A", "#0b0b0b"], adobe: ["Ad", "#eb1000"], trimble: ["T", "#0063a3"], microsoft: ["M", "#00a4ef"], chaos: ["C", "#e4002b"], lumion: ["L", "#1d3557"], "d5 render": ["D5", "#5b3df5"], genesis: ["G", "#0f766e"] };
-const CAT_ORDER = ["Design software", "Rendering & visualisation", "Creative software", "Microsoft & productivity", "AMC & facility management", "Networking", "IT security", "Storage & backup", "Other solutions", "Laptop repairing", "Professional services"];
-const CAT_ICON = { "Design software": "📐", "Rendering & visualisation": "🎨", "Creative software": "🖌", "Microsoft & productivity": "💼", "AMC & facility management": "🛠", "Networking": "🌐", "IT security": "🛡", "Storage & backup": "💾", "Other solutions": "🏢", "Laptop repairing": "💻", "Professional services": "🎧" };
+const CAT_ORDER = ["Design software", "Rendering & visualisation", "Creative software", "Microsoft & productivity", "Other software", "AMC & facility management", "Desktops, laptops & servers", "Printers & scanners", "Displays & AV", "Parts & peripherals", "Networking", "CCTV & security systems", "IT security", "Storage & backup", "Cloud, email & domains", "Warranty & support packs", "Training", "Other solutions", "Laptop repairing", "Professional services"];
+const CAT_ICON = { "Design software": "📐", "Rendering & visualisation": "🎨", "Creative software": "🖌", "Microsoft & productivity": "💼", "Other software": "🧩", "AMC & facility management": "🛠", "Desktops, laptops & servers": "🖥", "Printers & scanners": "🖨", "Displays & AV": "📺", "Parts & peripherals": "🔌", "Networking": "🌐", "CCTV & security systems": "📹", "IT security": "🛡", "Storage & backup": "💾", "Cloud, email & domains": "☁️", "Warranty & support packs": "🧾", "Training": "🎓", "Other solutions": "🏢", "Laptop repairing": "💻", "Professional services": "🎧" };
+const CAT_SHOW = 12;   // a category shows this many until it is opened (the ERP list has 400+ in one category)
 const brandBadge = (b) => { const k = String(b || "").toLowerCase(), x = BRAND[k] || [String(b || "?").slice(0, 2).toUpperCase(), "#64748b"]; return `<span class="pbadge" style="background:${x[1]}" title="${h(b || "")}">${h(x[0])}</span>`; };
 
-function catalogueHtml(rows, mgr) {
+function catalogueHtml(rows, mgr, open) {
   if (!rows.length) return `<div class="card">${empty("Kuch nahi mila", "Nothing found")}</div>`;
   const cats = [...new Set(rows.map((p) => p.category || L("Baaki", "Other")))].sort((a, b) => (CAT_ORDER.indexOf(a) + 1 || 99) - (CAT_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
   return `<div class="pcat">${cats.map((c) => {
-    const list = rows.filter((p) => (p.category || L("Baaki", "Other")) === c);
+    const all = rows.filter((p) => (p.category || L("Baaki", "Other")) === c)
+      .sort((a, b) => (b.pitch ? 1 : 0) - (a.pitch ? 1 : 0) || (b.quoted_n || 0) - (a.quoted_n || 0) || prodLabel(a).localeCompare(prodLabel(b)));   // own products first, then the most quoted
+    const list = open ? all : all.slice(0, CAT_SHOW), more = all.length - list.length;
     const brands = [...new Set(list.map((p) => p.brand).filter(Boolean))];
-    return `<div class="card pgroup"><div class="card-h"><h3>${CAT_ICON[c] || "📦"} ${h(c)}</h3><span class="mu" style="font-size:12px">${list.length}</span><span class="sp"></span>
+    return `<div class="card pgroup"><div class="card-h"><h3>${CAT_ICON[c] || "📦"} ${h(c)}</h3><span class="mu" style="font-size:12px">${all.length}</span><span class="sp"></span>
         ${mgr ? `<button class="btn sm" data-padd="${h(c)}" data-brand="${h(brands.length === 1 ? brands[0] : "")}">${ic("plus")} ${L("Add", "Add")}</button>` : ""}</div>
       <div class="plist">${list.map((p) => `<div class="pitem ${p.active ? "" : "off"}" ${mgr ? `data-pid="${p.id}"` : ""}>${brandBadge(p.brand)}
         <div class="pmain"><div class="pname">${h(p.brand && p.brand !== "Genesis" && !p.name.toLowerCase().startsWith(p.brand.toLowerCase()) ? p.brand + " " : "")}<b>${h(p.name)}</b></div>
-          <div class="sub">${h([p.model, p.notes].filter(Boolean).join(" · "))}</div></div>
-        ${mgr ? `<button class="btn ghost icon sm pdel" data-pdx="${p.id}" title="${h(L("Delete", "Delete"))}" aria-label="Delete ${h(prodLabel(p))}">${ic("trash")}</button>` : ""}<div class="pprice">${p.sell_price != null ? `<b>${inr(p.sell_price)}</b><div class="sub">${h(p.unit || "")}</div>` : `<span class="mu" style="font-size:12px">${mgr ? L("Price daalo", "Add price") : L("Price on request", "Price on request")}</span>`}</div></div>`).join("")}</div></div>`;
+          <div class="sub">${h([p.model, p.notes].filter(Boolean).join(" · ").slice(0, 160))}</div>${p.quoted_n ? `<div class="sub qhint">${h(quotedHint(p))}</div>` : ""}</div>
+        ${mgr ? `<button class="btn ghost icon sm pdel" data-pdx="${p.id}" title="${h(L("Delete", "Delete"))}" aria-label="Delete ${h(prodLabel(p))}">${ic("trash")}</button>` : ""}<div class="pprice">${p.sell_price != null ? `<b>${inr(p.sell_price)}</b><div class="sub">${h(p.unit || "")}</div>` : `<span class="mu" style="font-size:12px">${mgr ? L("Price daalo", "Add price") : L("Price on request", "Price on request")}</span>`}</div></div>`).join("")}</div>
+      ${more > 0 ? `<button class="btn sm ghost pmore" data-pcat="${h(c)}">${L(`+ ${more} aur dekho`, `+ ${more} more`)}</button>` : ""}</div>`;
   }).join("")}</div>`;
 }
 
 const PSEL = new Set();   // products ticked in the table view
 export async function viewProducts(el) {
   await loadProducts(true);
-  const mgr = isMgr(), q = (el.dataset.pq || "").toLowerCase(), view = el.dataset.pv || "cat";
-  const rows = PROD.filter((p) => !q || (prodLabel(p) + " " + (p.category || "") + " " + (p.notes || "")).toLowerCase().includes(q));
+  const mgr = isMgr(), q = (el.dataset.pq || "").toLowerCase(), view = el.dataset.pv || "cat", pc = el.dataset.pc || "";
+  const words = q.split(/\s+/).filter(Boolean);
+  const hit = (p) => !words.length || words.every((w) => (prodLabel(p) + " " + (p.category || "") + " " + (p.notes || "") + " " + (p.sku || "")).toLowerCase().includes(w));
+  const found = PROD.filter(hit), rows = found.filter((p) => !pc || (p.category || L("Baaki", "Other")) === pc);
+  const catN = {}; found.forEach((p) => { const c = p.category || L("Baaki", "Other"); catN[c] = (catN[c] || 0) + 1; });
+  const catChips = Object.keys(catN).length > 1 ? `<div class="chips pcats">${[["", L("Sab", "All"), found.length], ...Object.keys(catN).sort((a, b) => (CAT_ORDER.indexOf(a) + 1 || 99) - (CAT_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b)).map((c) => [c, (CAT_ICON[c] || "📦") + " " + c, catN[c]])]
+    .map(([k, l, n]) => `<button class="chip ${pc === k ? "on" : ""}" data-pc="${h(k)}">${h(l)} <span class="mu">${n}</span></button>`).join("")}</div>` : "";
+  const TBL_MAX = 400;
   el.innerHTML = `<div class="toolbar"><input class="input" id="pq" placeholder="${h(L("Product / brand / service search…", "Search product / brand / service…"))}" value="${h(el.dataset.pq || "")}" style="max-width:320px">
     <div class="chips"><button class="chip ${view === "cat" ? "on" : ""}" data-pv="cat">▦ ${L("Catalogue", "Catalogue")}</button><button class="chip ${view === "tbl" ? "on" : ""}" data-pv="tbl">☰ ${L("Price list", "Price list")}</button></div>
     <span class="mu">${num(rows.length)} ${L("products", "products")}</span><span class="sp" style="flex:1"></span>
     ${mgr && view === "tbl" ? `<button class="btn danger" id="pbulk" ${PSEL.size ? "" : "hidden"}>${ic("trash")} ${L("Selected delete", "Delete selected")} <span id="pbn">(${PSEL.size})</span></button>` : ""}
-    ${mgr ? `<button class="btn" id="pimp">${ic("upload")} CSV import</button><button class="btn" id="pexp">${ic("download")} Export</button><button class="btn primary" id="padd">${ic("plus")} ${L("Product add karo", "Add product")}</button>` : ""}</div>
-  ${view === "cat" ? catalogueHtml(rows, mgr) : `<div class="card"><div class="tbl-wrap">${!rows.length ? empty("Abhi koi product nahi — Manager products add kar sakte hain", "No products yet — managers can add them") : `<table class="tbl"><thead><tr>${mgr ? `<th style="width:34px"><input type="checkbox" id="pall" aria-label="Select all"></th>` : ""}<th>Product</th><th>Category</th><th>HSN</th><th class="num">GST</th><th class="num">${L("Selling price", "Selling price")}</th>
+    ${mgr ? `<button class="btn" id="perp" title="${h(L("ERP se nikali product / vendor list ka Excel", "The product / vendor list Excel from the ERP"))}">${ic("upload")} ${L("ERP list", "ERP list")}</button><button class="btn" id="pimp">${ic("upload")} CSV import</button><button class="btn" id="pexp">${ic("download")} Export</button><button class="btn primary" id="padd">${ic("plus")} ${L("Product add karo", "Add product")}</button>` : ""}</div>
+  ${catChips}
+  ${view === "cat" ? catalogueHtml(rows, mgr, !!(pc || words.length)) : `<div class="card"><div class="tbl-wrap">${!rows.length ? empty("Abhi koi product nahi — Manager products add kar sakte hain", "No products yet — managers can add them") : `<table class="tbl"><thead><tr>${mgr ? `<th style="width:34px"><input type="checkbox" id="pall" aria-label="Select all"></th>` : ""}<th>Product</th><th>Category</th><th>HSN</th><th class="num">GST</th><th class="num">${L("Selling price", "Selling price")}</th>
     ${mgr ? `<th class="num">🔒 Cost</th><th class="num">🔒 Margin</th><th>🔒 ${L("Best vendor", "Best vendor")}</th><th style="width:44px"></th>` : ""}</tr></thead><tbody>
-    ${rows.map((p) => { const c = costOf(p), b = COSTS?.get(p.id), mg = c != null && p.sell_price ? ((p.sell_price - c) / p.sell_price) * 100 : null;
-      return `<tr data-pid="${p.id}" ${mgr ? "" : 'style="cursor:default"'}>${mgr ? `<td class="pchk"><input type="checkbox" data-psel="${p.id}" aria-label="Select" ${PSEL.has(p.id) ? "checked" : ""}></td>` : ""}<td><div class="co">${h(prodLabel(p))}</div>${p.active ? "" : `<span class="badge bad">${L("Band", "Inactive")}</span>`}${p.notes ? `<div class="sub">${h(p.notes)}</div>` : ""}</td><td>${h(p.category || "—")}</td><td class="mono">${h(p.hsn || "")}</td><td class="num">${h(p.gst_rate)}%</td><td class="num">${p.sell_price != null ? inr(p.sell_price) : "—"}</td>
+    ${rows.slice(0, TBL_MAX).map((p) => { const c = costOf(p), b = COSTS?.get(p.id), mg = c != null && p.sell_price ? ((p.sell_price - c) / p.sell_price) * 100 : null;
+      return `<tr data-pid="${p.id}" ${mgr ? "" : 'style="cursor:default"'}>${mgr ? `<td class="pchk"><input type="checkbox" data-psel="${p.id}" aria-label="Select" ${PSEL.has(p.id) ? "checked" : ""}></td>` : ""}<td><div class="co">${h(prodLabel(p))}</div>${p.active ? "" : `<span class="badge bad">${L("Band", "Inactive")}</span>`}${p.notes ? `<div class="sub">${h(p.notes.slice(0, 160))}</div>` : ""}${p.quoted_n ? `<div class="sub qhint">${h(quotedHint(p))}</div>` : ""}</td><td>${h(p.category || "—")}</td><td class="mono">${h(p.hsn || "")}</td><td class="num">${h(p.gst_rate)}%</td><td class="num">${p.sell_price != null ? inr(p.sell_price) : "—"}</td>
       ${mgr ? `<td class="num">${c != null ? inr(c) : "—"}</td><td class="num">${mg != null ? `<span class="badge ${mg < 5 ? "bad" : mg < 10 ? "warn" : "good"}">${mg.toFixed(1)}%</span>` : "—"}</td><td class="sub">${b?.best_vendor ? `${h(b.best_vendor)} · ${inr(b.best_price)} · ${h(ago(b.best_at))}` : "—"}</td><td><button class="btn ghost icon sm pdel" data-pdx="${p.id}" title="Delete" aria-label="Delete ${h(prodLabel(p))}">${ic("trash")}</button></td>` : ""}</tr>`; }).join("")}
-    </tbody></table>`}</div></div>`}
+    </tbody></table>${rows.length > TBL_MAX ? `<p class="mu" style="padding:10px 14px;margin:0;font-size:12.5px">${L(`Pehle ${TBL_MAX} dikhaye — baaki ke liye search ya category chuno`, `Showing the first ${TBL_MAX} — search or pick a category for the rest`)} (${num(rows.length)})</p>` : ""}`}</div></div>`}
   ${mgr ? `<p class="mu" style="font-size:12.5px">🔒 ${h(L("Cost, margin aur vendor prices sirf Admin/Manager ko dikhte hain. Sales team ko sirf selling price.", "Cost, margin and vendor prices are visible to Admin/Manager only. The sales team sees only the selling price."))}</p>` : ""}`;
   const pq = $("#pq", el); let t;
   pq.oninput = () => { clearTimeout(t); t = setTimeout(() => { el.dataset.pq = pq.value; viewProducts(el).then(() => { const n = $("#pq", el); n.focus(); n.setSelectionRange(n.value.length, n.value.length); }); }, 250); };
   $$("[data-pv]", el).forEach((b) => b.onclick = () => { el.dataset.pv = b.dataset.pv; viewProducts(el); });
+  $$("[data-pc]", el).forEach((b) => b.onclick = () => { el.dataset.pc = b.dataset.pc; viewProducts(el); });
+  $$("[data-pcat]", el).forEach((b) => b.onclick = () => { el.dataset.pc = b.dataset.pcat; viewProducts(el).then(() => el.scrollIntoView({ block: "start" })); });
   if (!mgr) return;
   $("#padd", el).onclick = () => productForm({}, () => viewProducts(el));
   $$("[data-padd]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); productForm({ category: b.dataset.padd, brand: b.dataset.brand || "" }, () => viewProducts(el)); });
@@ -145,6 +163,7 @@ export async function viewProducts(el) {
   });
   $("#pexp", el).onclick = () => download("products.csv", toCSV(PROD.map((p) => ({ ...p, cost_price: COSTS?.get(p.id)?.cost_price })), [["brand", "brand"], ["name", "name"], ["model", "model"], ["category", "category"], ["hsn", "hsn"], ["gst_rate", "gst_rate"], ["unit", "unit"], ["cost_price", "cost_price"], ["sell_price", "sell_price"]]));
   $("#pimp", el).onclick = () => importProducts(() => viewProducts(el));
+  $("#perp", el).onclick = () => import("./catimp.js").then((x) => x.openCatalogImport(() => viewProducts(el)));
 }
 
 async function productForm(p, done) {

@@ -12,7 +12,8 @@ const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [..
 let CAT = [], catAt = 0;
 export async function loadCatalog(force = false) {
   if (!force && CAT.length && Date.now() - catAt < 5 * 60e3) return CAT;
-  const { data } = await sb.from("products").select("id, brand, name, model, category, pitch, pitch_hi, sell_price, gst_rate, hsn, unit").eq("active", true).order("category").order("name");
+  // our own short list only — the 1,000+ items of an imported ERP list stay on the price list / quotations, not in the lead picker
+  const { data } = await sb.from("products").select("id, brand, name, model, category, pitch, pitch_hi, sell_price, gst_rate, hsn, unit").eq("active", true).is("import_batch", null).order("category").order("name");
   CAT = data || []; catAt = Date.now();
   return CAT;
 }
