@@ -69,6 +69,24 @@ const NO_TRACK = (html) => ({ html, token: null, links: null });
 //  Attachments (the quotation PDF): made while the composer is open
 // ---------------------------------------------------------------------
 const GMAIL_FILES_V = 5;                      // Gmail script version that attaches files to its drafts
+const GMAIL_FAST_V = 6;                       // Gmail script version that keeps the banner picture (no download per draft)
+// Apps Script sleeps after a few idle minutes and the first call then takes several seconds →
+// wake the person's web app as soon as an email window opens, so "Gmail mein kholo" answers fast
+let gasWarmAt = 0, gasWarmP = null;
+function warmGmail() {
+  if (!S.me?.mail_webapp || (S.me.mail_provider || "gmail") === "outlook" || Date.now() - gasWarmAt < 90000) return;
+  gasWarmAt = Date.now();
+  gasWarmP = fetch(S.me.mail_webapp, { redirect: "follow" }).then((r) => r.json()).catch(() => null);
+}
+// the quotation PDF goes up for the Gmail script (kept a day) — started while the mail is still open
+async function uploadOutPdf(a) {
+  const path = `out/${S.me.id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.pdf`;
+  const up = await sb.storage.from("crm-files").upload(path, a.blob, { contentType: "application/pdf", upsert: false });
+  if (up.error) throw up.error;
+  const sg = await sb.storage.from("crm-files").createSignedUrl(path, 2 * 86400);
+  if (sg.error || !sg.data?.signedUrl) throw sg.error || new Error("no link");
+  return { name: a.name, url: sg.data.signedUrl, mime: "application/pdf" };
+}
 const OUTLOOK_MAX = 2.8e6;                    // Graph takes up to ~3 MB of attachment in one draft call
 const kb = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
 // no automatic attaching possible (plain compose link / mail app) → the file is saved on this device to attach by hand
@@ -81,7 +99,7 @@ function attachByHand(att) {
 // ---------------------------------------------------------------------
 //  Gmail draft with the team banner (made by the person's Gmail script)
 // ---------------------------------------------------------------------
-function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m, att = null, scriptV = 0 }) {
+function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId, fu, m, att = null, pre = null, scriptV = 0 }) {
   // open the tab now (inside the click) — a tab opened later would be blocked
   const w = window.open("", "_blank");
   try { w.document.title = "Gmail draft…"; w.document.body.innerHTML = `<div style="font:16px/1.5 system-ui,sans-serif;max-width:460px;margin:22vh auto;text-align:center;color:#334">⏳ <b>${L("Gmail draft ban raha hai…", "Making your Gmail draft…")}</b><br><span style="color:#667">${S.me.mail_webapp ? L("Template + Geninfo banner ke saath. Bas 2-3 second…", "With the template + Geninfo banner. Just 2-3 seconds…") : L("Template + Geninfo banner ke saath. ~30 second, ye tab apne aap khul jayega.", "With the template + Geninfo banner. ~30 seconds, this tab opens it automatically.")}</span></div>`; } catch { /* ignore */ }
@@ -100,12 +118,12 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
       toast(L(`📎 PDF download ho gaya — draft mein attach kar do. Agli baar apne aap lagega: Inbox → Gmail code update karo`, `📎 PDF downloaded — attach it to the draft. To attach it automatically next time: Inbox → update the Gmail code`), true, 12000);
       return null;
     }
-    const path = `out/${S.me.id}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.pdf`;
-    const up = await sb.storage.from("crm-files").upload(path, a.blob, { contentType: "application/pdf", upsert: false });
-    const sg = up.error ? null : await sb.storage.from("crm-files").createSignedUrl(path, 2 * 86400);
-    if (up.error || sg?.error || !sg?.data?.signedUrl) { saveBlob(a.blob, a.name); toast(L("PDF upload nahi hua — download ho gaya, draft mein attach kar do", "Couldn't upload the PDF — it was downloaded, attach it to the draft"), true, 10000); return null; }
+    let f = null;
+    if (pre) f = await pre.catch(() => null);                 // usually already uploaded while the mail was open
+    if (!f) f = await uploadOutPdf(a).catch(() => null);
+    if (!f) { saveBlob(a.blob, a.name); toast(L("PDF upload nahi hua — download ho gaya, draft mein attach kar do", "Couldn't upload the PDF — it was downloaded, attach it to the draft"), true, 10000); return null; }
     hadFile = true;
-    return [{ name: a.name, url: sg.data.signedUrl, mime: "application/pdf" }];
+    return [f];
   };
   filesFor().then((files) => sb.from("email_outbox").insert({ kind: "draft", to_addr: parts.to, cc: parts.cc || null, bcc: parts.bcc || null, subject: parts.subject, html, body: parts.body,
     lead_id: !bulk && lead && canWork(lead) ? lead.id : null, ...(files ? { files } : {}) }).select("id").single()).then(async ({ data: row, error }) => {
@@ -113,9 +131,12 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
     logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu, track: tr }).catch(fail);
     const draftUrl = (d) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id || d.msg_id)}`;
     if (S.me.mail_webapp) {
+      const find = (j) => (j?.done || []).find((x) => x.id === row.id && x.ok && x.msg_id);
+      const warm = gasWarmP;      // a wake-up call still running may be the one that makes this draft
+      gasWarmAt = Date.now();
       try {
         const r = await fetch(S.me.mail_webapp, { redirect: "follow" }); const j = await r.json();
-        const mine = (j.done || []).find((x) => x.id === row.id && x.ok && x.msg_id);
+        const mine = find(j) || find(await warm);
         if (mine) return go(draftUrl(mine));
       } catch { /* the timer will still pick it up */ }
     }
@@ -124,7 +145,7 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
                    : L("⏳ Gmail draft ban raha hai — naye tab mein apne aap khulega (~30 sec)", "⏳ Making the Gmail draft — it opens in the new tab automatically (~30 sec)"));
     const t0 = Date.now();
     while (Date.now() - t0 < (withFile ? 330000 : 110000)) {
-      await new Promise((r) => setTimeout(r, 2500));
+      await new Promise((r) => setTimeout(r, Date.now() - t0 < 20000 ? 1000 : 2500));
       const { data: d } = await sb.from("email_outbox").select("status, gmail_id, account, error").eq("id", row.id).single();
       if (d?.status === "drafted" && d.gmail_id) return go(draftUrl(d));
       if (d?.status === "failed") { toast(L("Gmail draft nahi bana: ", "Couldn't make the Gmail draft: ") + (d.error || ""), true); if (withFile) attachByHand(att); return go(plainUrl); }
@@ -370,8 +391,9 @@ export async function openComposer(opts) {
     $("#cAttView", m).onclick = () => { const u = URL.createObjectURL(a.blob); if (!openTab(u)) saveBlob(a.blob, a.name); setTimeout(() => URL.revokeObjectURL(u), 60000); };
     $("#cAttOff", m).onclick = () => { attOn = false; drawAtt(a, err); };
   };
+  let preUp = null;
   function makeAtt() {
-    drawAtt(null, null);
+    drawAtt(null, null); preUp = null;
     att = Promise.resolve().then(() => opts.attach.make());
     att.then((a) => drawAtt(a, null), (e) => { console.error(e); drawAtt(null, e); });
     att.catch(() => {});
@@ -435,14 +457,24 @@ export async function openComposer(opts) {
     { products: prods, stage: prods.length ? stage : null });
   // can this person's Gmail script make the draft (template + banner)?
   let draftOk = false, scriptV = 0;
+  if (isEmail) warmGmail();
+  const preUpload = () => {
+    if (preUp || !attOn || !att || !draftOk || scriptV < GMAIL_FILES_V || (S.me.mail_provider || "gmail") === "outlook") return;
+    preUp = att.then(uploadOutPdf); preUp.catch(() => {});
+  };
   if (isEmail) sb.rpc("mail_status").then(({ data: ms }) => {
     draftOk = !!ms?.draft_ok; scriptV = +ms?.script_v || 0;
     if ((S.me.mail_provider || "gmail") === "outlook") return outlookTip(m);
+    preUpload();
     const box = $("#cSendInfo", m); if (!box || !m.isConnected) return;
     const t = box.querySelector("span");
     if (draftOk && opts.attach && scriptV < GMAIL_FILES_V) {
       t.innerHTML = L("📎 PDF Gmail draft mein <b>apne aap</b> lage — iske liye Gmail code ek baar update karo (abhi PDF download hoga, haath se attach karna padega).", "📎 For the PDF to attach <b>by itself</b> in the Gmail draft, update the Gmail code once (for now the PDF downloads, attach it by hand).");
       const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = L("Update", "Update"); b.onclick = () => gmailSetup(); box.append(b); return;
+    }
+    if (draftOk && S.me.mail_webapp && scriptV < GMAIL_FAST_V) {
+      box.classList.add("ok"); t.innerHTML = L("⚡ Draft turant khulega. Aur <b>tez</b> chahiye? Gmail code ek baar update karo.", "⚡ The draft opens instantly. Want it even <b>faster</b>? Update the Gmail code once.");
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn sm"; b.textContent = L("Update", "Update"); b.onclick = () => gmailSetup(); box.append(b); return;
     }
     if (draftOk && S.me.mail_webapp) { box.classList.add("ok"); t.textContent = opts.attach ? L("⚡ Gmail mein kholo — draft template + banner + PDF ke saath khulega, wahan Send dabao.", "⚡ Open in Gmail — the draft opens with the template, the banner and the PDF; press Send there.") : L("⚡ Gmail mein kholo — draft template + Geninfo banner ke saath turant khulega.", "⚡ Open in Gmail — the draft opens instantly with the template + the Geninfo banner."); return; }
     if (draftOk) {
@@ -475,7 +507,7 @@ export async function openComposer(opts) {
     const bcc = bulk ? bulkList.map((l) => l.email).join(",") : "";
     const parts = { to: bulk ? S.me.email : toList.join(","), cc: cc.join(","), bcc, subject, body: mdToPlain(text) };
     // Gmail + banner + script ready → the script makes a real Gmail draft (template + banner) and we open it
-    if (provider === "gmail" && draftOk && (bannerOn() || attNow())) return openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, m, att: attNow(), scriptV });
+    if (provider === "gmail" && draftOk && (bannerOn() || attNow())) { if (attNow()) preUpload(); return openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, tplId: tplId(), fu: $("#cFu", m)?.checked, m, att: attNow(), pre: attNow() ? preUp : null, scriptV }); }
     // Outlook connected → a real Outlook draft (template + banner + open tracking + read receipt)
     if (provider === "outlook" && outlookReady() && outlookConnected()) {
       if (S.me.mail_provider !== "outlook") { S.me.mail_provider = "outlook"; sb.from("profiles").update({ mail_provider: "outlook" }).eq("id", S.me.id).then(() => {}, () => {}); }
@@ -876,7 +908,7 @@ function removeSetup() {                 // ▶ sync band karna ho to ye Run kar
 }
 
 function call_(action, payload, qs) {
-  var res = UrlFetchApp.fetch(CRM_URL + "?v=5&action=" + action + (qs || ""), {
+  var res = UrlFetchApp.fetch(CRM_URL + "?v=6&action=" + action + (qs || ""), {
     method: "post", contentType: "application/json", headers: { "x-mail-token": TOKEN },
     payload: JSON.stringify(payload || {}), muteHttpExceptions: true
   });
@@ -915,7 +947,7 @@ function sendFiles_(ids) {
           var qs = "&id=" + encodeURIComponent(it.id) + "&name=" + encodeURIComponent(a.getName() || "file")
                  + "&mime=" + encodeURIComponent(a.getContentType() || "") + "&size=" + size + "&inline=" + p[1];
           if (size > 20 * 1048576) { call_("file", {}, qs + "&big=1"); return; }
-          answer_(UrlFetchApp.fetch(CRM_URL + "?v=5&action=file" + qs, { method: "post", contentType: "application/octet-stream",
+          answer_(UrlFetchApp.fetch(CRM_URL + "?v=6&action=file" + qs, { method: "post", contentType: "application/octet-stream",
             headers: { "x-mail-token": TOKEN }, payload: a.getBytes(), muteHttpExceptions: true }));
         });
         call_("file", {}, "&id=" + encodeURIComponent(it.id) + "&done=1");
@@ -936,6 +968,17 @@ function doGet(e) {                     // CRM "Gmail mein kholo" dabate hi isse
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 
+function banner_(url) {                 // banner ki photo 6 ghante yaad rakhta hai — har draft pe download nahi
+  var c = CacheService.getUserCache();
+  var k = "bn" + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, url));
+  var hit = c.get(k);
+  if (hit) { var i = hit.indexOf("|"); return Utilities.newBlob(Utilities.base64Decode(hit.slice(i + 1)), hit.slice(0, i), "geninfo-banner"); }
+  var b = UrlFetchApp.fetch(url).getBlob().setName("geninfo-banner");
+  var s = (b.getContentType() || "image/png") + "|" + Utilities.base64Encode(b.getBytes());
+  if (s.length < 95000) c.put(k, s, 21600);
+  return b;
+}
+
 function sendQueued_() {                // CRM se aaye mails: draft banao (ya seedha bhejo)
   var lock = LockService.getUserLock();
   if (!lock.tryLock(20000)) return [];
@@ -946,7 +989,7 @@ function sendQueuedNow_() {
   var o = call_("outbox");
   if (!o.items || !o.items.length) return [];
   var img = null;
-  if (o.banner) { try { img = UrlFetchApp.fetch(o.banner).getBlob().setName("geninfo-banner"); } catch (e) { img = null; } }
+  if (o.banner) { try { img = banner_(o.banner); } catch (e) { img = null; } }
   var me = Session.getEffectiveUser().getEmail();
   var res = [];
   o.items.forEach(function (m) {
