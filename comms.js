@@ -73,8 +73,18 @@ const GMAIL_FAST_V = 6;                       // Gmail script version that keeps
 // Apps Script sleeps after a few idle minutes and the first call then takes several seconds →
 // wake the person's web app as soon as an email window opens, so "Gmail mein kholo" answers fast
 let gasWarmAt = 0, gasWarmP = null;
+// the web app answered but did not take the mail → its deployment runs an old code (old token). Remembered on
+// this device until the web app is saved again in Gmail setup; meanwhile the CRM does not call it.
+const GAS_STALE = "gn_gas_stale";
+const gasStale = () => { try { return !!S.me?.mail_webapp && localStorage.getItem(GAS_STALE) === S.me.mail_webapp; } catch { return false; } };
+function markGasStale() {
+  try { localStorage.setItem(GAS_STALE, S.me.mail_webapp); } catch { /* ignore */ }
+  toastAction(L("⚠️ Gmail web app purane code pe chal raha hai — isliye draft / PDF late ya bina PDF. Apps Script mein: Deploy → Manage deployments → ✏️ → Version: New version → Deploy, aur ek baar setup Run karo.",
+    "⚠️ Your Gmail web app runs an old code — so drafts / the PDF come late or not at all. In Apps Script: Deploy → Manage deployments → ✏️ → Version: New version → Deploy, then Run setup once."),
+  L("Gmail setup", "Gmail setup"), () => gmailSetup(), 30000);
+}
 function warmGmail() {
-  if (!S.me?.mail_webapp || (S.me.mail_provider || "gmail") === "outlook" || Date.now() - gasWarmAt < 90000) return;
+  if (!S.me?.mail_webapp || gasStale() || (S.me.mail_provider || "gmail") === "outlook" || Date.now() - gasWarmAt < 90000) return;
   gasWarmAt = Date.now();
   gasWarmP = fetch(S.me.mail_webapp, { redirect: "follow" }).then((r) => r.json()).catch(() => null);
 }
@@ -130,7 +140,7 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
     if (error) { go(plainUrl); if (hadFile) attachByHand(att); return fail(error); }
     logEmail({ provider: "gmail", subject: parts.subject, text, toList, cc, opts, tplId, bulkList, fu, track: tr }).catch(fail);
     const draftUrl = (d) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.account || S.me.email)}#drafts?compose=${encodeURIComponent(d.gmail_id || d.msg_id)}`;
-    if (S.me.mail_webapp) {
+    if (S.me.mail_webapp && !gasStale()) {
       const find = (j) => (j?.done || []).find((x) => x.id === row.id && x.ok && x.msg_id);
       const warm = gasWarmP;      // a wake-up call still running may be the one that makes this draft
       gasWarmAt = Date.now();
@@ -138,6 +148,9 @@ function openGmailDraft({ parts, text, toList, cc, bulk, bulkList, lead, opts, t
         const r = await fetch(S.me.mail_webapp, { redirect: "follow" }); const j = await r.json();
         const mine = find(j) || find(await warm);
         if (mine) return go(draftUrl(mine));
+        // answered, yet the mail is still waiting → that web app is an old deployment
+        const { data: d } = await sb.from("email_outbox").select("status").eq("id", row.id).single();
+        if (j?.ok === false || d?.status === "queued") markGasStale();
       } catch { /* the timer will still pick it up */ }
     }
     const withFile = hadFile;
@@ -471,6 +484,10 @@ export async function openComposer(opts) {
     if (draftOk && opts.attach && scriptV < GMAIL_FILES_V) {
       t.innerHTML = L("📎 PDF Gmail draft mein <b>apne aap</b> lage — iske liye Gmail code ek baar update karo (abhi PDF download hoga, haath se attach karna padega).", "📎 For the PDF to attach <b>by itself</b> in the Gmail draft, update the Gmail code once (for now the PDF downloads, attach it by hand).");
       const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = L("Update", "Update"); b.onclick = () => gmailSetup(); box.append(b); return;
+    }
+    if (draftOk && gasStale()) {
+      t.innerHTML = L("⚠️ Gmail <b>web app purane code</b> pe hai — draft late banega. Apps Script: Deploy → Manage deployments → New version.", "⚠️ Your Gmail <b>web app runs an old code</b> — drafts will be late. Apps Script: Deploy → Manage deployments → New version.");
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn sm primary"; b.textContent = L("Fix", "Fix"); b.onclick = () => gmailSetup(); box.append(b); return;
     }
     if (draftOk && S.me.mail_webapp && scriptV < GMAIL_FAST_V) {
       box.classList.add("ok"); t.innerHTML = L("⚡ Draft turant khulega. Aur <b>tez</b> chahiye? Gmail code ek baar update karo.", "⚡ The draft opens instantly. Want it even <b>faster</b>? Update the Gmail code once.");
@@ -915,10 +932,12 @@ function call_(action, payload, qs) {
   return answer_(res);
 }
 
+var WEB_ = false;                         // true jab CRM ne web app (doGet) bulaya ho
+
 function answer_(res) {
   var code = res.getResponseCode();
   if (code === 401 || code === 403) {      // token band ho gaya (Disconnect / naya code) → ye script khud ruk jaata hai
-    removeSetup();
+    if (!WEB_) removeSetup();              // web app ka purana deployment kabhi timer band nahi karta
     throw new Error("CRM ne is code ko band kar diya hai. Naya code CRM se copy karke yahan paste karo, phir setup Run karo.");
   }
   if (code !== 200) throw new Error("CRM " + code + ": " + res.getContentText().slice(0, 300));
@@ -963,7 +982,8 @@ function sendFiles_(ids) {
 }
 
 function doGet(e) {                     // CRM "Gmail mein kholo" dabate hi isse bulata hai → draft turant
-  var out = { ok: true };
+  WEB_ = true;
+  var out = { ok: true, v: 6 };
   try { out.done = sendQueued_() || []; } catch (err) { out.ok = false; out.error = String(err && err.message || err); }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -1101,7 +1121,10 @@ export async function gmailSetup(done) {
     S.me.mail_webapp = v || null;
     if (!v) return toast(L("Web app hata diya", "Web app removed"));
     // try it once so a wrong deployment shows up now, not on the next mail
-    try { const r = await fetch(v, { redirect: "follow" }); const j = await r.json(); toast(j.ok ? L("⚡ Web app chal raha hai — ab Gmail draft turant khulega", "⚡ Web app works — Gmail drafts now open instantly") : L("Web app ne error diya: ", "The web app returned an error: ") + (j.error || ""), !j.ok); }
+    try { localStorage.removeItem(GAS_STALE); } catch { /* ignore */ }
+    try { const r = await fetch(v, { redirect: "follow" }); const j = await r.json();
+      if (j.ok && !j.v) toast(L("Web app purane code pe hai — Deploy → Manage deployments → ✏️ → Version: New version → Deploy, phir yahan Save dobara", "The web app runs an old code — Deploy → Manage deployments → ✏️ → Version: New version → Deploy, then Save here again"), true, 15000);
+      else toast(j.ok ? L("⚡ Web app chal raha hai — ab Gmail draft turant khulega", "⚡ Web app works — Gmail drafts now open instantly") : L("Web app ne error diya: ", "The web app returned an error: ") + (j.error || ""), !j.ok); }
     catch { toast(L("Web app se jawab nahi aaya — 'Who has access: Anyone' chuna tha? Deploy dobara karke naya URL daalo.", "No answer from the web app — did you pick 'Who has access: Anyone'? Deploy again and paste the new URL."), true); }
   });
   $("#gsOff", m)?.addEventListener("click", async () => {
