@@ -6,7 +6,7 @@ import { pickData, fmtIN, fmtRound, amountWords } from "./qpick.js";
 
 const app = document.getElementById("app");
 const token = decodeURIComponent(location.hash.slice(1).split("&")[0] || "");
-// &pdf=1 → the CRM turns this page into the PDF it mails (tick boxes + totals become PDF form fields); never counts as a view
+// &pdf=1 → the CRM turns this page into the PDF it mails (a plain PDF — the customer cannot change the items); never counts as a view
 const pdfMode = /[#&]pdf=1\b/.test(location.hash);
 const preview = pdfMode || /[#&]p=1\b/.test(location.hash);
 // &print=1 (with pdf=1) → the same layout for the CRM's Print button: printed tick marks instead of PDF boxes
@@ -75,7 +75,9 @@ function render(q) {
   // n = the item's place in the saved quotation (sent by the server as i)
   const all = (q.items || []).map((it, k) => ({ ...it, n: Number.isInteger(it.i) ? it.i : k }));
   const inc = all.filter((it) => !it.opt), opt = all.filter((it) => it.opt);
-  const canPick = pdfMode ? all.length > 0 : q.response !== "accepted" && q.status !== "lost" && all.length > 0;
+  // customers cannot change the items any more — they accept the offer as it is or ask for changes
+  // (ticking / optional items are for our team, in the CRM's quotation editor)
+  const canPick = false;
   const head = (ck) => `<thead><tr>${ck ? '<th class="ck"></th>' : ""}<th class="c">Sr. No.</th><th>Description</th><th>Taxation</th><th class="c">HSN/SAC Code</th><th class="c">Qty.</th><th class="c">Lic. Qty.</th><th class="c">Warranty</th><th class="r">Price(Unit)</th><th class="r">Taxable Value</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>`;
   document.title = `Quotation ${q.quote_no} · ${co.name || ""}`;
   app.innerHTML = `<div class="card">
@@ -160,8 +162,8 @@ function render(q) {
     } catch { alert("Could not send — please check your internet and try again."); btn.disabled = false; }
   };
   $("acc")?.addEventListener("click", (e) => {
-    const c = chosen(); if (!c.length) return;
-    const total = inr(calc(q, c).grand), orig = isOriginal();
+    const c = canPick ? chosen() : inc; if (!c.length) return;
+    const total = inr(calc(q, c).grand), orig = !canPick || isOriginal();
     const msg = orig ? `Accept quotation ${q.quote_no} for ${total} (incl. GST)?` : `Accept quotation ${q.quote_no} with your selection of ${c.length} item${c.length > 1 ? "s" : ""} — ${total} (incl. GST)?`;
     if (confirm(msg)) send("accepted", null, e.target, orig ? null : { sel: c.map((it) => ({ i: it.n, d: String(it.desc || "") })) });
   });
@@ -176,7 +178,7 @@ function render(q) {
 // =====================================================================
 //  The PDF / print layout — Genesis's ERP "Proposal" format (blue bars, From / To / Ship To,
 //  Quotation Details + query contact, items, totals, statutory details, terms + signatory),
-//  with a tick box on every item: ticking / unticking changes the totals inside the PDF.
+//  items (optional ones in their own box, not in the total) — a plain document, nothing for the customer to tick.
 // =====================================================================
 function renderProposal(q) {
   const co = q.company || {}, to = q.to || {}, rep = q.rep || {};
@@ -191,10 +193,9 @@ function renderProposal(q) {
     : [["Name", co.contact || co.name], ["Mobile No.", co.mobile || ""], ["Email", co.email || ""]];
   const pan = (g) => /^\d{2}[A-Z]{5}\d{4}[A-Z]/i.test(g || "") ? String(g).slice(2, 12).toUpperCase() : "N/A";
   const ship = q.site?.address ? [to.name, q.site.address] : [to.name, [to.address, to.state].filter(Boolean).join(", ")];
-  const tick = (it) => printMode ? `<span class="pbox">${it.opt ? "☐" : "☑"}</span>` : `<input type="checkbox" data-pi="${it.n}" ${it.opt ? "" : "checked"} aria-label="Include">`;
-  const rows = p.N.map((idx, k) => { const it = items[idx];
-    let r = rowHtml(it, k); if (it.opt) r = r.replace("</pre>", `</pre><span class="otag">Optional — tick to add</span>`);
-    return `<tr><td class="ck"${printMode ? "" : ` data-pk="${idx}"`}>${tick(it)}</td>${r}</tr>`; }).join("");
+  const incl = p.N.map((idx) => items[idx]).filter((it) => !it.opt), optl = q.show_optional === false ? [] : p.N.map((idx) => items[idx]).filter((it) => it.opt);
+  const rows = incl.map((it, k) => `<tr>${rowHtml(it, k)}</tr>`).join("");
+  const optRows = optl.map((it, k) => `<tr>${rowHtml(it, k)}</tr>`).join("");
   const tot = (l, v, key, cls = "") => `<tr class="${cls}"><td>${l}</td><td class="r"${printMode ? "" : ` data-tot="${key}"`}>${v}</td></tr>`;
   document.title = `Quotation ${q.quote_no} · ${co.name || ""}`;
   app.innerHTML = `<div class="card prop">
@@ -206,12 +207,14 @@ function renderProposal(q) {
     </div>
     <div class="bar"><span>Quotation Details</span><span>For Quotation Query Contact</span></div>
     <div class="box grid3 dgrid">${kv(det.slice(0, half))}${kv(det.slice(half))}${kv(who)}</div>
-    ${printMode ? "" : `<p class="pickhint">✔ <b>Tick the items you want in this PDF</b> — Sub Total, GST and Grand Total change by themselves. Then save the PDF and reply to our email with it to confirm.<br><span class="mu">Open it in <b>Google Chrome or Adobe Acrobat Reader</b> — Microsoft Edge, Mac Preview, Safari and phone viewers show the ticks but do not update the total.</span></p>`}
-    <table class="items"><thead><tr><th class="ck">✓</th><th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC<br>Code</th><th>Qty.</th><th>Lic.<br>Qty.</th><th>Warranty</th><th class="r">Price(Unit)</th><th class="r">Total</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>
+    <table class="items"><thead><tr><th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC<br>Code</th><th>Qty.</th><th>Lic.<br>Qty.</th><th>Warranty</th><th class="r">Price(Unit)</th><th class="r">Total</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead>
       <tbody>${rows}</tbody></table>
     <div class="sum"><div class="words"><b>Amount Payable (in Words) :</b> <span class="wv"${printMode ? "" : ` data-tot="words"`}>${h(amountWords(p.T.grand))}</span></div>
       <table class="tots"><tbody>${tot("<b>Sub Total</b>", `<b>${fmtIN(p.T.sub)}</b>`, "sub")}${p.labels.map((l, k) => tot(h(l), fmtIN(p.T.lines[k]), "l" + k)).join("")}
         ${p.O ? tot("Round off", fmtRound(p.T.round), "round") : ""}${tot("<b>Grand Total(₹)</b>", `<b>${fmtIN(p.T.grand)}</b>`, "grand", "grand")}</tbody></table></div>
+    ${optl.length ? `<div class="bar">Optional items — not included in the total above</div>
+    <table class="items"><thead><tr><th>Sr.<br>No.</th><th>Description</th><th>Taxation</th><th>HSN/SAC<br>Code</th><th>Qty.</th><th>Lic.<br>Qty.</th><th>Warranty</th><th class="r">Price(Unit)</th><th class="r">Total</th><th class="r">Tax Amount</th><th class="r">Total</th></tr></thead><tbody>${optRows}</tbody></table>
+    <p class="mu" style="margin:6px 2px 0;font-size:12px">To add any of these, just reply to our email or call us — we will send a revised quotation.</p>` : ""}
     ${q.note ? `<div class="bar">Note</div><div class="box"><pre>${h(q.note)}</pre></div>` : ""}
     <div class="bar">Statutory &amp; Tax Details</div>
     <div class="box grid3 dgrid">

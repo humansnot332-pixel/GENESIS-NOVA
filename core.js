@@ -173,6 +173,7 @@ export function friendly(e) {
   if (/Failed to fetch|NetworkError/i.test(m)) return "Internet / server se connect nahi ho paya";
   if (/PGRST116|0 rows|multiple \(or no\) rows/i.test(m)) return "Ye record ab aapke paas locked nahi hai (ya mila nahi) — refresh karo";
   if (/Lock badalne/i.test(m)) return m;
+  if (/QLOCK: /.test(m)) return isEn() ? "This quotation has gone to the customer and can't be changed — press \"↻ Revise\" to make a new version." : m.replace(/^.*QLOCK: /, "");
   return m.length > 160 ? m.slice(0, 160) + "…" : m;
 }
 

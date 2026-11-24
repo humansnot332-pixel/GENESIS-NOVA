@@ -24,8 +24,8 @@ import { richEditor, renderRich, textToHtml, RICH_MAX } from "./rte.js";
 import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
-import { htmlToPdf, elementToPdf, makeFillable, saveBlob } from "./qpdf.js";
-import { pickData, pickScript, pickCalc, fmtIN, fmtRound, amountWords } from "./qpick.js";
+import { htmlToPdf, elementToPdf, saveBlob } from "./qpdf.js";
+import { fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
 import { productPicker } from "./lprod.js";
 
@@ -284,6 +284,7 @@ const NAV = [
   ["requests", "Locks & requests", "shield"],
   ["Insights"],
   ["reports", "Reports", "chart"],
+  ["sales", "Customer sales", "rupee"],
   ["daily", "Daily report", "clock"],
   ["Admin", () => isMgr()],
   ["team", "Team", "users", () => isAdmin()],
@@ -302,7 +303,7 @@ const PAGEABLE = NAV.filter((n) => n.length >= 3 && typeof n[1] === "string" && 
 const ROLE_PAGES = {
   telecaller: ["dashboard", "today", "leads", "tasks", "quotes", "obf", "templates", "requests", "inbox"],
   presales: ["dashboard", "today", "leads", "rfqs", "inbox", "tasks", "quotes", "obf", "support", "products", "templates", "requests"],
-  sales: ["dashboard", "today", "leads", "pipeline", "rfqs", "inbox", "tasks", "quotes", "obf", "orders", "purchase", "renewals", "support", "products", "templates", "requests", "reports"],
+  sales: ["dashboard", "today", "leads", "pipeline", "rfqs", "inbox", "tasks", "quotes", "obf", "orders", "purchase", "renewals", "support", "products", "templates", "requests", "reports", "sales"],
 };
 const rolePages = (role) => (["admin", "manager"].includes(role) ? PAGEABLE : ROLE_PAGES[role] || PAGEABLE);
 function canSee(r) {
@@ -714,6 +715,7 @@ VIEWS.obf = (el) => viewObf(el);
 VIEWS.purchase = (el) => viewPurchase(el);
 VIEWS.support = (el, soft, params) => viewSupport(el, soft, params);
 VIEWS.daily = (el) => viewDaily(el);
+VIEWS.sales = (el) => import("./sales.js").then((x) => x.viewSales(el, { barChart, openLead }));
 VIEWS.duplicates = (el) => viewDuplicates(el);
 ACT.go = (t) => { location.hash = "#/" + t.dataset.go; };
 
@@ -931,6 +933,7 @@ async function openLead(id, opt = {}) {
       </div>
     </div>
     <div class="drawer-b">
+      <div class="lsales" id="lSales" hidden></div>
       ${canEdit || (l.products || []).length ? `<div class="lprods" id="lProds"></div>` : ""}
       ${canEdit ? `<div class="card" style="padding:14px">
         <div class="sec-t" style="margin:0 0 8px">Call ka result</div>
@@ -996,6 +999,7 @@ async function openLead(id, opt = {}) {
   d.querySelector("[data-dclose]").onclick = closeDrawer;
   $$("[data-mail]", d).forEach((x) => x.onclick = () => { closeDrawer(); location.hash = "#/inbox/" + x.dataset.mail; });
   drawLeadProducts($("#lProds", d), l, canEdit, reopen);
+  import("./sales.js").then((x) => x.leadSalesLine($("#lSales", d), l.id)).catch(() => {});
   $$("[data-comp]", d).forEach((b) => b.onclick = async () => {
     if (!(await ensureWork("lead", l))) return;
     openComposer({ channel: b.dataset.comp, lead: l, onSent: reopen });
@@ -1106,7 +1110,7 @@ function leadForm(l = {}, done) {
   const isNew = !l.id;
   const m = modal({
     title: isNew ? "Naya lead" : "Edit lead", wide: true,
-    body: `<form id="lf"><div class="grid2">
+    body: `<form id="lf"><div class="ldup" id="lDup" aria-live="polite" hidden></div><div class="grid2">
       <div><label class="f">Company *</label><input class="input" name="company" required maxlength="200" value="${h(l.company || "")}"></div>
       <div><label class="f">Contact person</label><input class="input" name="contact_name" maxlength="120" value="${h(l.contact_name || "")}"></div>
       <div><label class="f">Phone</label><input class="input" name="phone" maxlength="40" value="${h(l.phone || "")}" inputmode="tel"></div>
@@ -1133,9 +1137,50 @@ function leadForm(l = {}, done) {
     foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="lsave">Save</button>`,
   });
   const pp = productPicker($("#lpP", m), l.products || []);
+  // ---- "this lead is already in the CRM": checked while typing (company, phone, email, GSTIN) and again on Save
+  const WHY = { gstin: L("GSTIN same", "Same GSTIN"), phone: L("Phone same", "Same phone"), email: L("Email same", "Same email"), name: L("Company naam same", "Same company name"),
+    domain: L("Same company email domain", "Same company email domain"), similar: L("Naam milta-julta", "Similar name") };
+  let dupes = [], dupT = 0, dupSeq = 0;
+  const dupArgs = () => { const f = formData($("#lf", m)); return { p_company: f.company || null, p_phone: f.phone || null, p_email: f.email || null, p_gstin: f.gstin || null, p_exclude: l.id || null }; };
+  const checkDupes = async () => {
+    const seq = ++dupSeq, a = dupArgs();
+    if (!a.p_company && !a.p_phone && !a.p_email && !a.p_gstin) { dupes = []; drawDupes(); return dupes; }
+    const { data, error } = await sb.rpc("lead_dupes", a);
+    if (seq !== dupSeq || !m.isConnected) return dupes;      // an older answer
+    dupes = error ? [] : data || []; drawDupes(); return dupes;
+  };
+  const drawDupes = () => {
+    const box = $("#lDup", m); if (!box) return;
+    box.hidden = !dupes.length;
+    if (!dupes.length) { box.innerHTML = ""; return; }
+    const strong = dupes.some((d) => d.strong);
+    box.className = "ldup " + (strong ? "bad" : "warn");
+    box.innerHTML = `<div class="ldup-h">${strong ? "⚠️ " + L("Ye lead pehle se CRM mein hai", "This lead is already in the CRM") : "🔎 " + L("Milte-julte leads pehle se hain — check kar lo", "Similar leads already exist — please check")}</div>
+      ${dupes.map((d) => `<div class="ldup-r"><div><b>${h(d.company)}</b> <span class="mu">${h([d.city, String(d.status || "").replace(/_/g, " ")].filter(Boolean).join(" · "))}</span>
+        <div class="ldup-w">${(d.why || []).map((w) => `<span class="badge ${["gstin", "phone", "email", "name"].includes(w) ? "bad" : "warn"}">${h(WHY[w] || w)}</span>`).join("")}
+          <span class="mu">${d.mine ? L("· aapki lead", "· your lead") : d.owner ? `· ${d.locked ? "🔒 " : ""}${h(d.owner)}` : L("· free pool", "· free pool")}</span></div></div>
+        <button type="button" class="btn sm" data-dopen="${d.id}">${L("Kholo", "Open")}</button></div>`).join("")}`;
+    $$("[data-dopen]", box).forEach((b) => b.onclick = () => { closeModal(); openLead(+b.dataset.dopen); });
+  };
+  ["company", "phone", "email", "gstin"].forEach((n) => $(`[name="${n}"]`, m)?.addEventListener("input", () => { clearTimeout(dupT); dupT = setTimeout(checkDupes, 450); }));
+  if (!isNew) setTimeout(checkDupes, 300);
   m.querySelector("#lsave").onclick = (e) => busy(e.target, async () => {
     const f = formData($("#lf", m));
     if (!f.company) return toast("Company naam zaroori hai", true);
+    // the final check, with what is in the form right now
+    const ds = await checkDupes(), byPhone = ds.find((d) => (d.why || []).includes("phone"));
+    if (byPhone) { $(`[name="phone"]`, m)?.focus(); return toast(L(`Ye phone number pehle se "${byPhone.company}" lead mein hai — wahi lead kholo (upar "Kholo")`, `This phone number is already on the lead "${byPhone.company}" — open that lead (above, "Open")`), true); }
+    const hard = ds.find((d) => d.strong);
+    // a strong match: say so in the form and ask for a second Save (the form stays as typed)
+    const dupKey = JSON.stringify(ds.filter((d) => d.strong).map((d) => d.id));
+    if (hard && isNew && m.dataset.dupOk !== dupKey) {
+      m.dataset.dupOk = dupKey;
+      const why = (hard.why || []).map((w) => WHY[w] || w).join(", ");
+      $("#lDup", m)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      e.target.dataset.l = "⚠️ " + L("Haan, phir bhi naya banao", "Yes, add it anyway");
+      return toast(L(`"${hard.company}" pehle se CRM mein hai (${why}) — upar "Kholo" dabao, ya pakka naya hai toh Save dobara dabao`,
+        `"${hard.company}" is already in the CRM (${why}) — press "Open" above, or press Save again if it really is new`), true, 8000);
+    }
     f.products = (await pp).get();
     if (f.gstin) f.gstin = f.gstin.toUpperCase().replace(/\s/g, "");
     f.tags = f.tags ? f.tags.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10) : [];
@@ -1838,7 +1883,7 @@ async function quoteEditor(q0) {
     <div class="sec tbl-wrap"><table class="tbl" id="qi"><thead><tr><th class="qchk"><input type="checkbox" id="qall" title="${h(L("Sab items total mein", "All items in the total"))}" aria-label="${h(L("Sab items total mein", "All items in the total"))}"></th><th>Description</th><th style="width:100px">HSN/SAC</th><th style="width:80px">Qty</th><th style="width:120px">Rate ₹</th><th style="width:96px">GST %</th><th class="num" style="width:110px">Amount</th><th></th></tr></thead><tbody></tbody></table>
       <div class="qadd-row"><button class="btn sm" id="qadd">${ic("plus")} Item</button>${["Transportation", "Courier charges", "Installation"].map((c) => `<button type="button" class="btn sm ghost" data-chg="${c}">＋ ${c}</button>`).join("")}</div>
       <p class="qtickhint mu">✓ ${L("Sirf tick kiye items total mein judte hain. Untick = Optional (total mein nahi).", "Only ticked items make the total. Unticked = Optional (not in the total).")}</p>
-      <label class="qso" id="qsoW" hidden><input type="checkbox" id="qso"${q.show_optional === false ? "" : " checked"}> ${L("Optional items quotation pe alag dikhao — customer online link pe tick karke jod sakta hai", "Show optional items on the quotation — the customer can tick and add them on the online link")}</label></div>
+      <label class="qso" id="qsoW" hidden><input type="checkbox" id="qso"${q.show_optional === false ? "" : " checked"}> ${L("Optional items quotation pe alag dikhao (total mein nahi judte)", "Show optional items on the quotation (not added to the total)")}</label></div>
     <div class="grid2 sec"><div><label class="f" for="qs">Status</label><select class="input" id="qs">${["draft", "sent", "won", "lost"].map((x) => `<option ${x === (q.status || "draft") ? "selected" : ""}>${x}</option>`).join("")}</select></div>
       <div id="qt" style="padding-top:28px"></div></div>
     <div class="grid2 sec">
@@ -2164,13 +2209,17 @@ async function quoteEditor(q0) {
   const saveSig = () => JSON.stringify([q.items, q.to_party, q.terms_html, q.annexure_html, q.note_customer, q.quote_date, q.validity_days, q.payment_terms, q.delivery, q.ref, q.site, q.amc, q.round_off, q.show_optional]);
   let savedSig = null;
   if (q.id) requestAnimationFrame(() => { try { syncAll(); savedSig = saveSig(); } catch { /* editor closed */ } });
+  // a quotation that has gone to the customer (sent / won / lost, or a PDF / link was made) is locked:
+  // only its status and the internal note change; "Revise" makes a new version (… -R1) to change anything
+  let locked = !!(q.id && (q.status !== "draft" || q.sent_at));
   const shared = async (ch) => {
-    if (ch && q.id && savedSig != null) {
+    if (!locked && ch && q.id && savedSig != null) {
       syncAll();
       if (saveSig() !== savedSig) return toast(L("Pehle Save dabao — customer ko saved quotation hi jaati hai (PDF + online link)", "Press Save first — the customer gets the saved quotation (PDF + online link)"), true);
     }
     const link = await shareQuote(q, ch, ch === "email" ? { attach: (url) => ({ name: pdfName(q), make: () => quotePdf(q, url) }) } : undefined);
     if (link && !q.share_token) { q.share_token = link.split("#")[1]; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
+    if (link && !locked && m.isConnected) { locked = true; q.sent_at ||= new Date().toISOString(); lockQuote(); }   // it has left now
   };
   $("#qlink", m)?.addEventListener("click", (e) => busy(e.target, () => shared(null)));
   // download the same PDF the customer gets by email (ticks + totals that change)
@@ -2178,7 +2227,7 @@ async function quoteEditor(q0) {
   // where it can be printed or saved — if the browser blocks the tab, it is downloaded instead
   $("#qp", m)?.addEventListener("click", (e) => {
     syncAll();
-    if (savedSig != null && saveSig() !== savedSig) return toast(L("Pehle Save dabao — PDF saved quotation ka banta hai", "Press Save first — the PDF is made from the saved quotation"), true);
+    if (!locked && savedSig != null && saveSig() !== savedSig) return toast(L("Pehle Save dabao — PDF saved quotation ka banta hai", "Press Save first — the PDF is made from the saved quotation"), true);
     const tab = window.open("", "_blank");          // opened now (while it is still a click), filled when the PDF is ready
     if (tab) { try { tab.document.title = "PDF…"; tab.document.body.innerHTML = `<p style="font:16px system-ui;padding:24px">📄 ${L("PDF ban raha hai…", "Making the PDF…")}</p>`; } catch { /* ignore */ } }
     busy(e.target, async () => {
@@ -2186,18 +2235,52 @@ async function quoteEditor(q0) {
         const { data: token, error } = await sb.rpc("share_quote", { p_id: q.id });
         if (error) throw error;
         if (!q.share_token) { q.share_token = token; const t = $(".qtrack", m); if (t) t.outerHTML = quoteTrackHtml(q); }
+        if (!locked && m.isConnected) { locked = true; q.sent_at ||= new Date().toISOString(); lockQuote(); }
         const a = await quotePdf(q, "#" + token);
         const url = URL.createObjectURL(a.blob);
         if (tab && !tab.closed) { tab.location.href = url; setTimeout(() => URL.revokeObjectURL(url), 10 * 60e3); }
         else { saveBlob(a.blob, a.name); URL.revokeObjectURL(url); }
-        toast(L("📄 PDF khul gaya — wahan se Print / Save karo. Items tick / untick karne pe total badalta hai (Chrome ya Adobe Acrobat Reader mein).", "📄 PDF opened — print or save it from there. Ticking items changes the total (in Chrome or Adobe Acrobat Reader)."), false, 7000);
+        toast(L("📄 PDF khul gaya — wahan se Print / Save karo.", "📄 PDF opened — print or save it from there."), false, 5000);
       } catch (err) { if (tab && !tab.closed) tab.close(); throw err; }
     });
   });
   $("#qmail", m)?.addEventListener("click", (e) => busy(e.target, () => shared("email")));
   $("#qwa", m)?.addEventListener("click", (e) => busy(e.target, () => shared("whatsapp")));
   $("#qord", m)?.addEventListener("click", () => orderFromQuote(q, () => { if (S.route === "quotes") VIEWS.quotes($("#page")); }));
+  function lockQuote() {
+    if (m.classList.contains("qlocked")) return;
+    m.classList.add("qlocked");
+    $(".modal-b", m).insertAdjacentHTML("afterbegin", `<div class="qlockbar" role="note"><span class="qlk-i">🔒</span><div class="qlk-t"><b>${L("Ye quotation customer ko ja chuki hai — isme badlaav nahi ho sakta.", "This quotation has gone to the customer — it can't be changed.")}</b>
+      <span>${L("Kuch badalna hai? <b>↻ Revise</b> dabao — nayi version banegi, ye wali record ke liye waisi hi rahegi. Status aur internal note badal sakte ho.", "Need a change? Press <b>↻ Revise</b> — a new version is made and this one stays as it was, for the record. Status and the internal note can still change.")}</span>
+      <span class="qlk-rev" id="qrevs"></span></div><button type="button" class="btn sm primary" id="qrev">↻ Revise</button></div>`);
+    [".qcust", ".qbar", "#qamc", "#qi", ".qadd-row", ".qtickhint", "#qsoW", ".qtc", "#qnc", "#qt"].forEach((sel) => $$(sel, m).forEach((x) => { x.inert = true; x.classList.add("qlk-ro"); }));
+    const qs = $("#qs", m); if (qs.value === "draft") qs.value = "sent";   // a link / mail already went out — it is "sent" now
+    [...qs.options].forEach((o) => { if (o.value === "draft") o.disabled = true; });
+    $("#qrev", m).onclick = (e) => busy(e.target, async () => {
+      const { data: nid, error } = await sb.rpc("quote_revise", { p_id: q.id }); if (error) throw error;
+      const { data: nq, error: e2 } = await sb.from("quotations").select("*").eq("id", nid).single(); if (e2) throw e2;
+      closeModal(); toast(L(`↻ ${nq.quote_no} bani — isme badlaav karke customer ko bhejo`, `↻ ${nq.quote_no} created — make your changes and send it`));
+      quoteEditor(nq); if (S.route === "quotes") VIEWS.quotes($("#page"));
+    });
+    // the versions around this one (made from it / it was made from)
+    Promise.all([sb.from("quotations").select("id, quote_no, status").eq("revision_of", q.id).order("id"),
+      q.revision_of ? sb.from("quotations").select("id, quote_no").eq("id", q.revision_of).maybeSingle() : Promise.resolve({ data: null })])
+      .then(([{ data: kids }, { data: mom }]) => {
+        const box = $("#qrevs", m); if (!box) return;
+        const a = (x) => `<a href="#/quotes/${x.id}" data-qrv="${x.id}">${h(x.quote_no)}</a>`;
+        box.innerHTML = [mom ? L(`Ye ${a(mom)} ki nayi version hai.`, `A new version of ${a(mom)}.`) : "", kids?.length ? L(`Nayi version: ${kids.map(a).join(", ")}`, `Newer version: ${kids.map(a).join(", ")}`) : ""].filter(Boolean).join(" · ");
+        $$("[data-qrv]", box).forEach((x) => x.onclick = (e) => { e.preventDefault(); closeModal(); ACT.quote({ dataset: { id: x.dataset.qrv } }); });
+      }, () => {});
+  }
+  if (locked) lockQuote();
   $("#qsave", m).onclick = (e) => busy(e.target, async () => {
+    if (locked) {      // only the status and the internal note — the rest is locked (the database refuses it too)
+      const res = await sb.from("quotations").update({ status: $("#qs", m).value, note_internal: ($("#qni", m).value || "").trim().slice(0, 3000) || null }).eq("id", q.id).select("*").single();
+      if (res.error) throw res.error;
+      toast(`Quotation ${res.data.quote_no} saved ✔`); closeModal(); quoteEditor(res.data);
+      if (S.route === "quotes") VIEWS.quotes($("#page"));
+      return;
+    }
     syncAll();
     // fully empty rows (no product, no rate) are just dropped
     const before = q.items.length;
@@ -2292,22 +2375,16 @@ async function quotePdf(q, link) {
     }
     fr.style.height = Math.ceil(root.scrollHeight + 40) + "px";
     await new Promise((r) => setTimeout(r, 80));
-    const r = await elementToPdf(root, { width: full, title: "Quotation " + (q.quote_no || ""), marks: "td.ck[data-pk], [data-tot]" });
-    const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand), words: amountWords(p.T.grand) };
-    p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
-    const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, tickTop: true, calc: (k) => pickCalc(p, k) });
-    return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
+    // a plain PDF: the customer cannot tick / untick items (they accept the offer or ask us for a revision)
+    const r = await elementToPdf(root, { width: full, title: "Quotation " + (q.quote_no || "") });
+    return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: pdfName(q) };
   } finally { fr.remove(); }
 }
-// fallback (no online link): the print layout with ticks
+// fallback (no online link): the print layout, plain (no tick boxes for the customer)
 async function quotePdfPrint(q) {
-  const p = pickData(q.items || [], { inter: qCalc(q).inter, roundOff: q.round_off, showOptional: q.show_optional });
   const rep = await quoteRep(q);
-  const r = await htmlToPdf((root) => quoteDoc(q, root, { pick: p, rep }), { title: "Quotation " + (q.quote_no || ""), marks: "[data-pi], [data-tot]" });
-  const values = { sub: fmtIN(p.T.sub), round: fmtRound(p.T.round), grand: fmtIN(p.T.grand), words: amountWords(p.T.grand) };
-  p.T.lines.forEach((v, k) => { values["l" + k] = fmtIN(v); });
-  const blob = await makeFillable(r.blob, r.marks, { checked: p.on, script: pickScript(p), values, calc: (k) => pickCalc(p, k) });
-  return { blob, pages: r.pages, bytes: blob.size, name: pdfName(q) };
+  const r = await htmlToPdf((root) => quoteDoc(q, root, { rep }), { title: "Quotation " + (q.quote_no || "") });
+  return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: pdfName(q) };
 }
 // the quotation document (Print / PDF): fills `pr`
 function quoteDoc(q, pr, { link = null, pick = null, rep = null } = {}) {
@@ -2330,7 +2407,7 @@ function quoteDoc(q, pr, { link = null, pick = null, rep = null } = {}) {
       <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(q.quote_date ? niceDay(q.quote_date) : dOnly(q.created_at || new Date()))}</div></div></div>
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
-    ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> — tick or untick items to see the total with GST, and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
+    ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
     ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Open in Google Chrome or Adobe Acrobat Reader — Microsoft Edge, Mac Preview, Safari and phone viewers don't update the total.)</span></div>` : ""}
     <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table class="qlines">${head}<tbody>

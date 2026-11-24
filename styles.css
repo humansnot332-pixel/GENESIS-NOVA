@@ -896,3 +896,28 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .pgroup .pmore { margin: 6px 12px 12px; }
 .pitem .qhint, .tbl .qhint { color: var(--accent); font-size: 12px; }
 .dropzone.over { border-color: var(--accent); background: var(--accent-soft, var(--surface-2)); }
+
+/* v76 · locked quotations, duplicate leads, customer sales */
+.qlockbar { display: flex; gap: 12px; align-items: flex-start; background: #fff7e6; border: 1px solid #f3d19c; color: #6b4a12; border-radius: 12px; padding: 12px 14px; margin: 0 0 14px; }
+.qlockbar .qlk-i { font-size: 20px; line-height: 1.2; }
+.qlockbar .qlk-t { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.qlockbar .qlk-rev a { font-weight: 600; }
+.qlocked .qlk-ro { opacity: .78; }
+.qlocked .qlk-ro input, .qlocked .qlk-ro select, .qlocked .qlk-ro textarea { background: var(--surface-2); }
+:root[data-theme="dark"] .qlockbar { background: #3a2c12; border-color: #6b5020; color: #f3d9a6; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .qlockbar { background: #3a2c12; border-color: #6b5020; color: #f3d9a6; } }
+.ldup { border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; border: 1px solid; }
+.ldup.bad { background: var(--bad-soft, #fdecec); border-color: #f1b2b2; }
+.ldup.warn { background: #fff7e6; border-color: #f3d19c; }
+.ldup-h { font-weight: 700; margin-bottom: 6px; }
+.ldup-r { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px dashed rgba(0,0,0,.08); }
+.ldup-r:first-of-type { border-top: 0; }
+.ldup-w { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin-top: 3px; font-size: 12px; }
+.lsales { background: var(--surface-2); border-radius: 10px; padding: 9px 12px; margin: 0 0 12px; font-size: 13.5px; }
+.sl-bar { flex-wrap: wrap; }
+.sl-kpis .v.sm { font-size: 18px; }
+.sl-trk { display: block; height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.sl-trk i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.sl-tbl tbody tr { cursor: pointer; }
+.sl-top { max-width: 260px; }
+.sl-grid { gap: 14px; margin-bottom: 14px; }
