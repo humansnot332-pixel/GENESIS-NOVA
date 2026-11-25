@@ -1318,20 +1318,29 @@ VIEWS.leads = async (el, soft) => {
     el.innerHTML = `
     <div class="toolbar">
       <input class="input grow" id="lq" placeholder="Search company, contact, phone, city…" value="${h(LF.q)}" aria-label="Search">
+      <div class="tb-acts">
+        ${isMgr() ? `<button class="btn" data-act="exportLeads">${ic("download")} Export</button>` : ""}
+        <button class="btn" data-act="importLeads">${ic("upload")} Import</button>
+        <button class="btn primary" data-act="newLead">${ic("plus")} Lead</button>
+      </div>
+    </div>
+    <div class="filters" id="lfil">
       <select class="input" id="lst" aria-label="Status"><option value="">All status</option><option value="open" ${LF.status === "open" ? "selected" : ""}>Open (active)</option>${STATUSES.map(([k, l]) => `<option value="${k}" ${LF.status === k ? "selected" : ""}>${l}</option>`).join("")}</select>
       <select class="input" id="lcat" aria-label="Category"><option value="">All categories</option>${CATEGORIES.map((c) => `<option ${LF.category === c ? "selected" : ""}>${c}</option>`).join("")}</select>
       <select class="input" id="lcity" aria-label="City"><option value="">${L("Sab cities", "All cities")}</option>${LF.city ? `<option selected value="${h(LF.city)}">${h(LF.city)}</option>` : ""}</select>
       <select class="input" id="lsrc" aria-label="Source">${sourceOptions()}</select>
       <select class="input" id="lown" aria-label="Lock"><option value="">Sab leads</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>🔒 Mere (locked by me)</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>🔓 Free pool</option><option value="others" ${LF.owner === "others" ? "selected" : ""}>🔒 Doosron ke paas</option>${isMgr() ? assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>👤 ${h(u.full_name)}</option>`).join("") : ""}</select>
-      ${isMgr() ? `<button class="btn" data-act="exportLeads">${ic("download")} Export</button>` : ""}
-      <button class="btn" data-act="importLeads">${ic("upload")} Import</button>
-      <button class="btn primary" data-act="newLead">${ic("plus")} Lead</button>
+      <button class="btn ghost" id="lclr" ${LF.status || LF.category || LF.city || LF.source || LF.owner ? "" : "hidden"}>✕ ${L("Filters hatao", "Clear filters")}</button>
     </div>
     <div class="card"><div class="tbl-wrap" id="ltb"></div><div class="pager" id="lpg"></div></div>
     <div id="lbulk"></div>`;
     let t;
     $("#lq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { LF.q = e.target.value; LF.page = 0; drawLeads(el); }, 300); };
-    [["#lst", "status"], ["#lcat", "category"], ["#lcity", "city"], ["#lsrc", "source"], ["#lown", "owner"]].forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); drawLeads(el); }; });
+    const FIL = [["#lst", "status"], ["#lcat", "category"], ["#lcity", "city"], ["#lsrc", "source"], ["#lown", "owner"]];
+    const markClr = () => { const c = $("#lclr", el); if (c) c.hidden = !FIL.some(([, k]) => LF[k]); FIL.forEach(([sel, k]) => $(sel, el)?.classList.toggle("on", !!LF[k])); };
+    FIL.forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); markClr(); drawLeads(el); }; });
+    $("#lclr", el).onclick = () => { FIL.forEach(([sel, k]) => { LF[k] = ""; const x = $(sel, el); if (x) x.value = ""; }); LF.page = 0; LF.sel.clear(); markClr(); drawLeads(el); };
+    markClr();
     fillSources(el).catch(() => {});
     // City list (with lead counts) — filled after the page shows
     loadCities().then(({ data }) => {
@@ -2593,7 +2602,7 @@ VIEWS.team = async (el) => {
   ${S.team.map((u) => `<tr style="cursor:default"><td><div class="row" style="flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><div><div class="co">${h(u.full_name)}</div><div class="sub">${h(u.email)}</div></div></div></td>
     <td>${h(ROLE[u.role])}${u.role !== "admin" && isApprover(u.id) ? ` <span class="badge info" title="${h(L("OBF approve kar sakta hai", "Can approve OBFs"))}">✅ Director</span>` : ""}${phones[u.id] ? ` <span title="${h(L("Phone notification ON", "Phone notifications on") + " · " + phones[u.id])}">📲</span>` : ""}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
     <td class="sub">${h(ago(u.last_seen))}</td><td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge bad">Disabled</span>'}</td>
-    <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm" data-act="pwUser" data-id="${u.id}">Password</button> <button class="btn sm" data-act="handover" data-id="${u.id}" title="${h(L("Iske saare leads / RFQs / tasks kisi aur ko do", "Move all their leads / RFQs / tasks to someone else"))}">🔁 Handover</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
+    <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm icon" data-act="pwUser" data-id="${u.id}" title="${h(L("Password badlo", "Change password"))}" aria-label="${h(L("Password badlo", "Change password"))}">🔑</button> <button class="btn sm" data-act="handover" data-id="${u.id}" title="${h(L("Iske saare leads / RFQs / tasks kisi aur ko do", "Move all their leads / RFQs / tasks to someone else"))}">🔁 Handover</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>
   <p class="mu" style="font-size:12.5px">🔒 Disable karte hi user ka login band, aur uske pending (new/contacted) leads pool mein wapas. Har change Audit log mein record hota hai.</p>`;
 };

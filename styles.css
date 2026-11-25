@@ -955,3 +955,14 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .board-top { overflow-x: auto; overflow-y: hidden; height: 16px; margin: 0 0 8px; position: sticky; top: 56px; z-index: 4; background: var(--bg); border-radius: 8px; }
 .board-top > div { height: 1px; }
 .board-top[hidden] { display: none; }
+
+/* v82 · tidy toolbars: actions always on the right, filters in an even grid, one height for every control */
+.toolbar .tb-acts { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.toolbar .btn, .toolbar .input, .toolbar select.input { height: 36px; }
+.toolbar .btn.sm { height: 30px; }
+.filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 8px; margin: -4px 0 12px; }
+.filters .input { width: 100%; min-width: 0; height: 36px; }
+.filters .input.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); font-weight: 600; }
+.filters .btn { height: 36px; justify-self: start; }
+#qq { min-width: 260px; }
+@media (max-width: 640px) { .toolbar .tb-acts { margin-left: 0; width: 100%; justify-content: stretch; } .toolbar .tb-acts .btn { flex: 1; justify-content: center; } #qq { min-width: 0; } }
