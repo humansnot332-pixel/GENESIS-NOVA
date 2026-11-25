@@ -300,9 +300,9 @@ export async function viewRenewals(el) {
   else if (f === "closed") q = q.in("status", ["renewed", "lost", "cancelled"]);
   else if (f === "erp") q = q.eq("status", "unconfirmed");
   else q = q.neq("status", "unconfirmed");
-  const { data: rows, error } = await q; if (error) throw error;
-  // every renewal's product (for the filter's list + counts) and the active ones due in 30 days (for the cards)
-  const { data: allP } = await sb.from("renewals").select("product, status, end_date, amount").limit(5000);
+  // the list + every renewal's product (for the filter's list + counts and the cards) in one round trip
+  const [{ data: rows, error }, { data: allP }] = await Promise.all([q, sb.from("renewals").select("product, status, end_date, amount").limit(5000)]);
+  if (error) throw error;
   const nErp = (allP || []).filter((r) => r.status === "unconfirmed").length;
   const scope = (allP || []).filter((r) => (f === "erp") === (r.status === "unconfirmed"));
   const byProd = new Map(); scope.forEach((r) => { const g = renGroup(r.product); byProd.set(g, (byProd.get(g) || 0) + 1); });

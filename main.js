@@ -801,14 +801,14 @@ function callSeries(calls, from, to) {
 const DD = dateState("dash", "month");
 VIEWS.dashboard = async (el) => {
   const { from, to, label } = dateRange(DD), isToday = DD.p === "today";
-  const [{ data: st }, { data: calls }, { data: fu }, { data: rf }] = await Promise.all([
+  const [{ data: st }, { data: calls }, { data: fu }, { data: rf }, { data: rg }] = await Promise.all([
     sb.rpc("dashboard_stats"),
     sb.rpc("calls_report_range", { p_from: from, p_to: to }),
     sb.from("leads").select("id, company, next_follow_up, status, owner_id").in("status", OPEN_STATUSES).not("next_follow_up", "is", null)
       .or(isMgr() ? "owner_id.not.is.null,owner_id.is.null" : `owner_id.eq.${S.me.id}`).order("next_follow_up").limit(8),
     applyDates(sb.from("rfqs").select("id, rfq_no, company, product, status, due_date, created_at").order("created_at", { ascending: false }).limit(6), "created_at", DD, true),
+    sb.rpc("dashboard_range", { p_from: from, p_to: to }),
   ]);
-  const { data: rg } = await sb.rpc("dashboard_range", { p_from: from, p_to: to });
   const s = st || {}, r = rg || {}, target = S.me.daily_target || 40, mine = s.my_calls_today || 0;
 
   // calls in the chosen dates
@@ -2628,14 +2628,14 @@ VIEWS.reports = async (el) => {
 //  TEAM (admin)
 // ---------------------------------------------------------------------
 VIEWS.team = async (el) => {
-  await loadTeam();
-  const [{ data: loads }, { data: subs }, { data: ob }] = await Promise.all([
-    sb.from("leads").select("owner_id").in("status", OPEN_STATUSES).not("owner_id", "is", null).limit(20000),
+  const [, { data: cnt0 }, { data: subs }, { data: ob }] = await Promise.all([
+    loadTeam(),
+    sb.rpc("open_lead_counts"),
     sb.from("push_subs").select("user_id"),
     sb.from("settings").select("value").eq("key", "obf").maybeSingle(),
   ]);
   if (ob?.value) S.settings.obf = ob.value;
-  const cnt = {}; (loads || []).forEach((l) => { cnt[l.owner_id] = (cnt[l.owner_id] || 0) + 1; });
+  const cnt = cnt0 || {};
   const phones = {}; (subs || []).forEach((x) => { phones[x.user_id] = (phones[x.user_id] || 0) + 1; });
   el.innerHTML = `<div class="toolbar"><span class="mu">${S.team.filter((u) => u.active).length} active users · ${S.team.filter(online).length} online</span><span class="sp" style="flex:1"></span>
     <button class="btn" data-act="distribute">⚡ Pool auto-distribute</button><button class="btn primary" data-act="addUser">${ic("plus")} User</button></div>

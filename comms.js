@@ -687,7 +687,7 @@ export function openChip(r) {
 }
 export async function viewInbox(el, params = {}) {
   const team = IB.team && isMgr();
-  const { data: ms } = await sb.rpc("mail_status");
+  const msP = sb.rpc("mail_status");          // runs while the list loads
   let rows = [], sentRows = [];
   if (IB.tab === "replies") {
     let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, counterpart_name, subject, snippet, intent, is_read, archived, created_at, thread_url, provider, files, leads(company, status, owner_id)")
@@ -720,6 +720,7 @@ export async function viewInbox(el, params = {}) {
   }
   const s = IB.q.toLowerCase();
   if (s) { rows = rows.filter((r) => [r.counterpart, r.counterpart_name, r.subject, r.snippet, r.leads?.company].join(" ").toLowerCase().includes(s)); sentRows = sentRows.filter((r) => [r.counterpart, r.subject, r.leads?.company, r.rfqs?.company, r.rfqs?.rfq_no].join(" ").toLowerCase().includes(s)); }
+  const { data: ms } = await msP;
   const msOk = ms?.connected, olReady = outlookReady();
   el.innerHTML = `
   <div class="card" style="padding:12px 16px;margin-bottom:14px"><div class="row">
