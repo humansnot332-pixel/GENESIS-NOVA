@@ -375,6 +375,7 @@ export async function openComposer(opts) {
     const en = isEn() || /^(dear|hello|hi)\b/i.test(body.value.trim());
     const ins = (line) => { const i = body.value.indexOf("\n\n"); body.value = i < 0 ? body.value + "\n\n" + line : body.value.slice(0, i + 2) + line + "\n\n" + body.value.slice(i + 2); };
     if (opts.attach) {     // the PDF is attached — the mail only says how to confirm (no link)
+      if (opts.attach.line === false) return;
       if (!/reply to this (e-?mail|mail)|is mail ka reply/i.test(body.value)) ins(en ? "📎 Please find our quotation attached. To confirm, simply reply to this email — or tell us any change you need and we will send a revised quotation."
                                             : "📎 Quotation PDF attached hai. Confirm karne ke liye bas is mail ka reply karein — koi badlaav chahiye toh bata dein, hum revised quotation bhej denge.");
       return;
@@ -798,28 +799,39 @@ async function readMail(id, pane, refresh) {
       ${r.thread_url ? `<a class="btn sm" href="${h(r.thread_url)}" target="_blank" rel="noopener noreferrer">${r.provider === "outlook" ? "Outlook" : "Gmail"} mein kholo ↗</a>` : ""}</div></div>
     <div class="ib-body">${h(onlyReply(r.body || r.snippet || "")).replace(/\n/g, "<br>")}</div>
     <div id="ibFiles"></div>
+    ${mine && lead ? `<div class="dealcard" id="ibDeal" hidden aria-live="polite"></div>` : ""}
     ${mine ? `<div class="smartrep" id="ibSmart" aria-live="polite"></div>` : ""}
-    ${mine ? `<div class="ib-actions">
-      <button class="btn primary" data-a="reply">${ic("mail")} Reply</button>
-      ${lead ? `<button class="btn" data-a="wa">${ic("wa")} WhatsApp</button>` : ""}
-      ${lead ? `<button class="btn" data-a="int">🔥 Interested mark</button><button class="btn" data-a="rfq">${ic("inbox")} RFQ banao</button><button class="btn" data-a="fu">⏰ Kal follow-up</button><button class="btn danger" data-a="no">🚫 Not interested</button>` : ""}
-      <button class="btn" data-a="ticket" title="${h(L("Support ticket — mail ki photos / files ke saath engineer ko", "Support ticket — goes to the engineer with the mail's pictures / files"))}">🛠 ${L("Ticket banao", "Make ticket")}</button>
-      <span style="flex:1"></span>
-      <select class="input" data-a="intent" style="width:auto;height:30px" aria-label="Tag">${Object.entries(INTENT).map(([k, [l]]) => `<option value="${k}" ${k === (r.intent || "other") ? "selected" : ""}>${l}</option>`).join("")}</select>
-      <button class="btn ghost" data-a="unread">Unread</button><button class="btn ghost" data-a="arch">${r.archived ? "Unarchive" : "Archive"}</button>
-      <button class="btn ghost danger" data-a="del" title="${h(L("CRM se hatao (Gmail mein rahega)", "Remove from the CRM (stays in Gmail)"))}">${ic("trash")} ${L("Delete", "Delete")}</button>
+    ${mine ? `<div class="ib-actions2">
+      <div class="ib-row">
+        <button class="btn primary" data-a="reply">${ic("mail")} Reply</button>
+        ${lead ? `<button class="btn" data-a="wa">${ic("wa")} WhatsApp</button>` : ""}
+        ${lead ? `<button class="btn" data-a="rfq">${ic("inbox")} ${L("RFQ banao", "Create RFQ")}</button>` : ""}
+        <button class="btn" data-a="ticket" title="${h(L("Support ticket — mail ki photos / files ke saath engineer ko", "Support ticket — goes to the engineer with the mail's pictures / files"))}">🛠 ${L("Ticket banao", "Make ticket")}</button>
+        <span class="sp"></span>
+        ${lead ? `<button class="btn sm" data-a="int">🔥 ${L("Interested", "Interested")}</button><button class="btn sm" data-a="fu">⏰ ${L("Kal follow-up", "Follow-up tomorrow")}</button><button class="btn sm danger" data-a="no">🚫 ${L("Not interested", "Not interested")}</button>` : ""}
+      </div>
+      <div class="ib-row meta">
+        <label for="ibTag">${L("Tag", "Tag")}</label>
+        <select class="input" id="ibTag" data-a="intent" aria-label="Tag">${Object.entries(INTENT).map(([k, [l]]) => `<option value="${k}" ${k === (r.intent || "other") ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <span class="sp"></span>
+        <button class="btn sm ghost" data-a="unread">${L("Unread karo", "Mark unread")}</button><button class="btn sm ghost" data-a="arch">${r.archived ? "Unarchive" : "Archive"}</button>
+        <button class="btn sm ghost danger" data-a="del" title="${h(L("CRM se hatao (Gmail mein rahega)", "Remove from the CRM (stays in Gmail)"))}">${ic("trash")} ${L("Delete", "Delete")}</button>
+      </div>
     </div>` : ""}`;
   pane.querySelector("[data-ol]")?.addEventListener("click", (e) => { e.preventDefault(); HOOK.openLead(lead.id); });
   const files = await loadFiles("email_id", id);
   const fb = $("#ibFiles", pane);
   if (fb && files.length) { fb.innerHTML = filesHtml(files, `📎 ${files.length} ${L("photo / file", files.length > 1 ? "attachments" : "attachment")}`); wireFiles(fb, files); }
   // ⚡ ready replies: what the mail asks (price / interest / no / out-of-office / bounce) + the products and quantities in it
+  const dealP = mine && lead ? import("./proforma.js").then((x) => x.drawDeal($("#ibDeal", pane), { r, lead, text: onlyReply(r.body || r.snippet || ""), openComposer, ensureWork, refresh })).catch((e) => { console.error(e); return false; }) : Promise.resolve(false);
   if (mine) drawSmart().catch(() => {});
   async function drawSmart() {
     const box = $("#ibSmart", pane); if (!box) return;
+    const deal = await dealP;
     await loadCatalog().catch(() => {});
     const text = onlyReply(r.body || r.snippet || ""), items = detectItems(`${r.subject || ""}\n${text}`);
     const sm = replyDrafts({ intent: r.intent, text: `${r.subject || ""} ${text}`, lead, items });
+    if (deal) { sm.drafts = sm.drafts.filter((d) => d.key !== "quote" && d.key !== "details"); sm.actions = sm.actions.filter((k) => k !== "quote"); }
     if (!box.isConnected || (!sm.drafts.length && !sm.actions.length && !sm.note)) { box.remove(); return; }
     const A = {
       quote: `📄 ${L("Quotation banao", "Make quotation")}${items.length ? ": " + h(items.map((x) => `${x.qty} × ${x.name}`).join(", ")) : ""}`,

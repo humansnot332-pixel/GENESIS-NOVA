@@ -1444,6 +1444,15 @@ ACT.importLeads = () => {
 //  PIPELINE (kanban, drag & drop)
 // ---------------------------------------------------------------------
 const PCOLS = ["new", "contacted", "interested", "quote_sent", "demo", "negotiation", "won"];
+// a second scroll bar ABOVE the board (stays in view at the top while the page scrolls) — moves with the one below
+function boardTopBar(el) {
+  const top = $(".board-top", el), board = $(".board", el); if (!top || !board) return;
+  const fit = () => { top.firstElementChild.style.width = board.scrollWidth + "px"; top.hidden = board.scrollWidth <= board.clientWidth + 2; };
+  let lock = false;
+  top.onscroll = () => { if (lock) return; lock = true; board.scrollLeft = top.scrollLeft; requestAnimationFrame(() => { lock = false; }); };
+  board.addEventListener("scroll", () => { if (lock) return; lock = true; top.scrollLeft = board.scrollLeft; requestAnimationFrame(() => { lock = false; }); }, { passive: true });
+  fit(); if (window.ResizeObserver) new ResizeObserver(fit).observe(board);
+}
 VIEWS.pipeline = async (el) => {
   const mineOnly = el.dataset.mine === "1" || !isMgr();
   let q = sb.from("leads").select("id, company, city, deal_value, status, owner_id, lock_until, next_follow_up, score").in("status", PCOLS).order("score", { ascending: false }).limit(700);
@@ -1453,11 +1462,13 @@ VIEWS.pipeline = async (el) => {
   el.innerHTML = `
     <div class="toolbar">${isMgr() ? `<div class="chips"><button class="chip ${mineOnly ? "" : "on"}" data-pm="0">Team</button><button class="chip ${mineOnly ? "on" : ""}" data-pm="1">Mine</button></div>` : ""}
       <span class="mu">Card ko drag karke status badlo · har column max 100 dikhte hain</span></div>
+    <div class="board-top" aria-hidden="true"><div></div></div>
     <div class="board">${PCOLS.map((k) => `<div class="col" data-col="${k}">
       <div class="col-h">${statusBadge(k)} <span>${by[k].length}</span><small>${inrShort(by[k].reduce((a, l) => a + Number(l.deal_value || 0), 0))}</small></div>
       ${by[k].slice(0, 100).map((l) => `<div class="card kc" draggable="${canWork(l)}" data-id="${l.id}" data-act="lead"><b>${h(l.company)}</b><div class="sub">${h(l.city || "")}${l.deal_value ? " · " + inrShort(l.deal_value) : ""}</div><div class="row" style="margin-top:6px;gap:6px">${followBadge(l.next_follow_up)}${isMgr() ? `<span class="sub">${h(userName(l.owner_id))}</span>` : ""}</div></div>`).join("")}
     </div>`).join("")}</div>`;
   $$("[data-pm]", el).forEach((b) => b.onclick = () => { el.dataset.mine = b.dataset.pm; VIEWS.pipeline(el); });
+  boardTopBar(el);
   let dragId = null;
   $$(".kc", el).forEach((c) => {
     c.addEventListener("dragstart", (e) => { dragId = +c.dataset.id; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
@@ -2399,8 +2410,19 @@ async function quotePdfPrint(q) {
   const r = await htmlToPdf((root) => quoteDoc(q, root, { rep }), { title: "Quotation " + (q.quote_no || "") });
   return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: pdfName(q) };
 }
+// ---- Proforma Invoice: the approved lines of a quotation, same layout, its own number (PI/26/0001)
+const piName = (pi) => `Proforma ${String(pi?.pi_no || "draft").replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
+HOOK.proformaPdf = async (pi, q, { mailAt = null } = {}) => {
+  const day = (v) => (v ? niceDay(String(v).slice(0, 10)) : "");
+  const doc = { ...q, quote_no: pi.pi_no || "DRAFT", quote_date: String(pi.created_at || new Date().toISOString()).slice(0, 10),
+    items: (pi.items || []).map(({ sr, ...it }) => ({ ...it, opt: false })), show_optional: false };
+  const ref = `Against our Quotation <b>${h(q.quote_no)}</b>${q.quote_date || q.created_at ? " dated " + h(day(q.quote_date || q.created_at)) : ""} — item${pi.picked.length > 1 ? "s" : ""} <b>${h(pi.picked.join(", "))}</b> as approved${mailAt ? " in your mail of " + h(day(mailAt)) : ""}.`;
+  const rep = await quoteRep(q);
+  const r = await htmlToPdf((root) => quoteDoc(doc, root, { rep, title: "PROFORMA INVOICE", ref }), { title: "Proforma " + (pi.pi_no || "") });
+  return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: piName(pi) };
+};
 // the quotation document (Print / PDF): fills `pr`
-function quoteDoc(q, pr, { link = null, pick = null, rep = null } = {}) {
+function quoteDoc(q, pr, { link = null, pick = null, rep = null, title = "QUOTATION", ref = "" } = {}) {
   const co = S.settings.company || {}, c = qCalc(q), tp = q.to_party || {};
   const inc = (q.items || []).filter((it) => !it.opt), opt = q.show_optional === false ? [] : (q.items || []).filter((it) => it.opt);
   // line table like the reference: Sr | Description | Taxation | HSN/SAC | Qty | Lic. Qty | Warranty | Price(Unit) | Taxable Value | Tax Amount | Total
@@ -2417,12 +2439,14 @@ function quoteDoc(q, pr, { link = null, pick = null, rep = null } = {}) {
     ${tot("Grand Total", fmtIN(pick.T.grand), true, "grand")}`;
   pr.innerHTML = `<div class="qdoc">
     <div class="hd"><div><h2>${h(co.name || CONFIG.COMPANY)}</h2><div>${h(co.address || "")}</div><div>GSTIN: ${h(co.gstin || "")} · PAN: ${h(co.pan || "")}</div></div>
-      <div style="text-align:right"><h2>QUOTATION</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(q.quote_date ? niceDay(q.quote_date) : dOnly(q.created_at || new Date()))}</div></div></div>
+      <div style="text-align:right"><h2>${h(title)}</h2><div>No: <b>${h(q.quote_no || "")}</b></div><div>Date: ${h(q.quote_date ? niceDay(q.quote_date) : dOnly(q.created_at || new Date()))}</div></div></div>
     <p><b>To:</b> ${h(tp.name || "")}<br>${h(tp.address || "")}${tp.state ? ", " + h(tp.state) : ""}${tp.gstin ? "<br>GSTIN: " + h(tp.gstin) : ""}${tp.contact ? "<br>Kind Attn: " + h(tp.contact) : ""}${tp.phone ? " · " + h(tp.phone) : ""}</p>
     ${q.site?.address ? `<p><b>Delivery / site:</b> ${h(q.site.address)}</p>` : ""}
+    ${ref ? `<p class="qref">${ref}</p>` : ""}
     ${link ? `<div class="qlinkbox">✅ <b>View this quotation online</b> and accept it in one click:<br><a href="${h(link)}">${h(link)}</a></div>` : ""}
     ${pick ? `<div class="qlinkbox qpickbox">☑ <b>Choose your items here:</b> tick / untick the first column — Sub Total, GST and Grand Total change by themselves. Save the PDF and reply with it to confirm. <span class="qpick-note">(Open in Google Chrome or Adobe Acrobat Reader — Microsoft Edge, Mac Preview, Safari and phone viewers don't update the total.)</span></div>` : ""}
-    <table class="qterms"><tbody>${(() => { const r = quoteTermRows(q), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
+    <table class="qterms"><tbody>${(() => { const r = title === "QUOTATION" ? quoteTermRows(q)
+      : quoteTermRows(q).filter(([k]) => k !== "Valid till").map(([k, v]) => [k === "Quotation date" ? (title === "PROFORMA INVOICE" ? "Proforma date" : "Date") : k, v]), out = []; for (let i = 0; i < r.length; i += 2) out.push(`<tr>${r.slice(i, i + 2).map(([k, v]) => `<th>${h(k)}</th><td>${h(v)}</td>`).join("")}${i + 1 >= r.length ? "<th></th><td></td>" : ""}</tr>`); return out.join(""); })()}</tbody></table>
     <table class="qlines">${head}<tbody>
     ${pick ? pickBody() : `${inc.map((it, i) => rowHtml(it, i)).join("")}
     ${tot("Sub Total", n2(c.sub))}${c.lines.map(([l, v]) => tot(h(l), n2(v))).join("")}
