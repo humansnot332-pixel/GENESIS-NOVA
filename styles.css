@@ -975,3 +975,6 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .datebar .db-own .input { width: 150px; height: 32px; }
 .kpi .v.sm { font-size: 20px; }
 .toolbar .datebar { margin: 0; }
+
+/* v84 · dashboard: date bar between live numbers and the range numbers */
+#db-dash { margin: 18px 0 12px; }

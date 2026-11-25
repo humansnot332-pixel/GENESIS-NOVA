@@ -25,7 +25,7 @@ import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
 import { htmlToPdf, elementToPdf, saveBlob } from "./qpdf.js";
-import { dateState, dateRange, dateBarHtml, wireDateBar, applyDates } from "./datebar.js";
+import { dateState, dateRange, dateActive, dateBarHtml, wireDateBar, applyDates } from "./datebar.js";
 import { fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
 import { productPicker } from "./lprod.js";
@@ -783,22 +783,40 @@ document.addEventListener("focusin", (e) => { const col = e.target.closest?.(".c
 // ---------------------------------------------------------------------
 //  DASHBOARD
 // ---------------------------------------------------------------------
+/** calls per day for a date range (one bar per day up to ~2 months, else one per month) */
+function callSeries(calls, from, to) {
+  const dmap = {}; (calls || []).forEach((c) => { dmap[c.day] = (dmap[c.day] || 0) + +c.calls; });
+  // one bar per day (up to ~2 months), else one bar per month
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const firstDay = Object.keys(dmap).sort()[0];
+  const d0 = new Date((from || firstDay || today) + "T00:00:00"), d1 = new Date((to || today) + "T00:00:00");
+  const spanDays = Math.max(1, Math.round((d1 - d0) / 864e5) + 1), byMonth = spanDays > 62;
+  const series = [];
+  if (!byMonth) for (let i = 0; i < spanDays; i++) { const d = new Date(d0); d.setDate(d0.getDate() + i); const k = d.toLocaleDateString("en-CA"); series.push({ l: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }), v: dmap[k] || 0, t: d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) }); }
+  else { const mm = {}; Object.entries(dmap).forEach(([k, v]) => { mm[k.slice(0, 7)] = (mm[k.slice(0, 7)] || 0) + v; });
+    for (let d = new Date(d0.getFullYear(), d0.getMonth(), 1); d <= d1; d.setMonth(d.getMonth() + 1)) { const k = d.toLocaleDateString("en-CA").slice(0, 7); series.push({ l: d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" }), v: mm[k] || 0, t: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) }); } }
+  series.endsToday = !byMonth && (!to || to === today);   // only then is the last bar "Today"
+  return series;
+}
+const DD = dateState("dash", "month");
 VIEWS.dashboard = async (el) => {
+  const { from, to, label } = dateRange(DD), isToday = DD.p === "today";
   const [{ data: st }, { data: calls }, { data: fu }, { data: rf }] = await Promise.all([
     sb.rpc("dashboard_stats"),
-    sb.rpc("calls_report", { days: 14 }),
+    sb.rpc("calls_report_range", { p_from: from, p_to: to }),
     sb.from("leads").select("id, company, next_follow_up, status, owner_id").in("status", OPEN_STATUSES).not("next_follow_up", "is", null)
       .or(isMgr() ? "owner_id.not.is.null,owner_id.is.null" : `owner_id.eq.${S.me.id}`).order("next_follow_up").limit(8),
-    sb.from("rfqs").select("id, rfq_no, company, product, status, due_date, created_at").order("created_at", { ascending: false }).limit(6),
+    applyDates(sb.from("rfqs").select("id, rfq_no, company, product, status, due_date, created_at").order("created_at", { ascending: false }).limit(6), "created_at", DD, true),
   ]);
-  const s = st || {}, target = S.me.daily_target || 40, mine = s.my_calls_today || 0;
+  const { data: rg } = await sb.rpc("dashboard_range", { p_from: from, p_to: to });
+  const s = st || {}, r = rg || {}, target = S.me.daily_target || 40, mine = s.my_calls_today || 0;
 
-  // calls per day (last 14 days)
-  const days = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 13 + i); return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); });
-  const perDay = days.map((d) => ({ l: new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }), t: new Date(d).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" }) + " — calls", v: (calls || []).filter((c) => c.day === d && (isMgr() || c.user_id === S.me.id)).reduce((a, c) => a + Number(c.calls), 0) }));
-  const today = days[13];
-  const lb = isMgr() ? S.team.filter((u) => u.active && u.role !== "admin").map((u) => ({ u, c: (calls || []).filter((c) => c.day === today && c.user_id === u.id).reduce((a, c) => a + Number(c.calls), 0) })).sort((a, b) => b.c - a.c) : [];
-  const bs = s.by_status || {};
+  // calls in the chosen dates
+  const myCalls = (calls || []).filter((c) => isMgr() || c.user_id === S.me.id);
+  const perDay = callSeries(myCalls, from, to), callsN = myCalls.reduce((a, c) => a + Number(c.calls), 0);
+  const lb = isMgr() ? S.team.filter((u) => u.active && u.role !== "admin").map((u) => ({ u, c: myCalls.filter((c) => c.user_id === u.id).reduce((a, c) => a + Number(c.calls), 0) })).sort((a, b) => b.c - a.c) : [];
+  const lbMax = Math.max(1, ...lb.map((x) => x.c));
+  const drOn = dateActive(DD), bs = drOn ? r.by_status || {} : s.by_status || {};
 
   el.innerHTML = `
   <div class="row" style="margin-bottom:16px"><div><h2 style="margin:0;font-size:20px">${L("Namaste", "Hello")}, ${h(S.me.full_name.split(" ")[0])} 👋</h2><div class="mu">${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}</div></div>
@@ -813,23 +831,33 @@ VIEWS.dashboard = async (el) => {
     ${s.requests_pending ? `<div class="card kpi" data-act="go" data-go="requests" style="border-color:var(--warn)"><div class="l">🙋 Lock requests</div><div class="v">${num(s.requests_pending)}</div><div class="s">Koi aapka lead maang raha hai</div></div>` : ""}
     <div class="card kpi" data-act="go" data-go="pipeline"><div class="l">Pipeline value</div><div class="v">${inrShort(s.pipeline_value)}</div><div class="s">Won (month): ${inrShort(s.won_value_month)}</div></div>
   </div>
+  ${dateBarHtml("dash", DD)}
+  <div class="kpis dr-kpis">
+    <div class="card kpi" data-act="go" data-go="reports"><div class="l">${isMgr() ? L("Team calls", "Team calls") : L("Meri calls", "My calls")} · ${h(label)}</div><div class="v">${num(callsN)}</div><div class="s">${num(r.emails_sent)} ${L("emails bheje", "emails sent")}</div></div>
+    <div class="card kpi" data-act="go" data-go="leads"><div class="l">${L("Naye leads", "New leads")} · ${h(label)}</div><div class="v">${num(r.leads_new)}</div></div>
+    <div class="card kpi" data-act="go" data-go="rfqs"><div class="l">${L("RFQs aaye", "RFQs received")} · ${h(label)}</div><div class="v">${num(r.rfqs_new)}</div></div>
+    <div class="card kpi" data-act="go" data-go="quotes"><div class="l">${L("Quotations", "Quotations")} · ${h(label)}</div><div class="v">${num(r.quotes)}</div><div class="s">${inrShort(r.quotes_value)} ${L("ki value", "value")}</div></div>
+    <div class="card kpi" data-act="go" data-go="quotes"><div class="l">Won · ${h(label)}</div><div class="v" style="color:var(--good)">${inrShort(r.won_value)}</div><div class="s">${num(r.quotes_won)} ${L("quotations won", "quotations won")}</div></div>
+    ${isMgr() ? `<div class="card kpi" data-act="go" data-go="orders"><div class="l">${L("Payment aaya", "Received")} · ${h(label)}</div><div class="v">${inrShort(r.received)}</div></div>` : ""}
+  </div>
   <div class="cols">
     <div class="stack">
-      <div class="card"><div class="card-h"><h3>${isMgr() ? "Team calls" : "Meri calls"} — last 14 din</h3></div><div class="card-b">${barChart(perDay, { label: "Calls per day", hiLast: true })}</div></div>
-      <div class="card"><div class="card-h"><h3>Lead status</h3><span class="sp"></span><a href="#/pipeline" class="mu">Pipeline →</a></div><div class="card-b">${hbars(STATUSES.map(([k, l]) => ({ l, v: bs[k] || 0 })))}</div></div>
+      <div class="card"><div class="card-h"><h3>${isMgr() ? "Team calls" : "Meri calls"} · ${h(label)}</h3></div><div class="card-b">${barChart(perDay, { label: "Calls per day", hiLast: perDay.endsToday })}</div></div>
+      <div class="card"><div class="card-h"><h3>Lead status${drOn ? ` <span class="mu" style="font-weight:500">· ${h(L("is range mein aaye leads", "leads added in range"))}</span>` : ""}</h3><span class="sp"></span><a href="#/pipeline" class="mu">Pipeline →</a></div><div class="card-b">${hbars(STATUSES.map(([k, l]) => ({ l, v: bs[k] || 0 })))}</div></div>
     </div>
     <div class="stack">
-      ${isMgr() ? `<div class="card"><div class="card-h"><h3>🏆 Aaj ka leaderboard</h3></div><div class="card-b" style="padding-top:6px">
-        ${lb.map(({ u, c }) => `<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(u.full_name)}</b><span class="meter" style="width:80px;margin:0"><i style="width:${Math.min(100, (c / Math.max(1, u.daily_target)) * 100)}%"></i></span><span class="mono" style="width:52px;text-align:right">${c}/${u.daily_target}</span></div>`).join("") || '<div class="mu">Abhi koi employee nahi</div>'}
+      ${isMgr() ? `<div class="card"><div class="card-h"><h3>🏆 ${isToday ? "Aaj ka leaderboard" : `Leaderboard · ${h(label)}`}</h3></div><div class="card-b" style="padding-top:6px">
+        ${lb.map(({ u, c }) => `<div class="row" style="padding:7px 0;border-bottom:1px solid var(--line);flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(u.full_name)}</b><span class="meter" style="width:80px;margin:0"><i style="width:${Math.min(100, (c / (isToday ? Math.max(1, u.daily_target) : lbMax)) * 100)}%"></i></span><span class="mono" style="width:52px;text-align:right">${isToday ? `${c}/${u.daily_target}` : num(c)}</span></div>`).join("") || '<div class="mu">Abhi koi employee nahi</div>'}
       </div></div>` : ""}
       <div class="card"><div class="card-h"><h3>Aane wale follow-ups</h3></div><div class="card-b" style="padding:4px 16px">
         ${(fu || []).map((l) => `<div class="row" style="padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer;flex-wrap:nowrap" data-act="lead" data-id="${l.id}"><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(l.company)}</b>${followBadge(l.next_follow_up)}</div>`).join("") || '<div class="empty" style="padding:20px">Koi follow-up pending nahi 🎉</div>'}
       </div></div>
-      <div class="card"><div class="card-h"><h3>Latest RFQs</h3><span class="sp"></span><a href="#/rfqs" class="mu">Sab →</a></div><div class="card-b" style="padding:4px 16px">
+      <div class="card"><div class="card-h"><h3>Latest RFQs${drOn ? ` <span class="mu" style="font-weight:500">· ${h(label)}</span>` : ""}</h3><span class="sp"></span><a href="#/rfqs" class="mu">Sab →</a></div><div class="card-b" style="padding:4px 16px">
         ${(rf || []).map((r) => `<div style="padding:9px 0;border-bottom:1px solid var(--line);cursor:pointer" data-act="rfq" data-id="${r.id}"><div class="row" style="flex-wrap:nowrap"><b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h(r.company)}</b>${rfqBadge(r.status)}</div><div class="mu" style="font-size:12.5px">${h(r.product || "")} · ${h(ago(r.created_at))}</div></div>`).join("") || '<div class="empty" style="padding:20px">Abhi koi RFQ nahi</div>'}
       </div></div>
     </div>
   </div>`;
+  wireDateBar(el, "dash", DD, () => VIEWS.dashboard(el));
 };
 ACT.announce = () => {
   const m = modal({ title: "📢 Sab ko announcement", body: `<label class="f">Message (500 chars)</label><textarea class="input" id="annT" maxlength="500"></textarea>
@@ -2571,16 +2599,7 @@ VIEWS.reports = async (el) => {
   const users = new Map();
   (calls || []).forEach((c) => { const u = users.get(c.user_id) || { calls: 0, pos: 0, days: new Set() }; u.calls += +c.calls; u.pos += +c.positive; u.days.add(c.day); users.set(c.user_id, u); });
   const rows = [...users.entries()].map(([id, u]) => ({ id, name: userName(id), ...u, avg: u.calls / Math.max(1, u.days.size), conv: u.calls ? (u.pos / u.calls) * 100 : 0 })).sort((a, b) => b.calls - a.calls);
-  const dmap = {}; (calls || []).forEach((c) => { dmap[c.day] = (dmap[c.day] || 0) + +c.calls; });
-  // one bar per day (up to ~2 months), else one bar per month
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-  const firstDay = Object.keys(dmap).sort()[0];
-  const d0 = new Date((from || firstDay || today) + "T00:00:00"), d1 = new Date((to || today) + "T00:00:00");
-  const spanDays = Math.max(1, Math.round((d1 - d0) / 864e5) + 1), byMonth = spanDays > 62;
-  const series = [];
-  if (!byMonth) for (let i = 0; i < spanDays; i++) { const d = new Date(d0); d.setDate(d0.getDate() + i); const k = d.toLocaleDateString("en-CA"); series.push({ l: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }), v: dmap[k] || 0, t: d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) }); }
-  else { const mm = {}; Object.entries(dmap).forEach(([k, v]) => { mm[k.slice(0, 7)] = (mm[k.slice(0, 7)] || 0) + v; });
-    for (let d = new Date(d0.getFullYear(), d0.getMonth(), 1); d <= d1; d.setMonth(d.getMonth() + 1)) { const k = d.toLocaleDateString("en-CA").slice(0, 7); series.push({ l: d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" }), v: mm[k] || 0, t: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) }); } }
+  const series = callSeries(calls, from, to);
   const bs = st?.by_status || {}, src = st?.by_source || {};
   const total = Object.values(bs).reduce((a, b) => a + b, 0), won = bs.won || 0;
   el.innerHTML = `
@@ -2591,7 +2610,7 @@ VIEWS.reports = async (el) => {
       <div class="card kpi"><div class="l">Win rate (all leads)</div><div class="v">${total ? ((won / total) * 100).toFixed(1) : 0}%</div><div class="s">${num(won)} won / ${num(total)}</div></div>
       <div class="card kpi"><div class="l">Pipeline value</div><div class="v">${inrShort(st?.pipeline_value)}</div></div>
     </div>
-    <div class="card"><div class="card-h"><h3>Calls per day</h3></div><div class="card-b">${barChart(series, { height: 210, label: "Calls per day", hiLast: true })}</div></div>
+    <div class="card"><div class="card-h"><h3>Calls per day</h3></div><div class="card-b">${barChart(series, { height: 210, label: "Calls per day", hiLast: series.endsToday })}</div></div>
     <div class="cols sec">
       <div class="card"><div class="card-h"><h3>${isMgr() ? "Team performance" : "Meri performance"}</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Calls</th><th class="num">Avg / din</th><th class="num">Positive</th><th class="num">Conversion</th></tr></thead><tbody>
         ${rows.map((r) => `<tr style="cursor:default"><td class="co">${h(r.name)}</td><td class="num">${num(r.calls)}</td><td class="num">${r.avg.toFixed(1)}</td><td class="num">${num(r.pos)}</td><td class="num">${r.conv.toFixed(1)}%</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Is period mein koi call nahi</td></tr>`}</tbody></table></div></div>
