@@ -921,3 +921,8 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .sl-tbl tbody tr { cursor: pointer; }
 .sl-top { max-width: 260px; }
 .sl-grid { gap: 14px; margin-bottom: 14px; }
+
+/* v78 · backups */
+.bk-stale { background: #fdecec; border: 1px solid #f1b2b2; color: #8a1f1f; border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; font-weight: 600; font-size: 13.5px; }
+:root[data-theme="dark"] .bk-stale { background: #3d1c1c; border-color: #7a3434; color: #f6c4c4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .bk-stale { background: #3d1c1c; border-color: #7a3434; color: #f6c4c4; } }

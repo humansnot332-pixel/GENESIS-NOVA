@@ -2822,11 +2822,15 @@ async function wireBackupCard(el) {
   for (const f of all) { const m = f.name.match(/^(.+)\.(json\.gz|xlsx)$/); if (!m) continue; const g = byBase.get(m[1]) || {}; g[m[2] === "xlsx" ? "x" : "j"] = f; byBase.set(m[1], g); }
   const files = [...byBase.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   const kb = (f) => f ? ((f.metadata?.size || 0) / 1024).toFixed(0) + " KB" : "";
+  const newest = files[0] ? Date.parse(files[0][1].j?.created_at || files[0][1].x?.created_at || 0) : 0;
+  const stale = !newest || Date.now() - newest > 26 * 3600e3;
+  const when = newest ? h(new Date(newest).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) : "";
   box.innerHTML = error ? `<div class="empty">${h(friendly(error))}</div>` : !files.length ? `<div class="empty">${L("Abhi koi backup nahi — upar \"Abhi backup lo\" dabao", "No backups yet — press \"Back up now\"")}</div>`
-    : `<div class="hlist">${files.slice(0, 15).map(([base, g]) => { const [d, t, k] = base.split("_");
+    : `${stale ? `<div class="bk-stale">⚠️ ${L(`Aakhri backup ${when} ka hai — raat ka backup nahi bana. Upar "Abhi backup lo" dabao.`, `The last backup is from ${when} — last night's backup did not run. Press "Back up now" above.`)}</div>` : ""}
+      <div class="hlist">${files.slice(0, 15).map(([base, g]) => { const [d, t, k] = base.split("_");
         return `<div class="hrow"><div class="hmain"><div class="hsum">📦 ${h(new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }))} · ${h(t.slice(0, 2) + ":" + t.slice(2))}
           ${k === "manual" ? `<span class="badge">${L("haath se", "manual")}</span>` : `<span class="badge good">auto</span>`}</div><div class="mu" style="font-size:12px">${[g.x ? "Excel " + kb(g.x) : "", g.j ? "JSON " + kb(g.j) : ""].filter(Boolean).join(" · ")}</div></div>
-          ${g.x ? `<button class="btn sm primary" data-bk="${h(g.x.name)}">${ic("download")} Excel</button>` : ""}
+          ${g.x ? `<button class="btn sm primary" data-bk="${h(g.x.name)}">${ic("download")} Excel</button>` : g.j ? `<button class="btn sm primary" data-bkx="${h(g.j.name)}" title="${h(L("Is backup se Excel banake download karo", "Make an Excel file from this backup and download it"))}">${ic("download")} Excel</button>` : ""}
           ${g.j ? `<button class="btn sm" data-bk="${h(g.j.name)}" title="${h(L("Poora data (restore ke liye)", "Full data (for restore)"))}">${ic("download")} JSON</button>` : ""}
           <button class="btn sm ghost icon" data-bkdel="${h(base)}" data-bkf="${h([g.x?.name, g.j?.name].filter(Boolean).join("|"))}" title="${h(L("Ye backup delete karo", "Delete this backup"))}" aria-label="Delete backup">${ic("trash")}</button></div>`; }).join("")}</div>
       ${files.length > 15 ? `<p class="mu" style="font-size:12px">+${files.length - 15} ${L("purane backup bhi rakhe hain", "older backups kept")}</p>` : ""}`;
@@ -2834,6 +2838,17 @@ async function wireBackupCard(el) {
     const { data: u, error: e } = await sb.storage.from("backups").createSignedUrl(b.dataset.bk, 120, { download: b.dataset.bk });
     if (e) throw e;
     const a = document.createElement("a"); a.href = u.signedUrl; a.rel = "noopener"; document.body.append(a); a.click(); a.remove();
+  }));
+  // Excel made in the browser from the JSON backup (the server only writes the JSON — it has 2 s of CPU)
+  $$("[data-bkx]", box).forEach((b) => b.onclick = () => busy(b, async () => {
+    const { data: u, error: e } = await sb.storage.from("backups").createSignedUrl(b.dataset.bkx, 300);
+    if (e) throw e;
+    const res = await fetch(u.signedUrl); if (!res.ok) throw new Error("Backup download failed (" + res.status + ")");
+    const blob = await res.blob();
+    const { backupToExcel } = await import("./bkxl.js");
+    const xl = await backupToExcel(blob);
+    const a = document.createElement("a"); a.href = URL.createObjectURL(xl); a.download = b.dataset.bkx.replace(/\.json\.gz$/, ".xlsx");
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }));
   $$("[data-bkdel]", box).forEach((b) => b.onclick = async () => {
     const [d, t] = b.dataset.bkdel.split("_");
@@ -2851,7 +2866,7 @@ async function wireBackupCard(el) {
   const now = $("#bkNow", el);
   if (now) now.onclick = () => busy(now, async () => {
     const r = await callFn("backup", {});
-    toast(L(`💾 Backup ho gaya: ${num(r.rows)} records · Excel ${r.sheets || ""} sheets`, `💾 Backed up: ${num(r.rows)} records · Excel ${r.sheets || ""} sheets`));
+    toast(L(`💾 Backup ho gaya: ${num(r.rows)} records · ${num(r.tables || 0)} tables · ${num(r.kb || 0)} KB`, `💾 Backed up: ${num(r.rows)} records · ${num(r.tables || 0)} tables · ${num(r.kb || 0)} KB`));
     wireBackupCard(el);
   });
 }
