@@ -99,9 +99,12 @@ export const userName = (id) => S.teamById.get(id)?.full_name || (id ? "—" : "
 export const online = (u) => u?.last_seen && Date.now() - new Date(u.last_seen).getTime() < 3 * 60e3;
 export function followBadge(t) {
   if (!t) return "";
-  const d = new Date(t).getTime() - Date.now();
+  const at = new Date(t), now = new Date(), d = at.getTime() - now.getTime();
   if (d < 0) return `<span class="badge bad">Overdue · ${h(ago(t))}</span>`;
-  if (d < 864e5) return `<span class="badge warn">${L("Aaj", "Today")} · ${new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>`;
+  // "Aaj" only for today's date (a call tomorrow at 10 used to say "Aaj · 10:00 am")
+  const time = at.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }), tmr = new Date(now); tmr.setDate(now.getDate() + 1);
+  if (at.toDateString() === now.toDateString()) return `<span class="badge warn">${L("Aaj", "Today")} · ${time}</span>`;
+  if (at.toDateString() === tmr.toDateString()) return `<span class="badge">${L("Kal", "Tomorrow")} · ${time}</span>`;
   return `<span class="badge">${h(dt(t))}</span>`;
 }
 export const toLocalInput = (t) => {

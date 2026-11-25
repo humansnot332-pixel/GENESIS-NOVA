@@ -87,7 +87,7 @@ function toggleTheme() {
 //  Auth screens
 // ---------------------------------------------------------------------
 let loginMode = "login";
-const langSwitch = () => `<div class="langsw" role="group" aria-label="Language"><button type="button" class="${isEn() ? "on" : ""}" data-act="lang" data-v="en">English</button><button type="button" class="${isEn() ? "" : "on"}" data-act="lang" data-v="hinglish">Hinglish</button></div>`;
+const langSwitch = () => `<div class="langsw" role="group" aria-label="Language"><button type="button" class="${isEn() ? "on" : ""}" data-act="lang" data-v="en" aria-label="English"><span class="lw">English</span><span class="lsh">EN</span></button><button type="button" class="${isEn() ? "" : "on"}" data-act="lang" data-v="hinglish" aria-label="Hinglish"><span class="lw">Hinglish</span><span class="lsh">HI</span></button></div>`;
 function renderLogin(mode = "login", msg = "") {
   loginMode = mode;
   stopApp();
@@ -1713,6 +1713,21 @@ function rfqForm(r) {
     if (!f.company || !f.product) return toast("Company aur product zaroori", true);
     f.quoted_value = f.quoted_value ? Number(f.quoted_value) : null;
     if (!isMgr()) delete f.owner_id; else if (!f.owner_id) f.owner_id = null;
+    // same customer already has an open RFQ? show it once; a second press saves anyway
+    if (isNew && !m.dataset.dupOk) {
+      const { data: dd } = await sb.rpc("rfq_dupes", { p_phone: f.phone || null, p_email: f.email || null, p_company: f.company || null });
+      if (dd?.length) {
+        m.dataset.dupOk = "1";
+        const box = document.createElement("div"); box.id = "rfDup"; box.className = "banner warn"; box.style.margin = "0 0 12px";
+        box.innerHTML = `⚠️ <div><b>${L("Is customer ka RFQ pehle se khula hai", "This customer already has an open RFQ")}</b>
+          ${dd.map((x) => `<div class="row" style="gap:8px;margin-top:4px;flex-wrap:wrap"><span class="mono">${h(x.rfq_no)}</span> ${h(x.company)} · ${h(x.product || "")} · ${h(x.owner_id ? userName(x.owner_id) : L("koi nahi", "nobody"))} · ${h(ago(x.created_at))} <button type="button" class="btn sm" data-rfo="${x.id}">${L("Kholo", "Open")}</button></div>`).join("")}
+          <small class="mu">${L("Naya tabhi banao jab ye alag requirement ho.", "Make a new one only if this is a different requirement.")}</small></div>`;
+        $(".modal-b", m).prepend(box);
+        $$("[data-rfo]", box).forEach((b) => b.onclick = () => ACT.rfq({ dataset: { id: b.dataset.rfo } }));
+        const btn = e.target; setTimeout(() => { btn.textContent = L("Phir bhi naya banao", "Create anyway"); }, 0);
+        return;
+      }
+    }
     const res = isNew ? await sb.from("rfqs").insert({ ...f, lead_id: r.lead_id || null, source: "manual" }).select("id")
       : await sb.from("rfqs").update(f).eq("id", r.id).select("id");
     if (res.error) throw res.error;
@@ -2463,7 +2478,10 @@ async function quoteEditor(q0) {
       status: $("#qs", m).value, subtotal: c.sub, tax_total: c.tax, grand_total: c.grand, lead_id: q.lead_id || null, rfq_id: q.rfq_id || null };
     const res = q.id ? await sb.from("quotations").update(row).eq("id", q.id).select("*").single() : await sb.from("quotations").insert(row).select("*").single();
     if (res.error) throw res.error;
-    if (q.rfq_id && !q.id) await sb.from("rfqs").update({ status: "quoted", quoted_value: c.grand }).eq("id", q.rfq_id);
+    if (q.rfq_id && !q.id) {
+      const { error: re } = await sb.from("rfqs").update({ status: "quoted", quoted_value: c.grand }).eq("id", q.rfq_id);
+      if (re) toast(L("Quotation ban gayi, par RFQ ka status nahi badla: ", "Quotation saved, but the RFQ status did not change: ") + friendly(re), true);
+    }
     if (q.lead_id && !q.id) { await sb.from("activities").insert({ lead_id: q.lead_id, kind: "system", body: `Quotation ${res.data.quote_no} banayi — ${inr(c.grand)}` }); }
     toast(`Quotation ${res.data.quote_no} saved ✔`); closeModal(); quoteEditor(res.data);
     if (S.route === "quotes") VIEWS.quotes($("#page"));

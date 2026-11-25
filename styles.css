@@ -978,3 +978,28 @@ details.stg > summary::-webkit-details-marker { display: none; }
 
 /* v84 · dashboard: date bar between live numbers and the range numbers */
 #db-dash { margin: 18px 0 12px; }
+
+/* v86 · warning banner (RFQ already open) */
+.banner.warn { background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.banner.warn b { color: var(--warn); }
+
+/* v86 · phone: short language switch (EN / HI) so the page title is not cut to "Dash…";
+   date chips in one row that scrolls sideways instead of three rows */
+.langsw .lsh { display: none; }
+@media (max-width: 560px) {
+  .langsw .lw { display: none; }
+  .langsw .lsh { display: inline; }
+  .datebar .db-l { display: none; }
+  .datebar .chips { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .datebar .chips::-webkit-scrollbar { display: none; }
+  .datebar .chips .chip { flex: none; }
+  .datebar .db-own { flex: 1 1 100%; }
+  .datebar .db-own .input { flex: 1; width: auto; min-width: 0; }
+}
+@media (max-width: 560px) {
+  .top { gap: 4px; padding-left: 10px; padding-right: 10px; }
+  .top .btn.icon { width: 32px; min-width: 32px; padding: 0; }
+  .top h1 { font-size: 16px; }
+  .langsw button { padding: 4px 6px; }
+}
+@media (max-width: 560px) { .toolbar .datebar { min-width: 0; flex: 1 1 100%; } }

@@ -62,6 +62,9 @@ export function dateBarHtml(key, st) {
 }
 export function wireDateBar(root, key, st, onChange) {
   const bar = root.querySelector("#db-" + key); if (!bar) return;
+  // phone: the chips scroll sideways → bring the chosen one into view
+  const ch = bar.querySelector(".chips"), on = ch?.querySelector(".chip.on");
+  if (ch && on && ch.scrollWidth > ch.clientWidth) ch.scrollLeft += on.getBoundingClientRect().left - ch.getBoundingClientRect().left - (ch.clientWidth - on.offsetWidth) / 2;
   const redraw = () => { bar.outerHTML = dateBarHtml(key, st); wireDateBar(root, key, st, onChange); };
   bar.querySelectorAll("[data-dbp]").forEach((b) => b.onclick = () => {
     st.p = b.dataset.dbp;
