@@ -125,9 +125,10 @@ async function customerCard(c, { openLead, from, to }) {
 }
 
 // the lead drawer's "💰 lifetime sales" line
-export async function leadSalesLine(box, leadId) {
+export const leadSalesData = (leadId) => sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: leadId, p_limit: 1 });
+export async function leadSalesLine(box, leadId, pre) {
   if (!box || !leadId) return;
-  const { data } = await sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: leadId, p_limit: 1 });
+  const { data } = await (pre || leadSalesData(leadId));
   const c = data?.customers?.[0];
   if (!c || !(+c.won_amt > 0)) { box.remove(); return; }
   box.innerHTML = `💰 <b>${h(inr(Math.round(+c.won_amt)))}</b> ${L("ki sales ab tak", "of sales so far")} <span class="mu">· ${num(c.won_n)} ${+c.won_n === 1 ? "order" : "orders"} · ${L("last", "last")} ${h(day(c.last_won))}${c.top_item ? " · " + h(String(c.top_item).slice(0, 50)) : ""}</span>`;

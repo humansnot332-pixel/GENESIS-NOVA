@@ -14,7 +14,7 @@ import {
 } from "./comms.js";
 import { startLoginFx, MODES as FX_MODES } from "./login-fx.js";
 import {
-  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, loadProducts, productDatalist, findProduct, prodLabel, quotedHint,
+  viewProducts, viewRenewals, viewOrders, viewSupport, viewDaily, viewDuplicates, leadPanel, leadPanelData, loadProducts, productDatalist, findProduct, prodLabel, quotedHint,
   marginHtml, shareQuote, quoteTrackHtml, orderFromQuote, ticketForm, ticketView,
 } from "./biz.js";
 import { CONFIG } from "./config.js";
@@ -448,13 +448,14 @@ function route() {
   const bar = $("#nprog"), tok = (route.tok = (route.tok || 0) + 1);
   bar?.classList.remove("done"); bar?.classList.add("go");
   const barDone = () => { if (route.tok !== tok || !bar) return; bar.classList.replace("go", "done"); };
+  // a link to one lead / quotation (notification, search, bell): open it right away, the list loads behind it
+  if (S.params.id && S.route === "leads") openLead(+S.params.id);
+  if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
   Promise.resolve(VIEWS[S.route](page, false, S.params)).finally(barDone).then(() => {
     page.classList.remove("stale");
     if (!page.isConnected) return;
     if (!cached) enterAnim(page);
-    if (S.params.id && S.route === "leads") openLead(+S.params.id);
     if (S.params.id && S.route === "rfqs") ACT.rfq({ dataset: { id: S.params.id } });
-    if (S.params.id && S.route === "quotes") ACT.quote({ dataset: { id: S.params.id } });
     if (S.params.id && S.route === "obf") openObf(+S.params.id);
     if (S.params.id && S.route === "purchase") openPo(+S.params.id);
   }).catch((e) => { page.classList.remove("stale"); if (cached && page.isConnected) page.innerHTML = `<div class="empty">—</div>`; fail(e); });
@@ -935,6 +936,7 @@ let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawer
 const lockTill = (u) => { const d = u ? new Date(u) : null; return !d || isNaN(d) || d.getFullYear() > 9000 ? L("hamesha ke liye (won)", "permanently (won)") : L("till ", "until ") + dt(u); };
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
+  const panelP = leadPanelData(id), salesP = sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: id, p_limit: 1 });
   const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = await Promise.all([
     sb.from("leads").select("*").eq("id", id).single(),
     sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
@@ -1036,12 +1038,12 @@ async function openLead(id, opt = {}) {
   document.body.append(scrim, d);
   if (keepTop) { const b = d.querySelector(".drawer-b"); if (b) b.scrollTop = keepTop; }
   const reopen = () => openLead(id, opt);
-  leadPanel($("#lpanel", d), l, reopen).catch(() => {});
+  leadPanel($("#lpanel", d), l, reopen, panelP).catch(() => {});
   const after = () => { softRefresh(); refreshBadges(); };
   d.querySelector("[data-dclose]").onclick = closeDrawer;
   $$("[data-mail]", d).forEach((x) => x.onclick = () => { closeDrawer(); location.hash = "#/inbox/" + x.dataset.mail; });
   drawLeadProducts($("#lProds", d), l, canEdit, reopen);
-  import("./sales.js").then((x) => x.leadSalesLine($("#lSales", d), l.id)).catch(() => {});
+  import("./sales.js").then((x) => x.leadSalesLine($("#lSales", d), l.id, salesP)).catch(() => {});
   $$("[data-comp]", d).forEach((b) => b.onclick = async () => {
     if (!(await ensureWork("lead", l))) return;
     openComposer({ channel: b.dataset.comp, lead: l, onSent: reopen });
@@ -1324,13 +1326,16 @@ async function fillSources(el) {
 }
 const PAGE = 50;
 const LD = dateState("leads");
+const srchPat = (q) => { const w = String(q || "").split(/[^\p{L}\p{N}@.&'+-]+/u).filter(Boolean); return w.length ? `"*${w.join("*")}*"` : ""; };
 function leadQuery(sel, count) {
   let q = sb.from("leads").select(sel, count ? { count: "exact" } : undefined);
   q = applyDates(q, "created_at", LD, true);
-  const s = LF.q.replace(/[%,()*"\\]/g, " ").trim();
-  if (s) {
-    const d = s.replace(/\D/g, "");
-    q = q.or([`company.ilike.%${s}%`, `contact_name.ilike.%${s}%`, `city.ilike.%${s}%`, `area.ilike.%${s}%`, `email.ilike.%${s}%`, ...(d.length >= 4 ? [`phone_norm.like.%${d}%`] : [])].join(","));
+  // words in order, anything between them: "dr shah" finds "Dr. Shah", "mehta, pune" finds "Mehta Traders Pune";
+  // quotes / commas / brackets can no longer break the search
+  const w = srchPat(LF.q);
+  if (w) {
+    const d = LF.q.replace(/\D/g, "");
+    q = q.or([`company.ilike.${w}`, `contact_name.ilike.${w}`, `city.ilike.${w}`, `area.ilike.${w}`, `email.ilike.${w}`, ...(d.length >= 4 ? [`phone_norm.like.*${d}*`] : [])].join(","));
   }
   if (LF.status === "open") q = q.in("status", OPEN_STATUSES); else if (LF.status) q = q.eq("status", LF.status);
   if (LF.category) q = q.eq("category", LF.category);
@@ -1581,8 +1586,8 @@ const RQD = dateState("rfqs");
 VIEWS.rfqs = async (el) => {
   let q = applyDates(sb.from("rfqs").select("*").order("created_at", { ascending: false }).limit(300), "created_at", RQD, true);
   if (RF.st === "open") q = q.in("status", ["new", "in_progress", "quoted", "negotiating"]); else if (RF.st !== "all") q = q.eq("status", RF.st);
-  const s = RF.q.replace(/[%,()*"\\]/g, " ").trim();
-  if (s) q = q.or(`company.ilike.%${s}%,product.ilike.%${s}%,rfq_no.ilike.%${s}%,city.ilike.%${s}%`);
+  const s = srchPat(RF.q);
+  if (s) q = q.or(`company.ilike.${s},product.ilike.${s},rfq_no.ilike.${s},city.ilike.${s},contact.ilike.${s}`);
   const { data, error } = await q; if (error) throw error;
   const today = new Date(new Date().toDateString());
   el.innerHTML = `
@@ -1944,7 +1949,10 @@ ACT.delQuote = async (t) => {
   closeModal(); toast(L(`🗑 Quotation ${no} delete ho gayi`, `🗑 Quotation ${no} deleted`));
   if (S.route === "quotes") loadQuotes($("#page")).catch(() => {});
 };
-ACT.quote = async (t) => { const { data, error } = await sb.from("quotations").select("*").eq("id", +t.dataset.id).single(); if (error) return fail(error); quoteEditor(data); };
+ACT.quote = async (t) => {
+  const [{ data, error }] = await Promise.all([sb.from("quotations").select("*").eq("id", +t.dataset.id).single(), loadProducts().catch(() => {}), loadQTpl().catch(() => {})]);
+  if (error) return fail(error); quoteEditor(data);
+};
 
 // ---- quotation Terms & Conditions / Annexure templates (migration 050)
 let QTPL = null, QTPL_AT = 0;
@@ -3317,13 +3325,13 @@ ACT.palette = () => {
   const navItems = NAV.filter((n) => n.length >= 3 && typeof n[1] === "string" && (!n[3] || n[3]())).map((n) => ({ l: n[1], s: "Page", go: () => { location.hash = "#/" + n[0]; } }));
   const draw = () => { list.innerHTML = items.map((it, i) => `<div class="pal-item ${i === sel ? "on" : ""}" data-i="${i}">${h(it.l)}<small>${h(it.s)}</small></div>`).join("") || '<div class="empty">Kuch nahi mila</div>'; };
   const run = async () => {
-    const s = inp.value.trim().replace(/[%,()*"\\]/g, " ");
+    const s = inp.value.trim().replace(/[%,()*"\\]/g, " "), w = srchPat(s);
     items = navItems.filter((n) => !s || n.l.toLowerCase().includes(s.toLowerCase()));
-    if (s.length >= 2) {
+    if (s.length >= 2 && w) {
       const d = s.replace(/\D/g, "");
       const [{ data: ls }, { data: rs }] = await Promise.all([
-        sb.from("leads").select("id, company, city, status").or(`company.ilike.%${s}%,contact_name.ilike.%${s}%` + (d.length >= 4 ? `,phone_norm.like.%${d}%` : "")).limit(8),
-        sb.from("rfqs").select("id, rfq_no, company").or(`company.ilike.%${s}%,rfq_no.ilike.%${s}%`).limit(4),
+        sb.from("leads").select("id, company, city, status").or(`company.ilike.${w},contact_name.ilike.${w}` + (d.length >= 4 ? `,phone_norm.like.*${d}*` : "")).limit(8),
+        sb.from("rfqs").select("id, rfq_no, company").or(`company.ilike.${w},rfq_no.ilike.${w}`).limit(4),
       ]);
       items = [...(ls || []).map((l) => ({ l: l.company, s: [l.city, STATUS[l.status]?.l].filter(Boolean).join(" · "), go: () => openLead(l.id) })), ...(rs || []).map((r) => ({ l: `${r.rfq_no} · ${r.company}`, s: "RFQ", go: () => ACT.rfq({ dataset: { id: r.id } }) })), ...items];
     }

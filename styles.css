@@ -968,11 +968,6 @@ details.stg > summary::-webkit-details-marker { display: none; }
 @media (max-width: 640px) { .toolbar .tb-acts { margin-left: 0; width: 100%; justify-content: stretch; } .toolbar .tb-acts .btn { flex: 1; justify-content: center; } #qq { min-width: 0; } }
 
 /* v83 · one date filter on every list */
-.datebar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: -4px 0 12px; }
-.datebar .db-l { font-size: 15px; }
-.datebar .chips { flex-wrap: wrap; }
-.datebar .db-own { display: inline-flex; gap: 6px; align-items: center; }
-.datebar .db-own .input { width: 150px; height: 32px; }
 .kpi .v.sm { font-size: 20px; }
 .toolbar .datebar { margin: 0; }
 
@@ -989,12 +984,6 @@ details.stg > summary::-webkit-details-marker { display: none; }
 @media (max-width: 560px) {
   .langsw .lw { display: none; }
   .langsw .lsh { display: inline; }
-  .datebar .db-l { display: none; }
-  .datebar .chips { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
-  .datebar .chips::-webkit-scrollbar { display: none; }
-  .datebar .chips .chip { flex: none; }
-  .datebar .db-own { flex: 1 1 100%; }
-  .datebar .db-own .input { flex: 1; width: auto; min-width: 0; }
 }
 @media (max-width: 560px) {
   .top { gap: 4px; padding-left: 10px; padding-right: 10px; }
@@ -1002,4 +991,54 @@ details.stg > summary::-webkit-details-marker { display: none; }
   .top h1 { font-size: 16px; }
   .langsw button { padding: 4px 6px; }
 }
-@media (max-width: 560px) { .toolbar .datebar { min-width: 0; flex: 1 1 100%; } }
+
+/* v87 · date filter = one calendar button; all choices open in an animated panel */
+.datebar { position: relative; display: inline-flex; gap: 6px; align-items: center; margin: -4px 0 12px; }
+.toolbar .datebar { margin: 0; }
+.db-btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px 0 10px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--tx); font: inherit; font-size: 13.5px; font-weight: 600;
+  transition: border-color .15s, box-shadow .2s, background .15s, transform .12s; }
+.db-btn:hover { border-color: var(--accent); box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 16%, transparent); }
+.db-btn:active { transform: scale(.97); }
+.db-btn.on { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
+.db-ic { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; background: var(--accent); color: var(--on-accent); }
+.db-ic svg { width: 14px; height: 14px; }
+.db-car { font-size: 10px; opacity: .7; transition: transform .25s cubic-bezier(.2, .9, .3, 1.3); }
+.datebar.open .db-car { transform: rotate(180deg); }
+.datebar.open .db-ic { animation: dbWiggle .5s cubic-bezier(.3, 1.6, .5, 1); }
+.db-x { width: 28px; height: 28px; border-radius: 99px; border: 1px solid var(--line-2); background: var(--surface); color: var(--tx-2); cursor: pointer; font-size: 12px;
+  display: grid; place-items: center; transition: background .15s, color .15s, transform .15s; }
+.db-x:hover { background: var(--bad-soft, #fee2e2); color: var(--bad); transform: rotate(90deg); }
+.db-pop { position: absolute; top: calc(100% + 8px); left: 0; z-index: 40; width: 360px; max-width: calc(100vw - 24px); padding: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: 0 18px 50px -12px rgba(15, 23, 42, .35), 0 2px 8px rgba(15, 23, 42, .08);
+  transform-origin: 24px -8px; animation: dbIn .32s cubic-bezier(.2, .9, .3, 1.15) both; }
+.db-pop::before { content: ""; position: absolute; top: -6px; left: 22px; width: 12px; height: 12px; background: var(--surface);
+  border-left: 1px solid var(--line); border-top: 1px solid var(--line); transform: rotate(45deg); }
+.db-pop.out { animation: dbOut .16s ease-in both; }
+.db-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.db-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 9px 11px; border-radius: 11px; cursor: pointer; text-align: left;
+  border: 1px solid var(--line); background: var(--surface-2, var(--surface)); color: var(--tx); font: inherit;
+  animation: dbOpt .34s cubic-bezier(.2, .9, .3, 1.2) both; animation-delay: calc(var(--i) * 28ms + 40ms);
+  transition: border-color .15s, background .15s, transform .12s; }
+.db-opt b { font-size: 13.5px; font-weight: 650; }
+.db-opt small { font-size: 11.5px; color: var(--tx-2); }
+.db-opt:hover { border-color: var(--accent); transform: translateY(-1px); }
+.db-opt:active { transform: scale(.97); }
+.db-opt.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.db-opt.on small { color: color-mix(in srgb, var(--on-accent) 80%, transparent); }
+.db-own { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line);
+  animation: dbOpt .3s cubic-bezier(.2, .9, .3, 1.2) both; }
+.db-own[hidden] { display: none; }
+.db-own label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--tx-2); font-weight: 600; min-width: 0; }
+.db-own .input { height: 34px; width: 100%; min-width: 0; }
+.db-own .btn { height: 34px; }
+@keyframes dbIn { from { opacity: 0; transform: translateY(-8px) scale(.9); } to { opacity: 1; transform: none; } }
+@keyframes dbOut { to { opacity: 0; transform: translateY(-6px) scale(.95); } }
+@keyframes dbOpt { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes dbWiggle { 0% { transform: rotate(0); } 30% { transform: rotate(-14deg) scale(1.12); } 60% { transform: rotate(10deg); } 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .db-pop, .db-opt, .db-own, .datebar.open .db-ic { animation: none !important; } }
+@media (max-width: 560px) {
+  .db-own { grid-template-columns: 1fr 1fr; }
+  .db-own .btn { grid-column: 1 / -1; }
+}

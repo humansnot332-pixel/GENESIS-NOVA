@@ -54,9 +54,10 @@ function wireLeadPicker(m, id) {
 let PROD = null, COSTS = null;
 export async function loadProducts(force = false) {
   if (PROD && !force) return PROD;
+  const costP = isMgr() ? sb.rpc("product_costs") : null;
   const { data } = await sb.from("products").select("id, brand, name, model, category, hsn, gst_rate, unit, sell_price, active, notes, pitch, pitch_hi, erp_id, sku, erp_category, quoted_n, quoted_won, quoted_last, quoted_last_at").order("brand").order("name").limit(5000);
   PROD = data || [];
-  if (isMgr()) { const { data: c } = await sb.rpc("product_costs"); COSTS = new Map((c || []).map((x) => [x.id, x])); }
+  if (costP) { const { data: c } = await costP; COSTS = new Map((c || []).map((x) => [x.id, x])); }
   return PROD;
 }
 // "Microsoft" + "Microsoft 365 Business" → "Microsoft 365 Business" (the brand only once)
@@ -821,16 +822,20 @@ export async function viewDuplicates(el) {
 // =====================================================================
 //  LEAD DRAWER PANEL: renewals · orders · invoices · tickets · visits
 // =====================================================================
-export async function leadPanel(box, lead, reopen) {
-  const [{ data: rn }, { data: od }, { data: iv }, { data: tk }, { data: vs }, { data: qs, count: qn }] = await Promise.all([
-    sb.from("renewals").select("*").eq("lead_id", lead.id).in("status", ["active", "unconfirmed"]).order("end_date"),
-    sb.from("orders").select("id, order_no, amount, status, created_at").eq("lead_id", lead.id).order("created_at", { ascending: false }).limit(10),
-    sb.from("invoice_balances").select("*").eq("lead_id", lead.id).order("invoice_date", { ascending: false }).limit(10),
-    sb.from("tickets").select("id, ticket_no, title, status").eq("lead_id", lead.id).in("status", ["open", "in_progress", "waiting"]),
-    sb.from("visits").select("id").eq("lead_id", lead.id),
+/** the account panel's data — started early by openLead (together with the lead itself) */
+export function leadPanelData(id) {
+  return Promise.all([
+    sb.from("renewals").select("*").eq("lead_id", id).in("status", ["active", "unconfirmed"]).order("end_date"),
+    sb.from("orders").select("id, order_no, amount, status, created_at").eq("lead_id", id).order("created_at", { ascending: false }).limit(10),
+    sb.from("invoice_balances").select("*").eq("lead_id", id).order("invoice_date", { ascending: false }).limit(10),
+    sb.from("tickets").select("id, ticket_no, title, status").eq("lead_id", id).in("status", ["open", "in_progress", "waiting"]),
+    sb.from("visits").select("id").eq("lead_id", id),
     sb.from("quotations").select("id, quote_no, status, grand_total, quote_date, created_at, import_batch", { count: "exact" })
-      .eq("lead_id", lead.id).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(5),
+      .eq("lead_id", id).order("created_at", { ascending: false }).order("id", { ascending: false }).limit(5),
   ]);
+}
+export async function leadPanel(box, lead, reopen, pre) {
+  const [{ data: rn }, { data: od }, { data: iv }, { data: tk }, { data: vs }, { data: qs, count: qn }] = await (pre || leadPanelData(lead.id));
   const QB = { won: "good", lost: "bad", sent: "info" };
   const due = (iv || []).filter((i) => !i.cancelled && +i.balance > 0.5);
   const can = canWork(lead);

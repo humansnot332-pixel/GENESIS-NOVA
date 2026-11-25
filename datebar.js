@@ -1,13 +1,15 @@
 // =====================================================================
-//  datebar.js — one date filter for every list: Today · This week · This month · Last month ·
-//  this FY · last FY · All · 📅 own dates. Each page remembers its own choice (this device).
+//  datebar.js — one date filter for every list. Folded into a single calendar button that shows the
+//  current choice; pressing it opens all choices (Today · This week · This month · Last month · this FY ·
+//  last FY · All · own dates) in an animated panel. Each page remembers its own choice (this device).
 //  Dates are India dates; a timestamp column is filtered from 00:00 to 23:59 IST.
 // =====================================================================
-import { h } from "./core.js";
+import { h, ic } from "./core.js";
 import { L } from "./i18n.js";
 
 const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const fy2 = (y) => String(y).slice(2);
+const short = (v) => new Date(v + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 
 function presets() {
   const n = new Date(), y = n.getFullYear(), m = n.getMonth(), fy = m >= 3 ? y : y - 1;
@@ -51,25 +53,65 @@ export function applyDates(q, col, st, ts = false) {
   return q;
 }
 
-/** the bar; wire it with wireDateBar() */
+/** the folded bar (one button); wire it with wireDateBar() */
 export function dateBarHtml(key, st) {
-  return `<div class="datebar" id="db-${key}" role="group" aria-label="${h(L("Date", "Date"))}">
-    <span class="db-l">📅</span>
-    <div class="chips">${presets().map(([k, l]) => `<button type="button" class="chip ${st.p === k ? "on" : ""}" data-dbp="${k}" aria-pressed="${st.p === k}">${h(l)}</button>`).join("")}
-      <button type="button" class="chip ${st.p === "custom" ? "on" : ""}" data-dbp="custom" aria-pressed="${st.p === "custom"}">${L("Apni dates", "Dates")}</button></div>
-    ${st.p === "custom" ? `<span class="db-own"><input class="input" type="date" data-dbf="from" value="${h(st.from || "")}" aria-label="From"><span class="mu">→</span><input class="input" type="date" data-dbf="to" value="${h(st.to || "")}" aria-label="To"></span>` : ""}
+  const { label } = dateRange(st), on = dateActive(st);
+  const hint = (f, t) => !f ? L("shuru se", "everything") : f === t ? short(f) : `${short(f)} – ${short(t)}`;
+  return `<div class="datebar" id="db-${key}">
+    <button type="button" class="db-btn ${on ? "on" : ""}" aria-haspopup="dialog" aria-expanded="false" title="${h(L("Date chuno", "Pick dates"))}">
+      <span class="db-ic">${ic("calendar")}</span><span class="db-cur">${h(label)}</span><span class="db-car" aria-hidden="true">▾</span></button>
+    ${on ? `<button type="button" class="db-x" title="${h(L("Date hatao", "Clear dates"))}" aria-label="${h(L("Date hatao", "Clear dates"))}">✕</button>` : ""}
+    <div class="db-pop" role="dialog" aria-label="${h(L("Date chuno", "Pick dates"))}" hidden>
+      <div class="db-grid">${presets().map(([k, l, f, t], i) => `<button type="button" class="db-opt ${st.p === k ? "on" : ""}" data-dbp="${k}" aria-pressed="${st.p === k}" style="--i:${i}"><b>${h(l)}</b><small>${h(hint(f, t))}</small></button>`).join("")}
+        <button type="button" class="db-opt ${st.p === "custom" ? "on" : ""}" data-dbp="custom" aria-pressed="${st.p === "custom"}" style="--i:7"><b>${L("Apni dates", "Own dates")}</b><small>${L("se → tak", "from → to")}</small></button></div>
+      <div class="db-own" ${st.p === "custom" ? "" : "hidden"}>
+        <label><span>${L("Se", "From")}</span><input class="input" type="date" data-dbf="from" value="${h(st.from || "")}"></label>
+        <label><span>${L("Tak", "To")}</span><input class="input" type="date" data-dbf="to" value="${h(st.to || "")}"></label>
+        <button type="button" class="btn primary sm" data-dbgo>${L("Lagao", "Apply")}</button>
+      </div>
+    </div>
   </div>`;
 }
+
+let closeOpen = null;   // only one panel open at a time
 export function wireDateBar(root, key, st, onChange) {
   const bar = root.querySelector("#db-" + key); if (!bar) return;
-  // phone: the chips scroll sideways → bring the chosen one into view
-  const ch = bar.querySelector(".chips"), on = ch?.querySelector(".chip.on");
-  if (ch && on && ch.scrollWidth > ch.clientWidth) ch.scrollLeft += on.getBoundingClientRect().left - ch.getBoundingClientRect().left - (ch.clientWidth - on.offsetWidth) / 2;
+  const btn = bar.querySelector(".db-btn"), pop = bar.querySelector(".db-pop"), own = bar.querySelector(".db-own");
   const redraw = () => { bar.outerHTML = dateBarHtml(key, st); wireDateBar(root, key, st, onChange); };
+  const outside = (e) => { if (!bar.contains(e.target)) close(); };
+  const esc = (e) => { if (e.key === "Escape") { close(); btn.focus(); } };
+  function close() {
+    if (pop.hidden) return;
+    document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", esc, true);
+    btn.setAttribute("aria-expanded", "false"); bar.classList.remove("open");
+    pop.classList.add("out"); setTimeout(() => { pop.hidden = true; pop.classList.remove("out"); }, 160);
+    if (closeOpen === close) closeOpen = null;
+  }
+  function open() {
+    closeOpen?.(); closeOpen = close;
+    pop.hidden = false; bar.classList.add("open"); btn.setAttribute("aria-expanded", "true");
+    // keep the panel on screen (phones / a button near the right edge)
+    pop.style.left = "0px";
+    const r = pop.getBoundingClientRect();
+    if (r.right > innerWidth - 8) pop.style.left = Math.min(0, innerWidth - 8 - r.right) + "px";
+    document.addEventListener("pointerdown", outside, true); document.addEventListener("keydown", esc, true);
+    (bar.querySelector(".db-opt.on") || bar.querySelector(".db-opt"))?.focus({ preventScroll: true });
+  }
+  btn.onclick = () => (pop.hidden ? open() : close());
+  const apply = () => { save(key, st); close(); setTimeout(() => { redraw(); onChange(st); }, 120); };
+  bar.querySelector(".db-x")?.addEventListener("click", () => { st.p = "all"; save(key, st); redraw(); onChange(st); });
   bar.querySelectorAll("[data-dbp]").forEach((b) => b.onclick = () => {
-    st.p = b.dataset.dbp;
-    if (st.p === "custom" && !st.from && !st.to) { const r = presets()[2]; st.from = r[2]; st.to = r[3]; }   // start from "this month"
-    save(key, st); redraw(); onChange(st);
+    if (b.dataset.dbp === "custom") {
+      bar.querySelectorAll(".db-opt").forEach((o) => { o.classList.toggle("on", o === b); o.setAttribute("aria-pressed", String(o === b)); });
+      if (!st.from && !st.to) { const r = presets()[2]; bar.querySelector('[data-dbf="from"]').value = r[2]; bar.querySelector('[data-dbf="to"]').value = r[3]; }
+      own.hidden = false; own.querySelector("input").focus();
+      return;
+    }
+    st.p = b.dataset.dbp; apply();
   });
-  bar.querySelectorAll("[data-dbf]").forEach((i) => i.onchange = () => { st[i.dataset.dbf] = i.value; save(key, st); onChange(st); });
+  bar.querySelector("[data-dbgo]").onclick = () => {
+    const f = bar.querySelector('[data-dbf="from"]').value, t = bar.querySelector('[data-dbf="to"]').value;
+    st.p = "custom"; st.from = f && t && f > t ? t : f; st.to = f && t && f > t ? f : t; apply();
+  };
+  own.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); bar.querySelector("[data-dbgo]").click(); } });
 }
