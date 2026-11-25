@@ -724,15 +724,28 @@ ACT.go = (t) => { location.hash = "#/" + t.dataset.go; };
 // ---------------------------------------------------------------------
 function barChart(data, { height = 190, fmt = num, label = "", hiLast = false } = {}) {
   if (!data.length) return `<div class="empty">Data nahi hai</div>`;
-  const W = 640, H = height, pl = 30, pb = 24, pt = 18, max = Math.max(0, ...data.map((d) => d.v));
+  const W = 640, H = height, pb = 24, pt = 18, max = Math.max(0, ...data.map((d) => d.v));
   // whole-number axis with at most ~4 steps: 0,1,2 / 0,5,10 / 0,25,50 …
   const ints = data.every((d) => Number.isInteger(d.v));
   const raw = Math.max(ints ? 1 : 0.0001, max / 4), mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw && (!ints || Number.isInteger(x))) || 10 * mag;
   const top = Math.max(step, Math.ceil(max / step) * step), ticks = [...Array(Math.round(top / step) + 1)].map((_, i) => i * step);
+  const pl = Math.max(30, Math.ceil(Math.max(...ticks.map((t) => String(fmt(t)).length)) * 6.3) + 10);   // room for "₹1.5 Cr"
   const bw = (W - pl) / data.length, gap = Math.min(12, bw * 0.28), y = (v) => pt + (H - pt - pb) * (1 - v / top);
   const every = Math.ceil(data.length / 14), showVals = data.length <= 31, last = data.length - 1;
   const showLab = (i) => i === last || (i % every === 0 && last - i >= every);
+  // value labels only where they don't run into each other — the biggest bars first, the rest in the tooltip
+  const valOn = new Set();
+  if (showVals) {
+    const boxes = [];
+    const tiny = data.length > 16 ? max * 0.06 : 0;   // many months: tiny bars keep their amount in the tooltip
+    data.map((d, i) => ({ d, i })).filter((o) => o.d.v > tiny).sort((a, b) => b.d.v - a.d.v).forEach(({ d, i }) => {
+      const cx = pl + i * bw + bw / 2, w2 = (String(fmt(d.v)).length * 7.2) / 2 + 5, yy = y(d.v) - 5;
+      if (cx - w2 < pl - 4 || cx + w2 > W + 4) return;
+      if (boxes.some((b) => cx - w2 < b.r && cx + w2 > b.l && Math.abs(yy - b.y) < 13)) return;
+      boxes.push({ l: cx - w2, r: cx + w2, y: yy }); valOn.add(i);
+    });
+  }
   return `<div class="chart" role="img" aria-label="${h(label)}"><svg viewBox="0 0 ${W} ${H}">
     <g class="grid">${ticks.map((t) => `<line x1="${pl}" x2="${W}" y1="${y(t)}" y2="${y(t)}"/>`).join("")}</g>
     <g class="axis">${ticks.map((t) => `<text x="${pl - 6}" y="${y(t) + 4}" text-anchor="end">${h(fmt(t))}</text>`).join("")}
@@ -741,7 +754,7 @@ function barChart(data, { height = 190, fmt = num, label = "", hiLast = false } 
       const x = pl + i * bw + gap / 2, w = bw - gap, yy = y(d.v), hh = Math.max(0, H - pb - yy), r = Math.min(5, w / 2, hh);
       const path = hh > 0 ? `M${x},${H - pb} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + w - r} Q${x + w},${yy} ${x + w},${yy + r} V${H - pb} Z` : `M${x},${H - pb - 2} H${x + w} V${H - pb} H${x} Z`;
       const cls = (hh > 0 ? "bar" : "bar zero") + (hiLast && i === last ? " now" : "");
-      return `<g class="col" tabindex="0" data-tip="${h(d.t || d.l)}" data-tv="${h(fmt(d.v))}"><rect class="hit" x="${pl + i * bw}" y="${pt - 14}" width="${bw}" height="${H - pt - pb + 14}"/><path class="${cls}" d="${path}"/>${showVals && d.v > 0 ? `<text class="val" x="${x + w / 2}" y="${yy - 5}" text-anchor="middle">${h(fmt(d.v))}</text>` : ""}</g>`;
+      return `<g class="col" tabindex="0" data-tip="${h(d.t || d.l)}" data-tv="${h(fmt(d.v))}"><rect class="hit" x="${pl + i * bw}" y="${pt - 14}" width="${bw}" height="${H - pt - pb + 14}"/><path class="${cls}" d="${path}"/>${valOn.has(i) ? `<text class="val" x="${x + w / 2}" y="${yy - 5}" text-anchor="middle">${h(fmt(d.v))}</text>` : ""}</g>`;
     }).join("")}
   </svg></div>`;
 }
