@@ -1268,6 +1268,31 @@ function editLeadProducts(l, done) {
 //  LEADS table
 // ---------------------------------------------------------------------
 const LF = { q: "", status: "", category: "", owner: "", source: "", city: "", page: 0, sort: "created_at", asc: false, sel: new Set() };
+// Source filter: only sources that really have leads (a new one shows up with its first lead); the CRM's own lead finder = one option
+const AUTO_SRC = ["osm", "google_places"];
+let srcCounts = null;
+function sourceOptions() {
+  const c = srcCounts || {}, groups = new Map(); let auto = 0;
+  for (const [k, n] of Object.entries(c)) {
+    if (!n) continue;
+    if (AUTO_SRC.includes(k)) { auto += n; continue; }
+    const lab = SOURCES[k] || k, g = groups.get(lab) || { keys: [], n: 0 };
+    g.keys.push(k); g.n += n; groups.set(lab, g);
+  }
+  const opt = (v, label, n) => `<option value="${h(v)}" ${LF.source === v ? "selected" : ""}>${h(label)}${n != null ? " · " + num(n) : ""}</option>`;
+  const list = [...groups.entries()].sort((a, b) => b[1].n - a[1].n);
+  let html = opt("", L("Sab sources", "All sources")) + (auto ? opt("auto", L("🤖 CRM (apne aap mili)", "🤖 CRM (found automatically)"), auto) : "")
+    + list.map(([lab, g]) => opt(g.keys.sort().join(","), lab, g.n)).join("");
+  // the chosen filter stays in the list even when it has no leads right now
+  if (LF.source && !html.includes(`value="${h(LF.source)}"`)) html += opt(LF.source, LF.source === "auto" ? L("🤖 CRM (apne aap mili)", "🤖 CRM (found automatically)") : LF.source.split(",").map((k) => SOURCES[k] || k).join(" / "), 0);
+  return html;
+}
+async function fillSources(el) {
+  const { data } = await sb.rpc("lead_source_counts");
+  if (!data) return;
+  srcCounts = data;
+  const x = $("#lsrc", el); if (x && document.activeElement !== x) x.innerHTML = sourceOptions();
+}
 const PAGE = 50;
 function leadQuery(sel, count) {
   let q = sb.from("leads").select(sel, count ? { count: "exact" } : undefined);
@@ -1278,7 +1303,9 @@ function leadQuery(sel, count) {
   }
   if (LF.status === "open") q = q.in("status", OPEN_STATUSES); else if (LF.status) q = q.eq("status", LF.status);
   if (LF.category) q = q.eq("category", LF.category);
-  if (LF.source) q = q.eq("source", LF.source);
+  if (LF.source === "auto") q = q.in("source", AUTO_SRC);
+  else if (LF.source.includes(",")) q = q.in("source", LF.source.split(","));
+  else if (LF.source) q = q.eq("source", LF.source);
   if (LF.city) q = q.ilike("city", LF.city.replace(/[%_\\]/g, ""));
   if (LF.owner === "none") q = q.is("owner_id", null);
   else if (LF.owner === "me") q = q.eq("owner_id", S.me.id);
@@ -1294,7 +1321,7 @@ VIEWS.leads = async (el, soft) => {
       <select class="input" id="lst" aria-label="Status"><option value="">All status</option><option value="open" ${LF.status === "open" ? "selected" : ""}>Open (active)</option>${STATUSES.map(([k, l]) => `<option value="${k}" ${LF.status === k ? "selected" : ""}>${l}</option>`).join("")}</select>
       <select class="input" id="lcat" aria-label="Category"><option value="">All categories</option>${CATEGORIES.map((c) => `<option ${LF.category === c ? "selected" : ""}>${c}</option>`).join("")}</select>
       <select class="input" id="lcity" aria-label="City"><option value="">${L("Sab cities", "All cities")}</option>${LF.city ? `<option selected value="${h(LF.city)}">${h(LF.city)}</option>` : ""}</select>
-      <select class="input" id="lsrc" aria-label="Source"><option value="">All sources</option>${Object.entries(SOURCES).map(([k, v]) => `<option value="${k}" ${LF.source === k ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <select class="input" id="lsrc" aria-label="Source">${sourceOptions()}</select>
       <select class="input" id="lown" aria-label="Lock"><option value="">Sab leads</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>🔒 Mere (locked by me)</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>🔓 Free pool</option><option value="others" ${LF.owner === "others" ? "selected" : ""}>🔒 Doosron ke paas</option>${isMgr() ? assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>👤 ${h(u.full_name)}</option>`).join("") : ""}</select>
       ${isMgr() ? `<button class="btn" data-act="exportLeads">${ic("download")} Export</button>` : ""}
       <button class="btn" data-act="importLeads">${ic("upload")} Import</button>
@@ -1305,6 +1332,7 @@ VIEWS.leads = async (el, soft) => {
     let t;
     $("#lq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { LF.q = e.target.value; LF.page = 0; drawLeads(el); }, 300); };
     [["#lst", "status"], ["#lcat", "category"], ["#lcity", "city"], ["#lsrc", "source"], ["#lown", "owner"]].forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); drawLeads(el); }; });
+    fillSources(el).catch(() => {});
     // City list (with lead counts) — filled after the page shows
     loadCities().then(({ data }) => {
       const x = $("#lcity", el); if (!x || !data) return;
