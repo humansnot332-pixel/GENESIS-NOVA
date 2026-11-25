@@ -104,8 +104,21 @@ function mailBody(pi, q, hi) {
   const lines = pi.picked.map((i) => { const it = inc[i - 1]; return it ? `${i}. ${it.desc} — ${it.qty} × ${inr(+it.price || 0)}` : ""; }).filter(Boolean).join("\n");
   const SIGN = "Best Regards,\n\n{{my_name}}\n{{my_designation}}\nGENESIS INFOSERVE PVT. LTD.\n{{my_email}}\n{{my_phone}}";
   return hi
-    ? `Namaste {{contact_name|Sir/Madam}},\n\nApproval ke liye dhanyavaad! Aapke mail ke hisaab se quotation ${q.quote_no} ke approved items ka Proforma Invoice **${pi.pi_no}** attach hai:\n\n${lines}\n\n**Total: ${inr(+pi.grand_total)} (GST ke saath)**\n\nPayment ya Purchase Order bhej dijiye, hum order process kar dete hain — bank details proforma pe hain.\n\n${SIGN}`
-    : `Dear {{contact_name|Sir/Madam}},\n\nThank you for your approval. As per your mail, please find attached our Proforma Invoice **${pi.pi_no}** for the approved items of our quotation ${q.quote_no}:\n\n${lines}\n\n**Total: ${inr(+pi.grand_total)} (incl. GST)**\n\nKindly arrange the payment or send us your Purchase Order so that we can process the order — our bank details are on the proforma.\n\n${SIGN}`;
+    ? `Namaste {{contact_name|Sir/Madam}},\n\nApproval ke liye dhanyavaad! Aapke mail ke hisaab se approved items ki quotation **${q.quote_no}** attach hai:\n\n${lines}\n\n**Total: ${inr(+pi.grand_total)} (GST ke saath)**\n\nPurchase Order ya payment bhej dijiye, hum order process kar dete hain — bank details quotation pe hain.\n\n${SIGN}`
+    : `Dear {{contact_name|Sir/Madam}},\n\nThank you for your approval. As per your mail, please find attached our quotation **${q.quote_no}** for the approved items:\n\n${lines}\n\n**Total: ${inr(+pi.grand_total)} (incl. GST)**\n\nKindly send us your Purchase Order or arrange the payment so that we can process the order — our bank details are on the quotation.\n\n${SIGN}`;
+}
+
+/** the mail with the approved-items quotation attached; once it is sent the quotation is WON (proforma_sent) */
+export function proformaMail({ pi, q, lead, reply = null, rfq = null, mailAt = null, hi = false, openComposer, refresh }) {
+  openComposer({ channel: "email", ...(reply ? { reply } : {}), lead, rfq: rfq || undefined,
+    draft: { body: mailBody(pi, q, hi), ...(reply ? {} : { subject: `Quotation ${q.quote_no} – approved items – Genesis Infoserve` }) },
+    attach: { name: `Quotation ${q.quote_no}.pdf`, line: false, make: () => HOOK.proformaPdf(pi, q, { mailAt: mailAt || reply?.created_at || null }) },
+    onSent: async () => {
+      const { error } = await sb.rpc("proforma_sent", { p_id: pi.id });
+      if (error) return fail(error);
+      toast(L(`🏆 Quotation ${q.quote_no} WON — lead bhi Won ho gaya`, `🏆 Quotation ${q.quote_no} WON — the lead is Won too`), false, 7000);
+      HOOK.softRefresh?.(); refresh?.();
+    } });
 }
 
 /**
@@ -143,24 +156,21 @@ export async function drawDeal(box, ctx) {
       <div class="deal-foot"><span class="sum">${sel.size} ${L("item", sel.size === 1 ? "item" : "items")} · ${h(inr(T.sub))} + GST = <b>${h(inr(T.grand))}</b></span><span class="sp"></span>
         <button type="button" class="btn sm" id="dlView" ${sel.size ? "" : "disabled"}>👁 ${L("Proforma dekho", "Preview")}</button>
         <button type="button" class="btn sm primary" id="dlGo" ${sel.size ? "" : "disabled"}>✉️ ${L("Proforma + reply mail banao", "Make proforma + reply")}</button></div>
-      ${mine.length ? `<div class="deal-old mu">${L("Pehle bane", "Already made")}: ${mine.map((p) => `<a href="#" data-dlo="${p.id}">${h(p.pi_no)}</a> (${h(p.picked.join(", "))} · ${h(inr(+p.grand_total))}${p.status === "sent" ? " · " + L("bheja", "sent") : ""})`).join(" · ")}</div>` : ""}`;
+      ${mine.length ? `<div class="deal-old mu">${L("Pehle bane", "Already made")}: ${mine.map((p) => `<a href="#" data-dlo="${p.id}">${h(p.pi_no)}</a> (item ${h(p.picked.join(", "))} · ${h(inr(+p.grand_total))}${p.status === "sent" ? " · 🏆 " + L("bheja, Won", "sent, Won") : ""})`).join(" · ")}</div>` : ""}`;
     $("#dlQ", box)?.addEventListener("change", (e) => { q = ranked.find((x) => x.id === +e.target.value) || q; P = parsePick(text, mainItems(q)); sel = new Set(P.pick); draw(); });
     $$("[data-dl]", box).forEach((c) => c.onchange = () => { c.checked ? sel.add(+c.dataset.dl) : sel.delete(+c.dataset.dl); draw(); });
     const pickNow = () => [...sel].sort((a, b) => a - b);
     const show = async (pi) => { const a = await HOOK.proformaPdf(pi, q, { mailAt: r.created_at }); const u = URL.createObjectURL(a.blob); if (!openTab(u)) saveBlob(a.blob, a.name); setTimeout(() => URL.revokeObjectURL(u), 60000); };
     $("#dlView", box).onclick = (e) => busy(e.target, async () => {     // a preview: nothing is saved, no number is used
       const inc2 = mainItems(q), pk = pickNow(), T2 = totals(q, pk);
-      await show({ pi_no: "PI/DRAFT", picked: pk, items: pk.map((i) => ({ ...inc2[i - 1], sr: i })), grand_total: T2.grand, created_at: new Date().toISOString() });
+      await show({ pi_no: q.quote_no, picked: pk, items: pk.map((i) => ({ ...inc2[i - 1], sr: i })), grand_total: T2.grand, created_at: new Date().toISOString() });
     });
     $("#dlGo", box).onclick = (e) => busy(e.target, async () => {
       if (lead && ctx.ensureWork && !(await ctx.ensureWork("lead", lead))) return;
       const { data: pi, error } = await sb.rpc("proforma_make", { p_quote: q.id, p_pick: pickNow(), p_email: r.id });
       if (error) throw error;
-      toast(L(`📄 Proforma ${pi.pi_no} ban gaya — reply mail tayyar hai, PDF lagi hai`, `📄 Proforma ${pi.pi_no} made — the reply is ready with the PDF attached`));
-      ctx.openComposer({ channel: "email", reply: r, lead, rfq: r.rfqs || undefined,
-        draft: { body: mailBody(pi, q, hi) },
-        attach: { name: `Proforma ${pi.pi_no}.pdf`, line: false, make: () => HOOK.proformaPdf(pi, q, { mailAt: r.created_at }) },
-        onSent: () => { sb.from("proformas").update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", pi.id).eq("status", "draft").then(() => {}, () => {}); ctx.refresh?.(); } });
+      toast(L(`📄 Quotation ${q.quote_no} (item ${pi.picked.join(", ")}) tayyar — reply mail mein PDF lagi hai. Bhejte hi quotation Won ho jayegi.`, `📄 Quotation ${q.quote_no} (item${pi.picked.length > 1 ? "s" : ""} ${pi.picked.join(", ")}) ready — the reply has the PDF. Sending it marks the quotation Won.`), false, 7000);
+      proformaMail({ pi, q, lead, reply: r, rfq: r.rfqs, mailAt: r.created_at, hi, openComposer: ctx.openComposer, refresh: ctx.refresh });
     });
     $$("[data-dlo]", box).forEach((a) => a.onclick = (e) => { e.preventDefault(); const p = (old || []).find((x) => x.id === +a.dataset.dlo); if (p) show(p).catch(fail); });
   };

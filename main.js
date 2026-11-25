@@ -3,7 +3,7 @@
 // =====================================================================
 import {
   sb, S, STATUSES, STATUS, OPEN_STATUSES, CATEGORIES, RFQ_STATUSES, ROLES, ROLE, SOURCES, OUTCOMES, OUTCOME,
-  isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, telHref, waHref, isMobile, statusBadge, rfqBadge,
+  isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, openTab, telHref, waHref, isMobile, statusBadge, rfqBadge,
   userName, online, followBadge, toLocalInput, ic, toast, fail, modal, closeModal, confirmBox, formData, busy,
   toCSV, download, parseCSV, callFn, loadTeam, assignable, toastAction, friendly,
   HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail, bannerCfg, bannerHtml, bannerUrl,
@@ -1745,7 +1745,7 @@ HOOK.quotesFor = (id, name) => {
 const erpBy = (q) => (String(q.note_internal || "").match(/Banayi: ([^·]+)/) || [])[1]?.trim() || "";
 VIEWS.quotes = async (el, soft) => {
   if (!soft || !$("#qtb", el)) {
-    const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"]];
+    const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"], ["proforma", "📄 Proforma"]];
     el.innerHTML = `<div class="toolbar" id="qtb">
       <input class="input grow" id="qq" type="search" maxlength="80" autocomplete="off" value="${h(QF.q)}" aria-label="${h(L("Quotation dhoondo", "Search quotations"))}"
         placeholder="${h(L("Quotation no. ya customer ka naam…", "Quotation no. or customer name…"))}">
@@ -1768,6 +1768,7 @@ VIEWS.quotes = async (el, soft) => {
 };
 async function loadQuotes(el) {
   const seq = ++qSeq;
+  if (QF.st === "proforma") return loadProformas(el, seq);
   let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal", { count: "exact" })
     .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);
   if (QF.st) q = q.eq("status", QF.st);
@@ -1790,6 +1791,50 @@ async function loadQuotes(el) {
   $("#qfoot", el).innerHTML = data.length ? `<div class="row" style="padding:10px 16px;border-top:1px solid var(--line)"><span class="mu">${L(`${num(data.length)} / ${num(total)} dikh rahi hain`, `Showing ${num(data.length)} of ${num(total)}`)}</span><span class="sp" style="flex:1"></span>${total > data.length ? `<button class="btn sm" id="qmore">${L("100 aur dikhao", "Show 100 more")}</button>` : ""}</div>` : "";
   const more = $("#qmore", el);
   if (more) more.onclick = () => busy(more, async () => { QF.n += 100; await loadQuotes(el); });
+}
+// Quotations → 📄 Proforma: the approved-items quotations made from customers' replies (same number as the quotation)
+async function loadProformas(el, seq) {
+  let q = sb.from("proformas").select("id, pi_no, picked, items, grand_total, status, sent_at, created_at, owner_id, lead_id, quotation_id, email_id, to_party", { count: "exact" })
+    .order("id", { ascending: false }).range(0, QF.n - 1);
+  if (QF.lead) q = q.eq("lead_id", QF.lead);
+  const term = QF.q.split(/[^\p{L}\p{N}&/-]+/u).filter(Boolean).join("*");
+  if (term) q = q.or(`pi_no.ilike."*${term}*",to_party->>name.ilike."*${term}*"`);
+  const { data, error, count } = await q;
+  if (seq !== qSeq || !$("#qbody", el)) return;
+  if (error) throw error;
+  $("#qlead", el).innerHTML = QF.lead ? `<div class="row" style="margin:0 0 10px"><span class="badge info" style="height:28px;padding:0 10px">🏢 ${h(L("Sirf", "Only"))}: ${h(QF.leadName || "#" + QF.lead)}</span><button class="btn sm" id="qlx">✕ ${L("Sab customers", "All customers")}</button></div>` : "";
+  if (QF.lead) $("#qlx", el).onclick = () => { QF.lead = null; QF.leadName = ""; QF.n = 100; loadQuotes(el); };
+  const itemsOf = (p) => (p.items || []).map((it) => `#${it.sr} ${it.desc}`).join(" · ");
+  $("#qbody", el).innerHTML = !data.length
+    ? `<div class="empty"><b>${L("Abhi koi proforma nahi", "No proformas yet")}</b>${L("Inbox mein customer ka \"approved\" wala reply kholo — wahin \"Proforma bana do\" card aata hai.", "Open a customer's \"approved\" reply in the Inbox — the \"Make the proforma\" card is there.")}</div>`
+    : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>${L("Approved items", "Approved items")}</th><th class="num">${L("Total (GST ke saath)", "Total (incl. GST)")}</th><th>Status</th><th>${L("Kisne", "By")}</th><th>Date</th><th></th></tr></thead><tbody>
+    ${data.map((p) => `<tr data-act="quote" data-id="${p.quotation_id || ""}" title="${h(L("Quotation kholo", "Open the quotation"))}">
+      <td class="mono">${h(p.pi_no)}</td><td class="co">${h(p.to_party?.name || "")}</td>
+      <td class="sub" style="max-width:320px">${h(itemsOf(p).slice(0, 160))}</td><td class="num">${h(inr(+p.grand_total))}</td>
+      <td>${p.status === "sent" ? `<span class="badge good">🏆 ${L("Bheja · Won", "Sent · Won")}</span>` : p.status === "cancelled" ? `<span class="badge">Cancelled</span>` : `<span class="badge warn">${L("Draft — bheja nahi", "Draft — not sent")}</span>`}</td>
+      <td class="sub">${h(userName(p.owner_id))}</td><td class="sub">${h(dOnly(p.sent_at || p.created_at))}</td>
+      <td style="white-space:nowrap"><button class="btn sm" data-pfv="${p.id}" title="PDF">👁</button> <button class="btn sm" data-pfm="${p.id}">✉️ ${L("Mail", "Mail")}</button>${p.status === "draft" ? ` <button class="btn sm" data-pfs="${p.id}" title="${h(L("Customer ko bhej diya (WhatsApp / haath se) — quotation Won karo", "Sent to the customer (WhatsApp / by hand) — mark the quotation Won"))}">✅ ${L("Bhej diya", "Mark sent")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+  const total = count ?? data.length;
+  $("#qfoot", el).innerHTML = data.length ? `<div class="row" style="padding:10px 16px;border-top:1px solid var(--line)"><span class="mu">${L(`${num(data.length)} / ${num(total)} dikh rahe hain · bhejte hi quotation apne aap Won`, `Showing ${num(data.length)} of ${num(total)} · sending one marks its quotation Won`)}</span></div>` : "";
+  const pf = (id) => data.find((x) => x.id === +id);
+  const quoteOf = async (p) => { const { data: qq, error: e } = await sb.from("quotations").select("*").eq("id", p.quotation_id).single(); if (e) throw e; return qq; };
+  $$("[data-pfv]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); busy(b, async () => {
+    const p = pf(b.dataset.pfv), a = await HOOK.proformaPdf(p, await quoteOf(p));
+    const u = URL.createObjectURL(a.blob); if (!openTab(u)) saveBlob(a.blob, a.name); setTimeout(() => URL.revokeObjectURL(u), 60000);
+  }); });
+  $$("[data-pfm]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); busy(b, async () => {
+    const p = pf(b.dataset.pfm), qq = await quoteOf(p);
+    const { data: lead } = p.lead_id ? await sb.from("leads").select("*").eq("id", p.lead_id).single() : { data: null };
+    if (lead && !(await ensureWork("lead", lead))) return;
+    const { data: mail } = p.email_id ? await sb.from("email_messages").select("*").eq("id", p.email_id).maybeSingle() : { data: null };
+    const { proformaMail } = await import("./proforma.js");
+    proformaMail({ pi: p, q: qq, lead: lead || undefined, reply: mail && mail.user_id === S.me.id ? mail : null, mailAt: mail?.created_at, openComposer, refresh: () => loadQuotes(el) });
+  }); });
+  $$("[data-pfs]", el).forEach((b) => b.onclick = (e) => { e.stopPropagation(); (async () => {
+    const p = pf(b.dataset.pfs);
+    if (!(await confirmBox(L(`${p.pi_no} customer ko bhej diya? Quotation aur lead Won ho jayenge.`, `Was ${p.pi_no} sent to the customer? The quotation and the lead become Won.`), L("Haan, Won karo", "Yes, mark Won")))) return;
+    busy(b, async () => { const { error: e2 } = await sb.rpc("proforma_sent", { p_id: p.id }); if (e2) throw e2; toast(L(`🏆 Quotation ${p.pi_no} Won`, `🏆 Quotation ${p.pi_no} Won`)); softRefresh(); loadQuotes(el); });
+  })().catch(fail); });
 }
 ACT.newQuote = () => quoteEditor({ to_party: { state: "Maharashtra" }, items: [] });
 ACT.delQuote = async (t) => {
@@ -2411,15 +2456,14 @@ async function quotePdfPrint(q) {
   return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: pdfName(q) };
 }
 // ---- Proforma Invoice: the approved lines of a quotation, same layout, its own number (PI/26/0001)
-const piName = (pi) => `Proforma ${String(pi?.pi_no || "draft").replace(/[\\/:*?"<>|]+/g, "-")}.pdf`;
+// the customer approved some lines → the SAME quotation (same number, same layout) with only those lines
 HOOK.proformaPdf = async (pi, q, { mailAt = null } = {}) => {
   const day = (v) => (v ? niceDay(String(v).slice(0, 10)) : "");
-  const doc = { ...q, quote_no: pi.pi_no || "DRAFT", quote_date: String(pi.created_at || new Date().toISOString()).slice(0, 10),
-    items: (pi.items || []).map(({ sr, ...it }) => ({ ...it, opt: false })), show_optional: false };
-  const ref = `Against our Quotation <b>${h(q.quote_no)}</b>${q.quote_date || q.created_at ? " dated " + h(day(q.quote_date || q.created_at)) : ""} — item${pi.picked.length > 1 ? "s" : ""} <b>${h(pi.picked.join(", "))}</b> as approved${mailAt ? " in your mail of " + h(day(mailAt)) : ""}.`;
+  const doc = { ...q, items: (pi.items || []).map(({ sr, ...it }) => ({ ...it, opt: false })), show_optional: false };
+  const ref = `Approved item${pi.picked.length > 1 ? "s" : ""} <b>${h(pi.picked.join(", "))}</b> of this quotation${mailAt ? ", as per your mail of " + h(day(mailAt)) : ""}.`;
   const rep = await quoteRep(q);
-  const r = await htmlToPdf((root) => quoteDoc(doc, root, { rep, title: "PROFORMA INVOICE", ref }), { title: "Proforma " + (pi.pi_no || "") });
-  return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: piName(pi) };
+  const r = await htmlToPdf((root) => quoteDoc(doc, root, { rep, ref }), { title: "Quotation " + (q.quote_no || "") });
+  return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: pdfName(q) };
 };
 // the quotation document (Print / PDF): fills `pr`
 function quoteDoc(q, pr, { link = null, pick = null, rep = null, title = "QUOTATION", ref = "" } = {}) {
