@@ -25,6 +25,7 @@ import { viewObf, openObf } from "./obf.js";
 import { viewPurchase, openPo } from "./vpo.js";
 import { checkQuote, cleanPhone, phoneOk, canonState, gstinInfo, STATE_NAMES } from "./qcheck.js";
 import { htmlToPdf, elementToPdf, saveBlob } from "./qpdf.js";
+import { dateState, dateRange, dateBarHtml, wireDateBar, applyDates } from "./datebar.js";
 import { fmtIN, fmtRound, amountWords } from "./qpick.js";
 import { pushCard, pushResync } from "./push.js";
 import { productPicker } from "./lprod.js";
@@ -1294,8 +1295,10 @@ async function fillSources(el) {
   const x = $("#lsrc", el); if (x && document.activeElement !== x) x.innerHTML = sourceOptions();
 }
 const PAGE = 50;
+const LD = dateState("leads");
 function leadQuery(sel, count) {
   let q = sb.from("leads").select(sel, count ? { count: "exact" } : undefined);
+  q = applyDates(q, "created_at", LD, true);
   const s = LF.q.replace(/[%,()*"\\]/g, " ").trim();
   if (s) {
     const d = s.replace(/\D/g, "");
@@ -1332,6 +1335,7 @@ VIEWS.leads = async (el, soft) => {
       <select class="input" id="lown" aria-label="Lock"><option value="">Sab leads</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>🔒 Mere (locked by me)</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>🔓 Free pool</option><option value="others" ${LF.owner === "others" ? "selected" : ""}>🔒 Doosron ke paas</option>${isMgr() ? assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>👤 ${h(u.full_name)}</option>`).join("") : ""}</select>
       <button class="btn ghost" id="lclr" ${LF.status || LF.category || LF.city || LF.source || LF.owner ? "" : "hidden"}>✕ ${L("Filters hatao", "Clear filters")}</button>
     </div>
+    ${dateBarHtml("leads", LD)}
     <div class="card"><div class="tbl-wrap" id="ltb"></div><div class="pager" id="lpg"></div></div>
     <div id="lbulk"></div>`;
     let t;
@@ -1341,6 +1345,7 @@ VIEWS.leads = async (el, soft) => {
     FIL.forEach(([s, k]) => { const x = $(s, el); if (x) x.onchange = () => { LF[k] = x.value; LF.page = 0; LF.sel.clear(); markClr(); drawLeads(el); }; });
     $("#lclr", el).onclick = () => { FIL.forEach(([sel, k]) => { LF[k] = ""; const x = $(sel, el); if (x) x.value = ""; }); LF.page = 0; LF.sel.clear(); markClr(); drawLeads(el); };
     markClr();
+    wireDateBar(el, "leads", LD, () => { LF.page = 0; LF.sel.clear(); drawLeads(el); });
     fillSources(el).catch(() => {});
     // City list (with lead counts) — filled after the page shows
     loadCities().then(({ data }) => {
@@ -1544,8 +1549,9 @@ VIEWS.pipeline = async (el) => {
 //  RFQs
 // ---------------------------------------------------------------------
 const RF = { st: "open", q: "" };
+const RQD = dateState("rfqs");
 VIEWS.rfqs = async (el) => {
-  let q = sb.from("rfqs").select("*").order("created_at", { ascending: false }).limit(300);
+  let q = applyDates(sb.from("rfqs").select("*").order("created_at", { ascending: false }).limit(300), "created_at", RQD, true);
   if (RF.st === "open") q = q.in("status", ["new", "in_progress", "quoted", "negotiating"]); else if (RF.st !== "all") q = q.eq("status", RF.st);
   const s = RF.q.replace(/[%,()*"\\]/g, " ").trim();
   if (s) q = q.or(`company.ilike.%${s}%,product.ilike.%${s}%,rfq_no.ilike.%${s}%,city.ilike.%${s}%`);
@@ -1556,6 +1562,7 @@ VIEWS.rfqs = async (el) => {
       <input class="input grow" id="rq" placeholder="Search RFQ…" value="${h(RF.q)}" aria-label="Search RFQs">
       <button class="btn" data-act="rfqHook">🔗 ${L("Enquiry link", "Enquiry link")}</button>
       <button class="btn primary" data-act="newRfq">${ic("plus")} RFQ</button></div>
+    ${dateBarHtml("rfqs", RQD)}
     <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Koi RFQ nahi</b>IndiaMART / website se naye RFQ apne aap yahan aayenge.</div>` : `
       <table class="tbl"><thead><tr><th>RFQ</th><th>Company</th><th>Requirement</th><th>Due</th><th>Status</th><th>Lock</th><th class="num">Quoted</th><th>Source</th></tr></thead><tbody>
       ${data.map((r) => {
@@ -1569,6 +1576,7 @@ VIEWS.rfqs = async (el) => {
         <td class="num">${r.quoted_value ? inrShort(r.quoted_value) : ""}</td><td class="sub">${h(SOURCES[r.source] || r.source)}</td></tr>`;
       }).join("")}</tbody></table>`}</div></div>`;
   $$("[data-rs]", el).forEach((b) => b.onclick = () => { RF.st = b.dataset.rs; VIEWS.rfqs(el); });
+  wireDateBar(el, "rfqs", RQD, () => VIEWS.rfqs(el));
   let t; $("#rq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { RF.q = e.target.value; VIEWS.rfqs(el).then(() => { const i = $("#rq", el); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 350); };
 };
 ACT.newRfq = () => rfqForm({});
@@ -1773,6 +1781,7 @@ const rupeesWords = (v) => { v = r2(v); const r = Math.floor(v), ps = Math.round
 
 // Quotations page: search (number / customer), status, CRM vs ERP history, one customer, 100 at a time
 const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100 };
+const QD = dateState("quotes");
 let qSeq = 0;
 HOOK.quotesFor = (id, name) => {
   Object.assign(QF, { lead: id, leadName: name || "", q: "", st: "", src: "", n: 100 });
@@ -1790,6 +1799,7 @@ VIEWS.quotes = async (el, soft) => {
       <select class="input" id="qsrc" style="width:auto" aria-label="${h(L("Kahan se", "Source"))}">
         <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select>
       <span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
+    ${dateBarHtml("quotes", QD)}
     <div id="qlead"></div>
     <div class="card"><div class="tbl-wrap" id="qbody"><div class="empty">Loading…</div></div><div id="qfoot"></div></div>`;
     let t;
@@ -1800,6 +1810,7 @@ VIEWS.quotes = async (el, soft) => {
       loadQuotes(el);
     });
     $("#qsrc", el).onchange = (e) => { QF.src = e.target.value; QF.n = 100; loadQuotes(el); };
+    wireDateBar(el, "quotes", QD, () => { QF.n = 100; loadQuotes(el); });
   }
   await loadQuotes(el);
 };
@@ -1809,6 +1820,7 @@ async function loadQuotes(el) {
   let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal", { count: "exact" })
     .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);
   if (QF.st) q = q.eq("status", QF.st);
+  q = applyDates(q, "quote_date", QD);
   if (QF.src === "erp") q = q.not("import_batch", "is", null); else if (QF.src === "crm") q = q.is("import_batch", null);
   if (QF.lead) q = q.eq("lead_id", QF.lead);
   // words only (punctuation → "anything"): "dr. mahinder" finds "DR. MAHINDER WATSA", "7737" finds "PR/26/7737"
@@ -1834,6 +1846,7 @@ async function loadProformas(el, seq) {
   let q = sb.from("proformas").select("id, pi_no, picked, items, grand_total, status, sent_at, created_at, owner_id, lead_id, quotation_id, email_id, to_party", { count: "exact" })
     .order("id", { ascending: false }).range(0, QF.n - 1);
   if (QF.lead) q = q.eq("lead_id", QF.lead);
+  q = applyDates(q, "created_at", QD, true);
   const term = QF.q.split(/[^\p{L}\p{N}&/-]+/u).filter(Boolean).join("*");
   if (term) q = q.or(`pi_no.ilike."*${term}*",to_party->>name.ilike."*${term}*"`);
   const { data, error, count } = await q;
@@ -2550,21 +2563,30 @@ function quoteDoc(q, pr, { link = null, pick = null, rep = null, title = "QUOTAT
 // ---------------------------------------------------------------------
 //  REPORTS
 // ---------------------------------------------------------------------
+const RPD = dateState("reports", "month");
 VIEWS.reports = async (el) => {
-  const days = +(el.dataset.days || 30);
-  const [{ data: calls, error }, { data: st }, { data: em }] = await Promise.all([sb.rpc("calls_report", { days }), sb.rpc("dashboard_stats"), sb.rpc("email_report", { days })]);
+  const { from, to, label } = dateRange(RPD);
+  const [{ data: calls, error }, { data: st }, { data: em }] = await Promise.all([sb.rpc("calls_report_range", { p_from: from, p_to: to }), sb.rpc("dashboard_stats"), sb.rpc("email_report_range", { p_from: from, p_to: to })]);
   if (error) throw error;
   const users = new Map();
   (calls || []).forEach((c) => { const u = users.get(c.user_id) || { calls: 0, pos: 0, days: new Set() }; u.calls += +c.calls; u.pos += +c.positive; u.days.add(c.day); users.set(c.user_id, u); });
   const rows = [...users.entries()].map(([id, u]) => ({ id, name: userName(id), ...u, avg: u.calls / Math.max(1, u.days.size), conv: u.calls ? (u.pos / u.calls) * 100 : 0 })).sort((a, b) => b.calls - a.calls);
   const dmap = {}; (calls || []).forEach((c) => { dmap[c.day] = (dmap[c.day] || 0) + +c.calls; });
-  const series = [...Array(days)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - days + 1 + i); const k = d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); return { l: d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }), t: d.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" }), v: dmap[k] || 0 }; });
+  // one bar per day (up to ~2 months), else one bar per month
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const firstDay = Object.keys(dmap).sort()[0];
+  const d0 = new Date((from || firstDay || today) + "T00:00:00"), d1 = new Date((to || today) + "T00:00:00");
+  const spanDays = Math.max(1, Math.round((d1 - d0) / 864e5) + 1), byMonth = spanDays > 62;
+  const series = [];
+  if (!byMonth) for (let i = 0; i < spanDays; i++) { const d = new Date(d0); d.setDate(d0.getDate() + i); const k = d.toLocaleDateString("en-CA"); series.push({ l: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }), v: dmap[k] || 0, t: d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) }); }
+  else { const mm = {}; Object.entries(dmap).forEach(([k, v]) => { mm[k.slice(0, 7)] = (mm[k.slice(0, 7)] || 0) + v; });
+    for (let d = new Date(d0.getFullYear(), d0.getMonth(), 1); d <= d1; d.setMonth(d.getMonth() + 1)) { const k = d.toLocaleDateString("en-CA").slice(0, 7); series.push({ l: d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" }), v: mm[k] || 0, t: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) }); } }
   const bs = st?.by_status || {}, src = st?.by_source || {};
   const total = Object.values(bs).reduce((a, b) => a + b, 0), won = bs.won || 0;
   el.innerHTML = `
-    <div class="toolbar"><div class="chips">${[7, 30, 90].map((d) => `<button class="chip ${days === d ? "on" : ""}" data-rd="${d}">${d} ${L("din", "days")}</button>`).join("")}</div><span class="sp" style="flex:1"></span><button class="btn" id="rexp">${ic("download")} Export CSV</button></div>
+    <div class="toolbar">${dateBarHtml("reports", RPD)}<span class="sp" style="flex:1"></span><button class="btn" id="rexp">${ic("download")} Export CSV</button></div>
     <div class="kpis">
-      <div class="card kpi"><div class="l">Total calls (${days}d)</div><div class="v">${num(rows.reduce((a, r) => a + r.calls, 0))}</div></div>
+      <div class="card kpi"><div class="l">Total calls · ${h(label)}</div><div class="v">${num(rows.reduce((a, r) => a + r.calls, 0))}</div></div>
       <div class="card kpi"><div class="l">Positive outcomes</div><div class="v">${num(rows.reduce((a, r) => a + r.pos, 0))}</div><div class="s">interested / quote / demo / won</div></div>
       <div class="card kpi"><div class="l">Win rate (all leads)</div><div class="v">${total ? ((won / total) * 100).toFixed(1) : 0}%</div><div class="s">${num(won)} won / ${num(total)}</div></div>
       <div class="card kpi"><div class="l">Pipeline value</div><div class="v">${inrShort(st?.pipeline_value)}</div></div>
@@ -2576,11 +2598,11 @@ VIEWS.reports = async (el) => {
       <div class="stack"><div class="card"><div class="card-h"><h3>Funnel</h3></div><div class="card-b">${hbars(STATUSES.map(([k, l]) => ({ l, v: bs[k] || 0 })))}</div></div>
         <div class="card"><div class="card-h"><h3>Lead sources</h3></div><div class="card-b">${hbars(Object.entries(src).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ l: SOURCES[k] || k, v })))}</div></div></div>
     </div>
-    <div class="card sec"><div class="card-h"><h3>✉️ Email performance (${days} ${L("din", "days")})</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Emails bheje</th><th class="num">Replies</th><th class="num">Companies jinhone reply kiya</th><th class="num">Reply rate</th></tr></thead><tbody>
+    <div class="card sec"><div class="card-h"><h3>✉️ Email performance · ${h(label)}</h3></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th class="num">Emails bheje</th><th class="num">Replies</th><th class="num">Companies jinhone reply kiya</th><th class="num">Reply rate</th></tr></thead><tbody>
       ${(em || []).sort((a, b) => b.sent - a.sent).map((r) => `<tr style="cursor:default"><td class="co">${h(userName(r.user_id))}</td><td class="num">${num(r.sent)}</td><td class="num">${num(r.replies)}</td><td class="num">${num(r.replied_contacts)}</td><td class="num">${r.sent ? ((r.replied_contacts / r.sent) * 100).toFixed(1) : "0.0"}%</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Is period mein CRM se koi email nahi gaya</td></tr>`}
     </tbody></table></div></div>`;
-  $$("[data-rd]", el).forEach((b) => b.onclick = () => { el.dataset.days = b.dataset.rd; VIEWS.reports(el); });
-  $("#rexp", el).onclick = () => download(`calls-report-${days}d.csv`, toCSV((calls || []).map((c) => ({ ...c, name: userName(c.user_id) })), [["day", "Date"], ["name", "User"], ["calls", "Calls"], ["positive", "Positive"]]));
+  wireDateBar(el, "reports", RPD, () => VIEWS.reports(el));
+  $("#rexp", el).onclick = () => download(`calls-report-${from || "start"}-to-${to || "today"}.csv`, toCSV((calls || []).map((c) => ({ ...c, name: userName(c.user_id) })), [["day", "Date"], ["name", "User"], ["calls", "Calls"], ["positive", "Positive"]]));
 };
 
 // ---------------------------------------------------------------------

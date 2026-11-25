@@ -5,6 +5,8 @@
 // =====================================================================
 import { sb, S, h, inr, ic, toast, fail, modal, closeModal, busy, isMgr, isAdmin, userName, dOnly, ago, confirmBox } from "./core.js";
 import { L } from "./i18n.js";
+import { dateState, dateBarHtml, wireDateBar, applyDates } from "./datebar.js";
+const PD = dateState("vpo");
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -29,17 +31,20 @@ export async function viewPurchase(el) {
   if (f === "vendors") return viewVendors(el);
   let q = sb.from("purchase_orders").select("id, po_no, vendor_name, status, grand_total, po_date, expected_at, sent_at, received_at, notes, owner_id").order("created_at", { ascending: false }).limit(300);
   if (f === "open") q = q.in("status", ["draft", "sent"]); else if (f === "received") q = q.eq("status", "received");
+  q = applyDates(q, "created_at", PD, true);
   const { data, error } = await q; if (error) throw error;
   const today = new Date().toISOString().slice(0, 10);
   const late = (p) => p.status === "sent" && (p.expected_at || (p.sent_at && new Date(new Date(p.sent_at).getTime() + 7 * 864e5).toISOString().slice(0, 10))) < today;
   el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Khule", "Open")], ["received", L("Maal aa gaya", "Received")], ["all", L("Sab", "All")], ["vendors", "📇 " + L("Vendors", "Vendors")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-pf="${k}">${h(l)}</button>`).join("")}</div>
     <span class="sp" style="flex:1"></span><span class="mu" style="font-size:12.5px">📦 ${L("OBF approve hote hi har vendor ka PO apne aap banta hai", "Every vendor gets a PO by itself when an OBF is approved")}</span></div>
+  ${dateBarHtml("vpo", PD)}
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>${L("Koi vendor PO nahi", "No vendor POs")}</b>${L("OBF mein vendor + cost bharo — approve hote hi PO yahan aa jayega.", "Fill vendor + cost in the OBF — the PO shows up here once it is approved.")}</div>`
     : `<table class="tbl"><thead><tr><th>PO</th><th>Vendor</th><th>Status</th><th class="num">Total</th><th>${L("Kiske liye", "For")}</th><th>${L("Kab tak", "Due")}</th></tr></thead><tbody>
     ${data.map((p) => `<tr data-po="${p.id}"><td class="mono">${h(p.po_no)}</td><td class="co">${h(p.vendor_name)}</td><td>${badge(p.status)}${late(p) ? ` <span class="badge bad">⏰ ${L("late", "late")}</span>` : ""}</td>
       <td class="num">${inr(p.grand_total)}</td><td class="sub">${h(String(p.notes || "").split(" · ")[0].replace(/^For /, ""))} · ${h(userName(p.owner_id))}</td>
       <td class="sub">${p.status === "received" ? "✅ " + h(ago(p.received_at)) : p.expected_at ? h(dOnly(p.expected_at)) : p.sent_at ? h(ago(p.sent_at)) : "—"}</td></tr>`).join("")}</tbody></table>`}</div></div>`;
   $$("[data-pf]", el).forEach((b) => b.onclick = () => { el.dataset.f = b.dataset.pf; viewPurchase(el); });
+  wireDateBar(el, "vpo", PD, () => viewPurchase(el));
   $$("[data-po]", el).forEach((r) => r.onclick = () => openPo(+r.dataset.po, () => viewPurchase(el)));
 }
 

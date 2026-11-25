@@ -13,6 +13,8 @@ import { L, isEn } from "./i18n.js";
 import { filesHtml, wireFiles, loadFiles, uploadTicketFiles } from "./files.js";
 import { pushCard } from "./push.js";
 import { loadCatalog } from "./lprod.js";
+import { dateState, dateRange, dateActive, dateBarHtml, wireDateBar, applyDates } from "./datebar.js";
+const ORD_D = dateState("orders");
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -432,10 +434,12 @@ const PAYB = { paid: "good", partial: "info", unpaid: "", overdue: "bad", cancel
 const ORDST = [["open", "Open"], ["delivered", "Delivered"], ["invoiced", "Invoiced"], ["closed", "Closed"], ["cancelled", "Cancelled"]];
 export async function viewOrders(el) {
   const tab = el.dataset.otab || "due";
-  const [{ data: inv, error }, { data: ords }] = await Promise.all([
-    sb.from("invoice_balances").select("*").order("invoice_date", { ascending: false }).limit(2000),
-    sb.from("orders").select("*").order("created_at", { ascending: false }).limit(1000),
+  const [{ data: inv, error }, { data: ords }, { data: pays }] = await Promise.all([
+    applyDates(sb.from("invoice_balances").select("*").order("invoice_date", { ascending: false }).limit(2000), "invoice_date", ORD_D),
+    applyDates(sb.from("orders").select("*").order("created_at", { ascending: false }).limit(1000), "created_at", ORD_D, true),
+    applyDates(sb.from("payments").select("amount, paid_on").limit(5000), "paid_on", ORD_D),
   ]);
+  const dr = dateRange(ORD_D), drOn = dateActive(ORD_D), recd = (pays || []).reduce((a, x) => a + (+x.amount || 0), 0);
   if (error) throw error;
   const leads = await leadsById([...inv.map((i) => i.lead_id), ...ords.map((o) => o.lead_id)]);
   const live = inv.filter((i) => !i.cancelled && +i.balance > 0.5);
@@ -443,11 +447,12 @@ export async function viewOrders(el) {
   const bucket = [["0–30", (a) => a <= 30], ["31–60", (a) => a > 30 && a <= 60], ["61–90", (a) => a > 60 && a <= 90], ["90+", (a) => a > 90]];
   const od = live.filter((i) => i.pay_status === "overdue");
   const name = (x) => leads.get(x.lead_id)?.company || x.to_party?.name || "—";
-  el.innerHTML = `<div class="kpis">
-      <div class="card kpi"><div class="l">${L("Total baaki", "Total outstanding")}</div><div class="v">${inrShort(live.reduce((a, i) => a + +i.balance, 0))}</div><div class="s">${live.length} invoices</div></div>
+  el.innerHTML = `${dateBarHtml("orders", ORD_D)}<div class="kpis">
+      <div class="card kpi"><div class="l">${L("Total baaki", "Total outstanding")}${drOn ? ` <span class="mu">· ${h(L("is range ke invoices", "invoices in range"))}</span>` : ""}</div><div class="v">${inrShort(live.reduce((a, i) => a + +i.balance, 0))}</div><div class="s">${live.length} invoices</div></div>
       <div class="card kpi"><div class="l">Overdue</div><div class="v" style="color:var(--bad)">${inrShort(od.reduce((a, i) => a + +i.balance, 0))}</div><div class="s">${od.length} invoices</div></div>
       ${bucket.map(([l, f]) => { const xs = od.filter((i) => f(age(i))); return `<div class="card kpi"><div class="l">${L("Overdue", "Overdue")} ${l} ${L("din", "days")}</div><div class="v">${inrShort(xs.reduce((a, i) => a + +i.balance, 0))}</div><div class="s">${xs.length}</div></div>`; }).join("")}
-      <div class="card kpi"><div class="l">${L("Open orders", "Open orders")}</div><div class="v">${ords.filter((o) => ["open", "delivered"].includes(o.status)).length}</div><div class="s">${inrShort(ords.filter((o) => ["open", "delivered"].includes(o.status)).reduce((a, o) => a + +o.amount, 0))}</div></div></div>
+      <div class="card kpi"><div class="l">${L("Open orders", "Open orders")}</div><div class="v">${ords.filter((o) => ["open", "delivered"].includes(o.status)).length}</div><div class="s">${inrShort(ords.filter((o) => ["open", "delivered"].includes(o.status)).reduce((a, o) => a + +o.amount, 0))}</div></div>
+      <div class="card kpi"><div class="l">${L("Payment aaya", "Received")} · ${h(dr.label)}</div><div class="v" style="color:var(--good)">${inrShort(recd)}</div><div class="s">${(pays || []).length} ${L("payments", "payments")}</div></div></div>
     <div class="toolbar"><div class="chips">${[["due", L("Payment baaki", "Payment due")], ["inv", L("Saare invoices", "All invoices")], ["ord", "Orders"]].map(([k, l]) => `<button class="chip ${tab === k ? "on" : ""}" data-tab="${k}">${h(l)}</button>`).join("")}</div>
       <span class="sp" style="flex:1"></span><button class="btn" id="oexp">${ic("download")} Export</button><button class="btn" id="iadd">${ic("plus")} Invoice</button><button class="btn primary" id="oadd">${ic("plus")} Order</button></div>
     <div class="card"><div class="tbl-wrap">${tab === "ord"
@@ -460,6 +465,7 @@ export async function viewOrders(el) {
     </div></div>
     <p class="mu" style="font-size:12.5px">💡 ${h(L("Invoice Tally mein banate ho toh “Invoice” mein Tally ka number daal do — CRM sirf payment track karega. Warna CRM khud INV number dega. Due date nikalte hi owner ko 💰 notification jata hai.", "If you raise invoices in Tally, enter the Tally number in “Invoice” — the CRM only tracks payment. Otherwise the CRM assigns its own INV number. Owners get a 💰 notification the day after the due date."))}</p>`;
   $$("[data-tab]", el).forEach((b) => b.onclick = () => { el.dataset.otab = b.dataset.tab; viewOrders(el); });
+  wireDateBar(el, "orders", ORD_D, () => viewOrders(el));
   const reload = () => viewOrders(el);
   $("#oadd", el).onclick = () => orderForm({}, reload);
   $("#iadd", el).onclick = () => invoiceForm({}, reload);

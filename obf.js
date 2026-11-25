@@ -8,6 +8,8 @@
 import { sb, S, h, inr, ic, toast, fail, modal, closeModal, busy, isMgr, isAdmin, userName, dOnly, ago, confirmBox } from "./core.js";
 import { L } from "./i18n.js";
 import { invoiceForm } from "./biz.js";
+import { dateState, dateBarHtml, wireDateBar, applyDates } from "./datebar.js";
+const OD = dateState("obf");
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -52,11 +54,13 @@ export async function viewObf(el) {
   else if (f === "draft") qy = qy.in("status", ["draft", "rejected"]);
   else if (f === "approved") qy = qy.eq("status", "approved");
   else if (f === "mine") qy = qy.eq("owner_id", S.me.id);
+  qy = applyDates(qy, "created_at", OD, true);
   const { data, error } = await qy; if (error) throw error;
   const tabs = [["pending", ap ? L("⏳ Meri approval chahiye", "⏳ Waiting for my approval") : L("⏳ Director ke paas", "⏳ With the Director")],
     ["draft", L("Draft / wapas aaye", "Drafts / sent back")], ["approved", "✅ Approved"], ["mine", L("Mere", "Mine")], ["all", L("Sab", "All")]];
   el.innerHTML = `<div class="toolbar"><div class="chips">${tabs.map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-of="${k}">${h(l)}</button>`).join("")}</div>
     <span class="sp" style="flex:1"></span><span class="mu" style="font-size:12.5px">📋 ${L("Customer quotation accept kare → OBF apne aap ban jaata hai", "A customer accepts a quotation → the OBF is made by itself")}</span></div>
+  ${dateBarHtml("obf", OD)}
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>${L("Yahan koi OBF nahi", "No OBFs here")}</b>${L("Quotation kholo → “📋 OBF” dabao, ya customer online link se accept kare.", "Open a quotation → press “📋 OBF”, or let the customer accept on the online link.")}</div>`
     : `<table class="tbl"><thead><tr><th>OBF</th><th>Customer</th><th>Status</th><th class="num">Grand total</th><th class="num">Contribution</th><th>M.E.</th><th>${L("Kab", "When")}</th></tr></thead><tbody>
     ${data.map((o) => { const p = pctOf(o.subtotal, o.contribution); return `<tr data-obf="${o.id}"><td class="mono">${h(o.obf_no || "—")}</td>
@@ -65,6 +69,7 @@ export async function viewObf(el) {
       <td class="num">${o.contribution != null ? `${inr(o.contribution)} <span class="badge ${mClass(p)}">${p == null ? "" : p.toFixed(1) + "%"}</span>` : "—"}</td>
       <td>${h(userName(o.owner_id))}</td><td class="sub">${h(ago(o.decided_at || o.submitted_at || o.obf_date))}</td></tr>`; }).join("")}</tbody></table>`}</div></div>`;
   $$("[data-of]", el).forEach((b) => b.onclick = () => { el.dataset.f = b.dataset.of; viewObf(el); });
+  wireDateBar(el, "obf", OD, () => viewObf(el));
   $$("[data-obf]", el).forEach((r) => r.onclick = () => openObf(+r.dataset.obf, () => viewObf(el)));
 }
 

@@ -966,3 +966,12 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .filters .btn { height: 36px; justify-self: start; }
 #qq { min-width: 260px; }
 @media (max-width: 640px) { .toolbar .tb-acts { margin-left: 0; width: 100%; justify-content: stretch; } .toolbar .tb-acts .btn { flex: 1; justify-content: center; } #qq { min-width: 0; } }
+
+/* v83 · one date filter on every list */
+.datebar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: -4px 0 12px; }
+.datebar .db-l { font-size: 15px; }
+.datebar .chips { flex-wrap: wrap; }
+.datebar .db-own { display: inline-flex; gap: 6px; align-items: center; }
+.datebar .db-own .input { width: 150px; height: 32px; }
+.kpi .v.sm { font-size: 20px; }
+.toolbar .datebar { margin: 0; }
