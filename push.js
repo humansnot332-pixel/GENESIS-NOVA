@@ -64,9 +64,8 @@ export async function pushResync() {
 // ---------------------------------------------------------------- the card (Support page + profile)
 export async function pushCard(box) {
   if (!box) return;
-  const st = await pushState();
+  const [st, { data: subs }] = await Promise.all([pushState(), sb.from("push_subs").select("id, user_id, device, ok_at, created_at").order("created_at", { ascending: false })]);
   const ios = isIOS(), inApp = standalone(), on = !!st.sub && st.perm === "granted";
-  const { data: subs } = await sb.from("push_subs").select("id, user_id, device, ok_at, created_at").order("created_at", { ascending: false });
   const mine = (subs || []).filter((d) => d.user_id === S.me.id);
   let btns = "", note = "";
   if (on) btns = `<button class="btn sm" data-pa="test">🔔 ${L("Test notification", "Send a test")}</button><button class="btn sm ghost" data-pa="off">${L("Band karo", "Turn off")}</button>`;

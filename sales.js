@@ -25,7 +25,8 @@ function periods() {
   ];
 }
 const F = { p: "all", from: "", to: "", q: "", cat: "", owner: "", find: "", show: 100 };   // remembered while the CRM is open
-let CATS = null, LAST = { key: "", r: null };   // the last answer: "find a customer" filters it without asking the server again
+let CATS = null, LAST = { key: "", r: null };
+export const salesReset = () => { LAST = { key: "", r: null }; };   // the last answer: "find a customer" filters it without asking the server again
 
 export async function viewSales(el, { barChart, openLead }, useLast = false) {
   const mgr = isMgr();

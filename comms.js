@@ -687,7 +687,7 @@ export function openChip(r) {
 }
 export async function viewInbox(el, params = {}) {
   const team = IB.team && isMgr();
-  const msP = sb.rpc("mail_status");          // runs while the list loads
+  const msP = Promise.resolve(sb.rpc("mail_status"));          // runs while the list loads
   let rows = [], sentRows = [];
   if (IB.tab === "replies") {
     let q = sb.from("email_messages").select("id, user_id, lead_id, rfq_id, counterpart, counterpart_name, subject, snippet, intent, is_read, archived, created_at, thread_url, provider, files, leads(company, status, owner_id)")
@@ -1466,6 +1466,8 @@ const goLead = (id) => { location.hash = "#/leads/" + id; };
 export async function viewRequests(el) {
   const now = Date.now(), soon = new Date(now + 864e5).toISOString();
   const lk = S.settings?.locks || {}, max = lk.max_active_per_user ?? 150;
+  // manager cards: ask now, in the same round as the page (they fill in when the page is drawn)
+  const staleP = isMgr() ? Promise.resolve(sb.rpc("stale_locks", { p_days: lk.stale_days ?? 2 })) : null, bansP = isMgr() ? Promise.resolve(sb.rpc("lock_bans")) : null;
   const [{ data, error }, { data: mine }, { data: droppedRaw }] = await Promise.all([
     sb.from("lock_requests").select("*").order("created_at", { ascending: false }).limit(200),
     sb.from("leads").select("id, company, city, lock_until, next_follow_up, status, last_contacted").eq("owner_id", S.me.id).gt("lock_until", new Date(now).toISOString()).in("status", OPEN_STATUSES).order("lock_until").limit(1000),
@@ -1522,13 +1524,13 @@ export async function viewRequests(el) {
   if (!isMgr()) return;
   $("#hoBtn", el).onclick = () => openHandover(null, () => viewRequests(el));
   $("#lkSet", el)?.addEventListener("click", () => lockRules(() => viewRequests(el)));
-  staleReport($("#staleBox", el), lk.stale_days ?? 2);
-  banReport($("#banBox", el));
+  staleReport($("#staleBox", el), lk.stale_days ?? 2, staleP);
+  banReport($("#banBox", el), bansP);
 }
 
 // managers: who used chances / is banned on which lead — reset it or hand the lead back
-async function banReport(box) {
-  const { data, error } = await sb.rpc("lock_bans");
+async function banReport(box, pre) {
+  const { data, error } = await (pre || sb.rpc("lock_bans"));
   if (error) { box.innerHTML = `<div class="empty" style="padding:16px">${h(error.message)}</div>`; return; }
   const by = new Map(); (data || []).forEach((r) => { if (!by.has(r.user_id)) by.set(r.user_id, []); by.get(r.user_id).push(r); });
   box.innerHTML = `<div class="mu" style="font-size:12.5px;padding:10px 16px;border-bottom:1px solid var(--line)">${L(`Har bande ko har lead pe ${freeChances()} chance milte hain. Chances khatam hone ke baad chhoda to ${coolDays()} din ka ban. Yahan se aap chance / ban hata sakte ho, ya lead seedha wapas de sakte ho.`,
@@ -1552,8 +1554,8 @@ async function banReport(box) {
     run(b, { p_user: u, p_entity: null, p_id: null, p_give: false }, L("♻️ Sab reset ✔", "♻️ All reset ✔")); });
 }
 
-async function staleReport(box, days) {
-  const { data, error } = await sb.rpc("stale_locks", { p_days: days });
+async function staleReport(box, days, pre) {
+  const { data, error } = await (pre || sb.rpc("stale_locks", { p_days: days }));
   if (error) { box.innerHTML = `<div class="empty" style="padding:16px">${h(error.message)}</div>`; return; }
   const by = new Map(); (data || []).forEach((r) => { if (!by.has(r.owner_id)) by.set(r.owner_id, []); by.get(r.owner_id).push(r); });
   box.innerHTML = `<div class="row" style="padding:10px 16px;border-bottom:1px solid var(--line)"><span class="mu" style="font-size:12.5px;flex:1">${L("Jinpe itne din se koi call / email / note nahi hua (aage ka follow-up set ho to nahi dikhte):", "No call / email / note for this many days (leads with a future follow-up are skipped):")}</span>

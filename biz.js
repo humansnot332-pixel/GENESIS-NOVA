@@ -54,7 +54,7 @@ function wireLeadPicker(m, id) {
 let PROD = null, COSTS = null;
 export async function loadProducts(force = false) {
   if (PROD && !force) return PROD;
-  const costP = isMgr() ? sb.rpc("product_costs") : null;
+  const costP = isMgr() ? Promise.resolve(sb.rpc("product_costs")) : null;   // Promise.resolve → starts now (a supabase query is lazy)
   const { data } = await sb.from("products").select("id, brand, name, model, category, hsn, gst_rate, unit, sell_price, active, notes, pitch, pitch_hi, erp_id, sku, erp_category, quoted_n, quoted_won, quoted_last, quoted_last_at").order("brand").order("name").limit(5000);
   PROD = data || [];
   if (costP) { const { data: c } = await costP; COSTS = new Map((c || []).map((x) => [x.id, x])); }
@@ -292,7 +292,7 @@ export const renGroup = (product) => {
 export async function viewRenewals(el) {
   const f = el.dataset.rf || "due", rp = el.dataset.rp || "", rs = (el.dataset.rs || "").trim();
   const nz = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  let q = sb.from("renewals").select("*").order("end_date").limit(2000);
+  let q = sb.from("renewals").select("*, leads(company)").order("end_date").limit(2000);   // company comes along (no second request)
   // a search looks through every renewal (not only the next 30 days), except the ERP guesses / closed tabs
   if (rs && !["erp", "closed"].includes(f)) q = q.neq("status", "unconfirmed");
   else if (f === "due") q = q.eq("status", "active").lte("end_date", addDays(today(), 30));
@@ -310,7 +310,7 @@ export async function viewRenewals(el) {
   const prodList = [...byProd.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const inProd = (r) => !rp || renGroup(r.product) === rp;
   let data = rows.filter(inProd);
-  const leads = await leadsById(data.map((r) => r.lead_id));
+  const leads = new Map(data.map((r) => [r.lead_id, r.leads || {}]));
   if (rs) { const w = nz(rs); data = data.filter((r) => nz(`${leads.get(r.lead_id)?.company || ""} ${r.product} ${r.vendor || ""}`).includes(w)); }
   const stats = (allP || []).filter((r) => r.status === "active" && r.end_date <= addDays(today(), 30) && inProd(r));
   const ov = (stats || []).filter((r) => r.end_date < today()), wk = (stats || []).filter((r) => r.end_date >= today() && r.end_date <= addDays(today(), 7));
@@ -650,12 +650,12 @@ const TST = [["open", "Open"], ["in_progress", "In progress"], ["waiting", "Wait
 const tBadge = (s) => `<span class="badge ${s === "open" ? "warn" : s === "in_progress" ? "info" : s === "waiting" ? "" : "good"}">${h(TST.find((x) => x[0] === s)?.[1] || s)}</span>`;
 export async function viewSupport(el, soft, params) {
   const f = el.dataset.tf || "open";
-  let q = sb.from("tickets").select("*").order("created_at", { ascending: false }).limit(500);
+  let q = sb.from("tickets").select("*, leads(company)").order("created_at", { ascending: false }).limit(500);
   if (f === "open") q = q.in("status", ["open", "in_progress", "waiting"]);
   else if (f === "mine") q = q.eq("assignee_id", S.me.id).in("status", ["open", "in_progress", "waiting"]);
   else if (f === "done") q = q.in("status", ["resolved", "closed"]);
   const { data, error } = await q; if (error) throw error;
-  const leads = await leadsById(data.map((t) => t.lead_id));
+  const leads = new Map(data.map((t) => [t.lead_id, t.leads || {}]));
   const late = (t) => !["resolved", "closed"].includes(t.status) && t.due_at && new Date(t.due_at) < new Date();
   el.innerHTML = `<div id="pushBox"></div><div class="toolbar"><div class="chips">${[["open", L("Open", "Open")], ["mine", L("Mujhe assigned", "Assigned to me")], ["done", L("Resolved", "Resolved")], ["all", L("Sab", "All")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-tf="${k}">${h(l)}</button>`).join("")}</div>
     <span class="mu">${data.filter(late).length ? `⏰ ${data.filter(late).length} ${L("SLA se late", "past SLA")}` : ""}</span><span class="sp" style="flex:1"></span><button class="btn primary" id="tadd">${ic("plus")} Ticket</button></div>
@@ -738,6 +738,10 @@ const hrs = (m) => m ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")
 export async function viewDaily(el) {
   const day = el.dataset.dday || today();
   const from = addDays(day, -6);
+  // manager summary + phone check start together with the report (no second wave)
+  // (Promise.resolve: a supabase query runs again on every .then — resolve it once into a real promise)
+  const smP = isMgr() ? Promise.resolve(sb.rpc("day_summary", { p_day: day })) : null;
+  const phP = isMgr() ? Promise.resolve(sb.from("push_subs").select("id", { count: "exact", head: true }).eq("user_id", S.me.id)) : null;
   const [{ data: rep, error }, { data: att }, { data: vis }] = await Promise.all([
     sb.rpc("daily_report", { p_day: day }),
     sb.from("attendance").select("*").gte("day", from).lte("day", day),
@@ -769,11 +773,11 @@ export async function viewDaily(el) {
     ${(vis || []).length ? `<div class="card sec"><div class="card-h"><h3>📍 ${L("Visits", "Visits")}</h3></div><div class="card-b">${vis.map((v) => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${h(hm(v.created_at))}</b><span>${h(userName(v.user_id))}</span><a href="#/leads/${v.lead_id}">${h(vleads.get(v.lead_id)?.company || "#" + v.lead_id)}</a><span class="mu">${h(v.note || "")}</span>${v.lat != null ? `<a class="right" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps?q=${+v.lat},${+v.lng}">🗺 Map${v.accuracy ? ` (±${v.accuracy}m)` : ""}</a>` : ""}</div>`).join("")}</div></div>` : ""}`;
   $("#dday", el).onchange = (e) => { el.dataset.dday = e.target.value || today(); viewDaily(el); };
   if (isMgr()) import("./daysum.js").then(async (m) => {
-    const { data: sm, error: se } = await sb.rpc("day_summary", { p_day: day });
+    const { data: sm, error: se } = await smP;
     const box = $("#dsum", el); if (!box) return;
     box.innerHTML = se || !sm ? "" : m.summaryHtml(sm);
     // no phone set up for the 5:50 notification yet → a one-line nudge (opens My profile)
-    const { count: ph } = await sb.from("push_subs").select("id", { count: "exact", head: true }).eq("user_id", S.me.id);
+    const { count: ph } = await phP;
     if (!ph && $("#dsum", el)) $("#dsum", el).insertAdjacentHTML("afterbegin", `<div class="banner" style="margin:0 0 12px">📲 <div><b>${L("5:50 ka summary phone pe bhi chahiye?", "Want the 5:50 summary on your phone too?")}</b> <span>${L("Phone pe CRM kholo → Mera profile → “Notification ON karo” (ek baar).", "Open the CRM on your phone → My profile → “Turn on notifications” (once).")}</span></div><button class="btn sm primary right" data-act="profile">${L("Profile kholo", "Open profile")}</button></div>`);
   }).catch(() => { const box = $("#dsum", el); if (box) box.innerHTML = ""; });
   $$("[data-dd]", el).forEach((b) => b.onclick = () => { el.dataset.dday = addDays(day, +b.dataset.dd); viewDaily(el); });

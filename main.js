@@ -224,6 +224,7 @@ async function start() {
   const [teamErr, { data: st }] = await rest;
   if (teamErr) fail(teamErr);
   S.settings = Object.fromEntries((st || []).map((r) => [r.key, r.value]));
+  accessKey = JSON.stringify((st || []).filter((r) => ["erp_access", "privacy"].includes(r.key)).sort((a, b) => a.key.localeCompare(b.key)));
   renderShell();
   route();
   loadAnnouncement();
@@ -329,11 +330,21 @@ function tidyNav() {
 }
 // my own access (role / pages / target) was changed by an Admin → pick it up without a reload
 let meAt = 0, meP = null;
+// Admin flips "show old ERP data" / privacy → every open CRM drops its cached pages and redraws with the new access
+let accessKey = null;
+function accessChanged(note = true) {
+  PAGE_CACHE.clear();
+  import("./sales.js").then((m) => m.salesReset?.()).catch(() => {});
+  if (note && !isMgr()) toast(L("🔄 Access badla — data update ho gaya", "🔄 Access changed — your data is updated"));
+  softRefresh(60);
+}
 async function reloadMe(force = false) {
   if (!S.me || (!force && Date.now() - meAt < 30000)) return;
   if (meP) return meP;
   meP = (async () => {
-    const { data: me } = await sb.from("profiles").select(ME_COLS).eq("id", S.me.id).maybeSingle();
+    const [{ data: me }, { data: acc }] = await Promise.all([sb.from("profiles").select(ME_COLS).eq("id", S.me.id).maybeSingle(),
+      sb.from("settings").select("key, value").in("key", ["erp_access", "privacy"])]);
+    if (acc) { const k = JSON.stringify(acc.sort((a, b) => a.key.localeCompare(b.key))); if (accessKey !== null && k !== accessKey) accessChanged(); accessKey = k; }
     if (!me) return;
     if (!me.active) return renderPending();
     const key = (x) => JSON.stringify([x.role, x.pages, x.categories, x.daily_target, x.full_name]);
@@ -584,6 +595,10 @@ function subscribeRealtime() {
       badgesSoon(300);
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, () => loadAnnouncement())
+    .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, (p) => {
+      if (!["erp_access", "privacy"].includes(p.new?.key || p.old?.key)) return;
+      accessKey = null; accessChanged(p.new?.updated_by !== S.me.id);
+    })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "email_outbox", filter: `user_id=eq.${S.me.id}` }, (p) => {
       if (p.new.status === "sent") toast(L(`✅ Mail chala gaya: ${p.new.subject}`, `✅ Mail sent: ${p.new.subject}`));
       else if (p.new.status === "failed") toast(L(`❌ Mail nahi gaya: ${p.new.subject} — ${p.new.error || ""}`, `❌ Mail failed: ${p.new.subject} — ${p.new.error || ""}`), true);
@@ -940,7 +955,7 @@ let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawer
 const lockTill = (u) => { const d = u ? new Date(u) : null; return !d || isNaN(d) || d.getFullYear() > 9000 ? L("hamesha ke liye (won)", "permanently (won)") : L("till ", "until ") + dt(u); };
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
-  const panelP = leadPanelData(id), salesP = sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: id, p_limit: 1 });
+  const panelP = leadPanelData(id), salesP = Promise.resolve(sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: id, p_limit: 1 }));   // starts now (supabase queries are lazy)
   const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = await Promise.all([
     sb.from("leads").select("*").eq("id", id).single(),
     sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
