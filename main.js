@@ -1359,7 +1359,7 @@ const PAGE = 50;
 const LD = dateState("leads");
 const srchPat = (q) => { const w = String(q || "").split(/[^\p{L}\p{N}@.&'+-]+/u).filter(Boolean); return w.length ? `"*${w.join("*")}*"` : ""; };
 function leadQuery(sel, count) {
-  let q = sb.from("leads").select(sel, count ? { count: "exact" } : undefined);
+  let q = sb.from("leads").select(sel, count ? { count: "exact" } : undefined).eq("hidden", false);   // renewal-only customers stay out of the list
   q = applyDates(q, "created_at", LD, true);
   // words in order, anything between them: "dr shah" finds "Dr. Shah", "mehta, pune" finds "Mehta Traders Pune";
   // quotes / commas / brackets can no longer break the search
@@ -1561,7 +1561,7 @@ function boardTopBar(el) {
 }
 VIEWS.pipeline = async (el) => {
   const mineOnly = el.dataset.mine === "1" || !isMgr();
-  let q = sb.from("leads").select("id, company, city, deal_value, status, owner_id, lock_until, next_follow_up, score").in("status", PCOLS).order("score", { ascending: false }).limit(700);
+  let q = sb.from("leads").select("id, company, city, deal_value, status, owner_id, lock_until, next_follow_up, score").in("status", PCOLS).eq("hidden", false).order("score", { ascending: false }).limit(700);
   if (mineOnly) q = q.eq("owner_id", S.me.id);
   const { data, error } = await q; if (error) throw error;
   const by = Object.fromEntries(PCOLS.map((k) => [k, []])); data.forEach((l) => by[l.status]?.push(l));
@@ -3493,7 +3493,7 @@ ACT.palette = () => {
     if (s.length >= 2 && w) {
       const d = s.replace(/\D/g, "");
       const [{ data: ls }, { data: rs }] = await Promise.all([
-        sb.from("leads").select("id, company, city, status").or(`company.ilike.${w},contact_name.ilike.${w}` + (d.length >= 4 ? `,phone_norm.like.*${d}*` : "")).limit(8),
+        sb.from("leads").select("id, company, city, status").eq("hidden", false).or(`company.ilike.${w},contact_name.ilike.${w}` + (d.length >= 4 ? `,phone_norm.like.*${d}*` : "")).limit(8),
         sb.from("rfqs").select("id, rfq_no, company").or(`company.ilike.${w},rfq_no.ilike.${w}`).limit(4),
       ]);
       items = [...(ls || []).map((l) => ({ l: l.company, s: [l.city, STATUS[l.status]?.l].filter(Boolean).join(" · "), go: () => openLead(l.id) })), ...(rs || []).map((r) => ({ l: `${r.rfq_no} · ${r.company}`, s: "RFQ", go: () => ACT.rfq({ dataset: { id: r.id } }) })), ...items];
