@@ -1844,11 +1844,12 @@ const erpBy = (q) => (String(q.note_internal || "").match(/Banayi: ([^·]+)/) ||
 const crmMade = (q) => /^⚡ Made by the CRM/.test(q.note_internal || "");
 VIEWS.quotes = async (el, soft) => {
   if (!soft || !$("#qtb", el)) {
-    const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"], ["proforma", "📄 Proforma"]];
+    const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"]];
     el.innerHTML = `<div class="qtabs" id="qtabs" role="tablist">
       <button class="qtab ${QF.v ? "" : "on"}" data-qv="" role="tab" aria-selected="${!QF.v}">📄 ${L("Quotations", "Quotations")}</button>
+      <button class="qtab qtab-pf ${QF.v === "pf" ? "on" : ""}" data-qv="pf" role="tab" aria-selected="${QF.v === "pf"}">🧾 ${L("Proforma", "Proforma")} <span class="qtab-n" id="qpn"></span></button>
       <button class="qtab ${QF.v === "ren" ? "on" : ""}" data-qv="ren" role="tab" aria-selected="${QF.v === "ren"}">⚡ ${L("Renewal drafts", "Renewal drafts")} <span class="qtab-n" id="qrn"></span></button></div>
-    <div class="toolbar ${QF.v ? "qv-ren" : ""}" id="qtb">
+    <div class="toolbar ${QF.v ? "qv-" + QF.v : ""}" id="qtb">
       <input class="input grow" id="qq" type="search" maxlength="80" autocomplete="off" value="${h(QF.q)}" aria-label="${h(L("Quotation dhoondo", "Search quotations"))}"
         placeholder="${h(L("Quotation no. ya customer ka naam…", "Quotation no. or customer name…"))}">
       <div class="qprod-w"><span class="qprod-ic" aria-hidden="true">🏷</span><input class="input ${QF.p ? "on" : ""}" id="qprod" type="search" maxlength="60" autocomplete="off" list="qprodL" value="${h(QF.p)}"
@@ -1857,7 +1858,7 @@ VIEWS.quotes = async (el, soft) => {
       <select class="input" id="qsrc" style="width:auto" aria-label="${h(L("Kahan se", "Source"))}">
         <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select>
       <span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
-    <div id="qdb" ${QF.v ? "hidden" : ""}>${dateBarHtml("quotes", QD)}</div>
+    <div id="qdb" ${QF.v === "ren" ? "hidden" : ""}>${dateBarHtml("quotes", QD)}</div>
     <div id="qren"></div>
     <div id="qlead"></div>
     <div class="card"><div class="tbl-wrap" id="qbody"><div class="empty">Loading…</div></div><div id="qfoot"></div></div>`;
@@ -1879,7 +1880,7 @@ VIEWS.quotes = async (el, soft) => {
       if (QF.v === b.dataset.qv) return;
       QF.v = b.dataset.qv; QF.n = 100;
       $$("#qtabs .qtab", el).forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", x === b); });
-      $("#qtb", el).classList.toggle("qv-ren", !!QF.v); $("#qdb", el).hidden = !!QF.v;
+      $("#qtb", el).classList.toggle("qv-ren", QF.v === "ren"); $("#qtb", el).classList.toggle("qv-pf", QF.v === "pf"); $("#qdb", el).hidden = QF.v === "ren";
       $("#qbody", el).innerHTML = `<div class="empty">Loading…</div>`; $("#qfoot", el).innerHTML = "";
       loadQuotes(el);
     });
@@ -1892,9 +1893,12 @@ async function loadQuotes(el) {
   // tab badge: how many CRM-made renewal drafts are waiting
   sb.from("quotations").select("id", { count: "exact", head: true }).eq("ren_draft", true).then(({ count: rn }) => {
     const b = $("#qrn", el); if (b) { b.textContent = rn ? num(rn) : ""; b.classList.toggle("on", !!rn); } }, () => {});
+  // proforma tab badge: made but not sent yet
+  sb.from("proformas").select("id", { count: "exact", head: true }).eq("status", "draft").then(({ count: pn }) => {
+    const b = $("#qpn", el); if (b) { b.textContent = pn ? num(pn) : ""; b.classList.toggle("on", !!pn); b.title = L("Bane hain, bheje nahi", "Made, not sent yet"); } }, () => {});
   if (QF.v === "ren") return loadRenDrafts(el, seq);
   $("#qren", el).innerHTML = "";
-  if (QF.st === "proforma") return loadProformas(el, seq);
+  if (QF.v === "pf") return loadProformas(el, seq);
   const pw = QF.p.toLowerCase().split(/[^\p{L}\p{N}.+-]+/u).filter(Boolean);
   let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal" + (pw.length ? ", items" : ""), { count: "exact" })
     .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);

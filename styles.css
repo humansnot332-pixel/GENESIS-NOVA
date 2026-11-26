@@ -1125,3 +1125,10 @@ details.stg > summary::-webkit-details-marker { display: none; }
   .ren-tbl td:nth-child(7) { grid-area: del; }
   .ren-tbl .ren-own { max-width: 100%; width: 100%; }
 }
+/* v93 · Proforma = its own big tab */
+.qtabs { gap: 6px; padding: 5px; }
+.qtab { font-size: 14.5px; padding: 9px 18px; }
+.qtab-pf.on { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); }
+#qtb.qv-pf #qst, #qtb.qv-pf #qsrc, #qtb.qv-pf .qprod-w { display: none; }
+#qtb.qv-pf #qq { flex: 1 1 160px; min-width: 0; }
+@media (max-width: 640px) { .qtabs { display: flex; width: 100%; } .qtab { flex: 1; justify-content: center; padding: 9px 8px; font-size: 13.5px; } }
