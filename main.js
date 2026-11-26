@@ -1828,7 +1828,7 @@ function wInt(n) { if (!n) return "Zero"; const p = [], cr = Math.floor(n / 1e7)
 const rupeesWords = (v) => { v = r2(v); const r = Math.floor(v), ps = Math.round((v - r) * 100); return wInt(r) + " Rupees" + (ps ? " and " + w2(ps) + " Paise" : "") + " Only"; };
 
 // Quotations page: search (number / customer), status, CRM vs ERP history, one customer, 100 at a time
-const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100 };
+const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100, p: "" };   // p = product filter
 const QD = dateState("quotes");
 let qSeq = 0;
 HOOK.quotesFor = (id, name) => {
@@ -1843,6 +1843,8 @@ VIEWS.quotes = async (el, soft) => {
     el.innerHTML = `<div class="toolbar" id="qtb">
       <input class="input grow" id="qq" type="search" maxlength="80" autocomplete="off" value="${h(QF.q)}" aria-label="${h(L("Quotation dhoondo", "Search quotations"))}"
         placeholder="${h(L("Quotation no. ya customer ka naam…", "Quotation no. or customer name…"))}">
+      <div class="qprod-w"><span class="qprod-ic" aria-hidden="true">🏷</span><input class="input ${QF.p ? "on" : ""}" id="qprod" type="search" maxlength="60" autocomplete="off" list="qprodL" value="${h(QF.p)}"
+        aria-label="${h(L("Product se dhoondo", "Filter by product"))}" placeholder="${h(L("Product — jaise autocad, laptop, m365", "Product — e.g. autocad, laptop, m365"))}"><datalist id="qprodL"></datalist></div>
       <div class="chips" id="qst" role="group" aria-label="Status">${ST.map(([k, t]) => `<button class="chip ${QF.st === k ? "on" : ""}" data-st="${k}" aria-pressed="${QF.st === k}">${h(t)}</button>`).join("")}</div>
       <select class="input" id="qsrc" style="width:auto" aria-label="${h(L("Kahan se", "Source"))}">
         <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select>
@@ -1852,6 +1854,12 @@ VIEWS.quotes = async (el, soft) => {
     <div class="card"><div class="tbl-wrap" id="qbody"><div class="empty">Loading…</div></div><div id="qfoot"></div></div>`;
     let t;
     $("#qq", el).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { QF.q = e.target.value.trim(); QF.n = 100; loadQuotes(el); }, 280); };
+    let tp;
+    $("#qprod", el).oninput = (e) => { clearTimeout(tp); tp = setTimeout(() => { QF.p = e.target.value.trim(); QF.n = 100; e.target.classList.toggle("on", !!QF.p); loadQuotes(el); }, 320); };
+    // suggestions: the product list (brand + name), loaded once
+    loadProducts().then((ps) => { const dl = $("#qprodL", el); if (!dl) return;
+      const names = [...new Set((ps || []).filter((x) => x.active !== false).map((x) => [x.brand, x.name].filter(Boolean).join(" ").trim()).filter(Boolean))].sort();
+      dl.innerHTML = names.slice(0, 400).map((n) => `<option value="${h(n)}">`).join(""); }).catch(() => {});
     $$("#qst .chip", el).forEach((b) => b.onclick = () => {
       QF.st = b.dataset.st; QF.n = 100;
       $$("#qst .chip", el).forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); });
@@ -1865,8 +1873,10 @@ VIEWS.quotes = async (el, soft) => {
 async function loadQuotes(el) {
   const seq = ++qSeq;
   if (QF.st === "proforma") return loadProformas(el, seq);
-  let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal", { count: "exact" })
+  const pw = QF.p.toLowerCase().split(/[^\p{L}\p{N}.+-]+/u).filter(Boolean);
+  let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal" + (pw.length ? ", items" : ""), { count: "exact" })
     .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);
+  if (pw.length) q = q.ilike("items_text", `%${pw.join("%")}%`);
   if (QF.st) q = q.eq("status", QF.st);
   q = applyDates(q, "quote_date", QD);
   if (QF.src === "erp") q = q.not("import_batch", "is", null); else if (QF.src === "crm") q = q.is("import_batch", null);
@@ -1879,11 +1889,14 @@ async function loadQuotes(el) {
   if (error) throw error;
   $("#qlead", el).innerHTML = QF.lead ? `<div class="row" style="margin:0 0 10px"><span class="badge info" style="height:28px;padding:0 10px">🏢 ${h(L("Sirf", "Only"))}: ${h(QF.leadName || "#" + QF.lead)}</span><button class="btn sm" id="qlx">✕ ${L("Sab customers", "All customers")}</button></div>` : "";
   if (QF.lead) $("#qlx", el).onclick = () => { QF.lead = null; QF.leadName = ""; QF.n = 100; loadQuotes(el); };
-  const filtered = QF.q || QF.st || QF.src || QF.lead;
+  const filtered = QF.q || QF.st || QF.src || QF.lead || pw.length;
+  // the matching line(s) of a quotation, e.g. "AutoCAD LT 2026 × 2"
+  const hit = (qq) => !pw.length ? "" : (qq.items || []).filter((it) => { const d = String(it.desc || "").toLowerCase(); return pw.every((w) => d.includes(w)); })
+    .slice(0, 2).map((it) => `<div class="qhit">🏷 ${h(String(it.desc).slice(0, 90))}${+it.qty > 1 ? ` <b>× ${num(+it.qty)}</b>` : ""}${it.opt ? ` <span class="mu">(${L("optional", "optional")})</span>` : ""}</div>`).join("");
   $("#qbody", el).innerHTML = !data.length ? (filtered ? `<div class="empty"><b>${L("Kuch nahi mila", "Nothing found")}</b>${L("Search ya filter badal ke dekho", "Try another search or filter")}</div>`
       : `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>`)
     : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
-  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${h(q.owner_id ? userName(q.owner_id) : erpBy(q) || "—")}</td><td class="sub">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}${hit(q)}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${h(q.owner_id ? userName(q.owner_id) : erpBy(q) || "—")}</td><td class="sub">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
   const total = count ?? data.length;
   $("#qfoot", el).innerHTML = data.length ? `<div class="row" style="padding:10px 16px;border-top:1px solid var(--line)"><span class="mu">${L(`${num(data.length)} / ${num(total)} dikh rahi hain`, `Showing ${num(data.length)} of ${num(total)}`)}</span><span class="sp" style="flex:1"></span>${total > data.length ? `<button class="btn sm" id="qmore">${L("100 aur dikhao", "Show 100 more")}</button>` : ""}</div>` : "";
   const more = $("#qmore", el);
