@@ -13,6 +13,8 @@ const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [..
 const ORD = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
 // the customer says yes / go ahead / send the PI (English + Hinglish)
 const APPROVE = /\b(approved?|approval|go ahead|proceed|process(ed)?|confirm(ed|ing)?|finali[sz]ed?|accept(ed)?|place (an |the )?order|send (the |us )?(pi|proforma( invoice)?|invoice)|raise (the |a )?(pi|invoice)|issue (the |a )?(po|pi|invoice)|okay|ok for|fine with|kar do|kardo|bhej do|bhejdo|chalega|final hai)\b/;
+// "5% discount do toh confirm", "price kam karo", "agar rate kam ho", "subject to …" → still negotiating, not approved
+const HAGGLE = /\b(discount|disc\.|kam kar\w*|kam ki\w*|kam ho\w*|kam do|thoda kam|less(er)? (price|rate)|reduce\w*|reduction|lower (the )?(price|rate|cost)|best (price|rate|offer)|last price|final price\??|negotia\w*|revis(e|ed) (quote|quotation|price|rate|offer)|too (high|costly|expensive)|mehenga|mehnga|provided (that|you)|subject to|on condition|agar|(do|de do|dijiye|karo|kar do|kijiye) (toh|to) (confirm|order|final|approve))\b/;
 const EXCEPT = /\b(except|other than|excluding|without|remove|drop|cancel|skip|not (required|needed|necessary)|no need (of|for)|don'?t need|nahi chahiye)\b/;
 // a number followed by one of these is a quantity, not a line number ("2 and 3 licences")
 const QTY_AFTER = /^\s*(nos?\b|pcs?\b|pieces?\b|qty\b|quantity|units?\b|licen[cs]es?|users?\b|seats?\b|laptops?|desktops?|machines?|systems?|years?\b|months?\b|days?\b|gb\b|tb\b|%|lakhs?|rs\b|inr\b)/;
@@ -28,6 +30,7 @@ export function parsePick(raw, items) {
   const n = items.length;
   let t = " " + String(raw || "").toLowerCase().replace(/\s+/g, " ") + " ";
   t = t.replace(/\b(\d{1,2})\s*(st|nd|rd|th)\b/g, "$1").replace(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\b/g, (m) => String(ORD[m]));
+  if (HAGGLE.test(t)) return { pick: [], how: null, approve: false, except: false, said: "", haggle: true };
   const approve = APPROVE.test(t), except = EXCEPT.test(t.replace(/\b(baaki|baki|bakki|rest|others?|remaining)\b.{0,25}/g, " "));
   const nums = new Set(); let said = "";
   const take = (list, phrase) => { const ok = list.filter((x) => x >= 1 && x <= n); if (!ok.length) return; ok.forEach((x) => nums.add(x)); if (!said) said = phrase; };
@@ -76,21 +79,23 @@ export function parsePick(raw, items) {
 }
 
 /** the quotations this mail most likely answers, best first */
-export function rankQuotes(quotes, r, text) {
+export function scoreQuotes(quotes, r, text) {
   const subj = String(r.subject || "").replace(/^\s*((re|fw|fwd|aw)\s*:\s*)+/i, "");
   const hay = (subj + " " + text).toLowerCase(), sw = new Set(words(subj)), mailAt = Date.parse(r.created_at) || Date.now();
   return quotes.map((q) => {
-    let s = 0; const no = String(q.quote_no || "").toLowerCase();
-    if (no && hay.includes(no)) s += 100;
-    else { const tail = no.split("/").pop(); if (tail && tail.length >= 3 && new RegExp(`\\b${tail.replace(/[^a-z0-9]/g, "")}\\b`).test(hay)) s += 60; }
+    let s = 0, num = false; const no = String(q.quote_no || "").toLowerCase();
+    if (no && hay.includes(no)) { s += 100; num = true; }
+    else { const tail = no.split("/").pop(); if (tail && tail.length >= 3 && new RegExp(`\\b${tail.replace(/[^a-z0-9]/g, "")}\\b`).test(hay)) { s += 60; num = true; } }
     const iw = new Set(mainItems(q).flatMap((it) => words(it.desc)));
     if (sw.size && iw.size) s += 40 * [...sw].filter((w) => iw.has(w)).length / sw.size;
     const at = Date.parse(q.created_at) || 0, days = (mailAt - at) / 864e5;
     s += days < -0.05 ? -60 : Math.max(0, 20 - days / 3);
-    if (q.status === "draft") s -= 25;
-    return { q, s };
-  }).sort((a, b) => b.s - a.s).map((x) => x.q);
+    if (q.status === "draft" && !q.sent_at) s -= 25;          // never left the CRM
+    if (q.import_batch && !num) s -= 40;                     // the old ERP's quotations: only when the mail names them
+    return { q, s, num };
+  }).sort((a, b) => b.s - a.s);
 }
+export const rankQuotes = (quotes, r, text) => scoreQuotes(quotes, r, text).map((x) => x.q);
 
 function totals(q, pick) {
   const inc = mainItems(q); let sub = 0, tax = 0;
@@ -130,7 +135,7 @@ export async function drawDeal(box, ctx) {
   const { r, lead, text } = ctx;
   if (!box || !lead) return false;
   const { data: quotes } = await sb.from("quotations")
-    .select("id, quote_no, quote_date, created_at, items, to_party, status, grand_total, round_off, show_optional, note_customer, payment_terms, delivery, validity_days, ref, site, amc, owner_id, lead_id, terms_html, annexure_html, notes")
+    .select("sent_at, import_batch, id, quote_no, quote_date, created_at, items, to_party, status, grand_total, round_off, show_optional, note_customer, payment_terms, delivery, validity_days, ref, site, amc, owner_id, lead_id, terms_html, annexure_html, notes")
     .eq("lead_id", lead.id).neq("status", "lost").order("created_at", { ascending: false }).limit(25);
   const ranked = rankQuotes((quotes || []).filter((q) => mainItems(q).length), r, text);
   if (!ranked.length || !box.isConnected) return false;

@@ -789,13 +789,16 @@ export function onlyReply(t) {
 // the quotation this reply is about (number in the subject / text, else the latest one sent before the reply)
 async function replyQuote(box, r, lead) {
   if (!box) return;
-  const { data: qs } = await sb.from("quotations").select("id, quote_no, quote_date, created_at, status, grand_total, items, view_count, customer_response")
-    .eq("lead_id", lead.id).neq("status", "draft").lte("created_at", new Date(Date.parse(r.created_at) + 864e5).toISOString())
+  // only quotations that actually went to the customer (a link / mail / PDF was made → sent_at), made before the reply
+  const { data: qs } = await sb.from("quotations").select("id, quote_no, quote_date, created_at, sent_at, import_batch, status, grand_total, items, view_count, customer_response")
+    .eq("lead_id", lead.id).or("status.neq.draft,sent_at.not.is.null").lte("created_at", new Date(Date.parse(r.created_at) + 864e5).toISOString())
     .order("created_at", { ascending: false }).limit(15);
   if (!qs?.length || !box.isConnected) return;
-  const { rankQuotes } = await import("./proforma.js");
-  const ranked = rankQuotes(qs, r, onlyReply(r.body || r.snippet || "")), q = ranked[0];
-  if (!q || !box.isConnected) return;
+  const { scoreQuotes } = await import("./proforma.js");
+  const sc = scoreQuotes(qs, r, onlyReply(r.body || r.snippet || "")), best = sc[0];
+  // not sure which one it is → show nothing rather than a wrong quotation
+  if (!best || !(best.num || best.s >= 15) || !box.isConnected) return;
+  const ranked = sc.map((x) => x.q), q = best.q;
   const items = (q.items || []).filter((it) => !it.opt);
   const st = { sent: ["info", L("Bheji", "Sent")], won: ["good", "🏆 Won"], lost: ["bad", "Lost"] }[q.status] || ["", q.status];
   box.innerHTML = `<div class="ibq">
