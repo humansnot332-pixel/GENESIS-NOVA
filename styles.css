@@ -1161,3 +1161,6 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .ibq-more { display: inline-block; margin-top: 6px; font-size: 12.5px; color: var(--accent); }
 .ibq-b { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 640px) { .ibq { grid-template-columns: auto minmax(0, 1fr); margin: 12px 12px 0; } .ibq-b { grid-column: 1 / -1; justify-content: flex-start; } }
+/* v100 · Lock & start: the bar turns "yours" at once */
+.lockbar.pending { animation: lkPend 1s ease-in-out infinite alternate; }
+@keyframes lkPend { from { opacity: .75; } to { opacity: 1; } }

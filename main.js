@@ -956,7 +956,11 @@ const lockTill = (u) => { const d = u ? new Date(u) : null; return !d || isNaN(d
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
   const panelP = leadPanelData(id), salesP = Promise.resolve(sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: id, p_limit: 1 }));   // starts now (supabase queries are lazy)
-  const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = await Promise.all([
+  // opt.have = the drawer's own data, just changed on this screen (e.g. after "Lock & start") → draw at once, no refetch
+  const hv = opt.have; opt = { ...opt, have: undefined };
+  const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = hv
+    ? [{ data: hv.l, error: null }, { data: hv.acts }, { data: hv.tasks }, { data: hv.lhist }, { data: hv.mails }]
+    : await Promise.all([
     sb.from("leads").select("*").eq("id", id).single(),
     sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
     sb.from("tasks").select("*").eq("lead_id", id).eq("done", false).order("due_at"),
@@ -1070,6 +1074,9 @@ async function openLead(id, opt = {}) {
   $$("[data-lk]", d).forEach((b) => b.onclick = () => busy(b, async () => {
     const a = b.dataset.lk;
     if (a === "claim" || a === "claimcall") {
+      // at once: the bar already says it is becoming yours (the server answers in a moment)
+      const bar = $(".lockbar", d);
+      if (bar) { bar.className = "lockbar mine pending"; bar.innerHTML = `🔒 <div><b>${L("Aapke naam lock ho raha hai…", "Locking it to you…")}</b><small>${h(S.me.full_name)}</small></div>`; }
       const r = await claim("lead", id);
       if (!r.ok) {
         if (r.reason === "company" && r.lead_id) toastAction(claimFailMsg(r), L("Wo lead kholo", "Open that lead"), () => openLead(r.lead_id), 9000);
@@ -1078,7 +1085,11 @@ async function openLead(id, opt = {}) {
       }
       toast(claimOkMsg(r)); after();
       if (a === "claimcall" && l.phone) location.href = telHref(l.phone);
-      return reopen();
+      // yours now: draw the drawer straight from what is already here (number, call buttons, edit) — no reload
+      const now = new Date().toISOString();
+      const l2 = { ...l, owner_id: S.me.id, locked_at: now, lock_until: r.until || l.lock_until };
+      const h2 = [{ entity: "lead", entity_id: id, why: "claim", from_user: null, to_user: S.me.id, at: now, reason: null }, ...(lhist || [])];
+      return openLead(id, { ...opt, have: { l: l2, acts, tasks, lhist: h2, mails } });
     }
     if (a === "release" || a === "force") {
       const why = await askRelease({ force: a === "force", holder: lk.holder, used: dropsUsed(lhist) });
