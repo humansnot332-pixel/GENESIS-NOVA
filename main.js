@@ -1832,19 +1832,23 @@ function wInt(n) { if (!n) return "Zero"; const p = [], cr = Math.floor(n / 1e7)
 const rupeesWords = (v) => { v = r2(v); const r = Math.floor(v), ps = Math.round((v - r) * 100); return wInt(r) + " Rupees" + (ps ? " and " + w2(ps) + " Paise" : "") + " Only"; };
 
 // Quotations page: search (number / customer), status, CRM vs ERP history, one customer, 100 at a time
-const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100, p: "" };   // p = product filter
+const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100, p: "", v: "" };   // p = product filter · v = "" (quotations) | "ren" (⚡ renewal drafts)
 const QD = dateState("quotes");
 let qSeq = 0;
 HOOK.quotesFor = (id, name) => {
-  Object.assign(QF, { lead: id, leadName: name || "", q: "", st: "", src: "", n: 100 });
+  Object.assign(QF, { lead: id, leadName: name || "", q: "", st: "", src: "", n: 100, v: "" });
   closeDrawer();
   if (S.route === "quotes") VIEWS.quotes($("#page")); else location.hash = "#/quotes";
 };
 const erpBy = (q) => (String(q.note_internal || "").match(/Banayi: ([^·]+)/) || [])[1]?.trim() || "";
+const crmMade = (q) => /^⚡ Made by the CRM/.test(q.note_internal || "");
 VIEWS.quotes = async (el, soft) => {
   if (!soft || !$("#qtb", el)) {
     const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"], ["proforma", "📄 Proforma"]];
-    el.innerHTML = `<div class="toolbar" id="qtb">
+    el.innerHTML = `<div class="qtabs" id="qtabs" role="tablist">
+      <button class="qtab ${QF.v ? "" : "on"}" data-qv="" role="tab" aria-selected="${!QF.v}">📄 ${L("Quotations", "Quotations")}</button>
+      <button class="qtab ${QF.v === "ren" ? "on" : ""}" data-qv="ren" role="tab" aria-selected="${QF.v === "ren"}">⚡ ${L("Renewal drafts", "Renewal drafts")} <span class="qtab-n" id="qrn"></span></button></div>
+    <div class="toolbar ${QF.v ? "qv-ren" : ""}" id="qtb">
       <input class="input grow" id="qq" type="search" maxlength="80" autocomplete="off" value="${h(QF.q)}" aria-label="${h(L("Quotation dhoondo", "Search quotations"))}"
         placeholder="${h(L("Quotation no. ya customer ka naam…", "Quotation no. or customer name…"))}">
       <div class="qprod-w"><span class="qprod-ic" aria-hidden="true">🏷</span><input class="input ${QF.p ? "on" : ""}" id="qprod" type="search" maxlength="60" autocomplete="off" list="qprodL" value="${h(QF.p)}"
@@ -1853,7 +1857,8 @@ VIEWS.quotes = async (el, soft) => {
       <select class="input" id="qsrc" style="width:auto" aria-label="${h(L("Kahan se", "Source"))}">
         <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select>
       <span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
-    ${dateBarHtml("quotes", QD)}
+    <div id="qdb" ${QF.v ? "hidden" : ""}>${dateBarHtml("quotes", QD)}</div>
+    <div id="qren"></div>
     <div id="qlead"></div>
     <div class="card"><div class="tbl-wrap" id="qbody"><div class="empty">Loading…</div></div><div id="qfoot"></div></div>`;
     let t;
@@ -1870,17 +1875,31 @@ VIEWS.quotes = async (el, soft) => {
       loadQuotes(el);
     });
     $("#qsrc", el).onchange = (e) => { QF.src = e.target.value; QF.n = 100; loadQuotes(el); };
+    $$("#qtabs .qtab", el).forEach((b) => b.onclick = () => {
+      if (QF.v === b.dataset.qv) return;
+      QF.v = b.dataset.qv; QF.n = 100;
+      $$("#qtabs .qtab", el).forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-selected", x === b); });
+      $("#qtb", el).classList.toggle("qv-ren", !!QF.v); $("#qdb", el).hidden = !!QF.v;
+      $("#qbody", el).innerHTML = `<div class="empty">Loading…</div>`; $("#qfoot", el).innerHTML = "";
+      loadQuotes(el);
+    });
     wireDateBar(el, "quotes", QD, () => { QF.n = 100; loadQuotes(el); });
   }
   await loadQuotes(el);
 };
 async function loadQuotes(el) {
   const seq = ++qSeq;
+  // tab badge: how many CRM-made renewal drafts are waiting
+  sb.from("quotations").select("id", { count: "exact", head: true }).eq("ren_draft", true).then(({ count: rn }) => {
+    const b = $("#qrn", el); if (b) { b.textContent = rn ? num(rn) : ""; b.classList.toggle("on", !!rn); } }, () => {});
+  if (QF.v === "ren") return loadRenDrafts(el, seq);
+  $("#qren", el).innerHTML = "";
   if (QF.st === "proforma") return loadProformas(el, seq);
   const pw = QF.p.toLowerCase().split(/[^\p{L}\p{N}.+-]+/u).filter(Boolean);
   let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal" + (pw.length ? ", items" : ""), { count: "exact" })
     .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);
   if (pw.length) q = q.ilike("items_text", `%${pw.join("%")}%`);
+  q = q.eq("ren_draft", false);         // CRM's renewal drafts live in their own tab
   if (QF.st) q = q.eq("status", QF.st);
   q = applyDates(q, "quote_date", QD);
   if (QF.src === "erp") q = q.not("import_batch", "is", null); else if (QF.src === "crm") q = q.is("import_batch", null);
@@ -1900,11 +1919,62 @@ async function loadQuotes(el) {
   $("#qbody", el).innerHTML = !data.length ? (filtered ? `<div class="empty"><b>${L("Kuch nahi mila", "Nothing found")}</b>${L("Search ya filter badal ke dekho", "Try another search or filter")}</div>`
       : `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>`)
     : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
-  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}${hit(q)}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${h(q.owner_id ? userName(q.owner_id) : erpBy(q) || "—")}</td><td class="sub">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}${hit(q)}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${q.owner_id ? h(userName(q.owner_id)) : crmMade(q) ? `<span class="badge" title="${h(L("CRM ne renewal ke liye khud banayi", "Made by the CRM for a renewal"))}">⚡ CRM</span>` : h(erpBy(q) || "—")}</td><td class="sub">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
   const total = count ?? data.length;
   $("#qfoot", el).innerHTML = data.length ? `<div class="row" style="padding:10px 16px;border-top:1px solid var(--line)"><span class="mu">${L(`${num(data.length)} / ${num(total)} dikh rahi hain`, `Showing ${num(data.length)} of ${num(total)}`)}</span><span class="sp" style="flex:1"></span>${total > data.length ? `<button class="btn sm" id="qmore">${L("100 aur dikhao", "Show 100 more")}</button>` : ""}</div>` : "";
   const more = $("#qmore", el);
   if (more) more.onclick = () => busy(more, async () => { QF.n += 100; await loadQuotes(el); });
+}
+// Quotations → ⚡ Renewal drafts: quotations the CRM made itself for renewals due in the next 30 days (still draft)
+async function loadRenDrafts(el, seq) {
+  let q = sb.from("quotations").select("id, quote_no, to_party, grand_total, owner_id, lead_id, created_at, renewal_id, renewals!quotations_renewal_id_fkey(product, end_date, owner_id)", { count: "exact" })
+    .eq("ren_draft", true).order("created_at", { ascending: false }).range(0, 499);
+  if (QF.lead) q = q.eq("lead_id", QF.lead);
+  const term = QF.q.split(/[^\p{L}\p{N}&/-]+/u).filter(Boolean).join("*");
+  if (term) q = q.or(`quote_no.ilike."*${term}*",to_party->>name.ilike."*${term}*"`);
+  const { data, error } = await q;
+  if (seq !== qSeq || !$("#qbody", el)) return;
+  if (error) throw error;
+  $("#qlead", el).innerHTML = QF.lead ? `<div class="row" style="margin:0 0 10px"><span class="badge info" style="height:28px;padding:0 10px">🏢 ${h(L("Sirf", "Only"))}: ${h(QF.leadName || "#" + QF.lead)}</span><button class="btn sm" id="qlx">✕ ${L("Sab customers", "All customers")}</button></div>` : "";
+  if (QF.lead) $("#qlx", el).onclick = () => { QF.lead = null; QF.leadName = ""; QF.n = 100; loadQuotes(el); };
+  const t0 = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) + "T00:00:00");
+  const left = (d) => d ? Math.round((new Date(d + "T00:00:00") - t0) / 864e5) : null;
+  const rows = (data || []).map((x) => ({ ...x, rn: x.renewals || {}, dl: left(x.renewals?.end_date) }))
+    .sort((a, b) => (a.dl ?? 1e9) - (b.dl ?? 1e9) || a.id - b.id);
+  const noPrice = rows.filter((x) => !(+x.grand_total > 0)).length, noOwner = rows.filter((x) => !x.owner_id).length;
+  $("#qren", el).innerHTML = `<div class="banner ren-info">⚡ <div><b>${L("Ye drafts CRM ne khud banaye hain", "The CRM made these drafts itself")}</b>
+    <span>${L("Jis renewal ki date 30 din ke andar hai, uska draft yahan apne aap aata hai. Price bharo, owner do, phir customer ko bhejo — bhejte hi ye main list mein chala jayega.",
+      "Every renewal due within 30 days gets a draft here automatically. Fill the price, give it an owner, then send it — once sent it moves to the main list.")}</span>
+    ${rows.length ? `<span class="ren-st">${noPrice ? `<span class="badge warn">₹0 · ${num(noPrice)} ${L("mein price bharna hai", "need a price")}</span>` : ""}${noOwner ? ` <span class="badge warn">👤 ${num(noOwner)} ${L("ka owner nahi", "have no owner")}</span>` : ""}</span>` : ""}</div></div>`;
+  const ownerCell = (x) => isMgr()
+    ? `<select class="input sm ren-own" data-rown="${x.id}" aria-label="Owner"><option value="">⚡ CRM — ${L("owner do", "assign")}</option>${assignable().map((u) => `<option value="${u.id}" ${u.id === x.owner_id ? "selected" : ""}>${h(u.full_name)}</option>`).join("")}</select>`
+    : x.owner_id ? h(userName(x.owner_id)) : `<span class="badge">⚡ CRM</span>`;
+  const dueBadge = (d) => d == null ? "" : d < 0 ? `<span class="badge bad">${L(`${-d} din pehle khatam`, `ended ${-d}d ago`)}</span>`
+    : `<span class="badge ${d <= 7 ? "bad" : d <= 15 ? "warn" : "info"}">${d === 0 ? L("aaj", "today") : L(`${d} din baaki`, `${d}d left`)}</span>`;
+  $("#qbody", el).innerHTML = !rows.length
+    ? `<div class="empty"><b>${L("Koi renewal draft nahi 🎉", "No renewal drafts 🎉")}</b>${L("Agle 30 din ke saare renewals ki quotation bhej di gayi hai.", "Every renewal due in the next 30 days has been sent.")}</div>`
+    : `<table class="tbl ren-tbl"><thead><tr><th>${L("Renewal date", "Renewal date")}</th><th>Customer</th><th>Product</th><th class="num">Total</th><th>Owner</th><th>No.</th><th></th></tr></thead><tbody>
+    ${rows.map((x) => `<tr data-act="quote" data-id="${x.id}">
+      <td style="white-space:nowrap">${h(dOnly(x.rn.end_date))}<div style="margin-top:3px">${dueBadge(x.dl)}</div></td>
+      <td class="co">${h(x.to_party?.name || "")}</td><td class="sub" style="max-width:280px">${h(x.rn.product || "")}</td>
+      <td class="num">${+x.grand_total > 0 ? inr(x.grand_total) : `<span class="badge warn" title="${h(L("Kholo aur price bharo", "Open it and fill the price"))}">₹0 · ${L("price bharo", "fill price")}</span>`}</td>
+      <td>${ownerCell(x)}</td><td class="mono sub">${h(x.quote_no)}</td>
+      <td style="width:44px">${isMgr() || x.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${x.id}" data-no="${h(x.quote_no)}" data-co="${h(x.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+  $("#qfoot", el).innerHTML = "";
+  $$("[data-rown]", el).forEach((s) => {
+    s.onclick = (e) => e.stopPropagation();
+    s.onchange = async () => {
+      const x = rows.find((r) => r.id === +s.dataset.rown), uid = s.value || null;
+      s.disabled = true;
+      const { error: e1 } = await sb.from("quotations").update({ owner_id: uid }).eq("id", x.id);
+      if (!e1 && x.renewal_id && uid) await sb.from("renewals").update({ owner_id: uid }).eq("id", x.renewal_id).is("owner_id", null);
+      s.disabled = false;
+      if (e1) { s.value = x.owner_id || ""; return fail(e1); }
+      x.owner_id = uid;
+      toast(uid ? L(`👤 ${x.quote_no} → ${userName(uid)}`, `👤 ${x.quote_no} → ${userName(uid)}`) : L("Owner hata diya", "Owner removed"));
+      loadQuotes(el);
+    };
+  });
 }
 // Quotations → 📄 Proforma: the approved-items quotations made from customers' replies (same number as the quotation)
 async function loadProformas(el, seq) {
