@@ -235,6 +235,10 @@ async function start() {
   timers.push(setInterval(() => !document.hidden && reloadMe(), 120e3));      // safety net if the live signal was missed
   subscribeRealtime();
   startOutlookAutoSync();
+  if (isMgr()) {      // 5:50 pm day summary pops up once a day on this device
+    const ds = () => import("./daysum.js").then((m) => m.popupSummary()).catch(() => {});
+    setTimeout(ds, 3000); timers.push(setInterval(() => !document.hidden && ds(), 60e3));
+  }
   pushResync();            // this phone's notifications follow whoever is logged in now
 }
 HOOK.openLead = (id, o) => openLead(id, o);

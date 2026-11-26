@@ -92,7 +92,7 @@ export async function pushCard(box) {
       <span class="badge ${on ? "good" : "warn"}">${on ? "✅ " + L("is phone par ON", "on for this device") : L("is phone par OFF", "off on this device")}</span>
       <span style="flex:1"></span>${btns}</div>
     <div class="mu" style="font-size:12.5px;margin-top:4px">${L("Ticket aapko assign hote hi phone par notification aata hai — app band ho ya logout ho tab bhi. Sirf jisko ticket mila, usi ko.",
-      "When a ticket is assigned to you, your phone shows a notification — even with the app closed or logged out. Only the assignee gets it.")}</div>
+      "When a ticket is assigned to you, your phone shows a notification — even with the app closed or logged out. Only the assignee gets it.")}${isMgr() ? " " + L("Admin / Manager ko roz shaam 5:50 ka din ka summary bhi isi se aata hai (Mon–Sat).", "Admins / Managers also get the 5:50 pm day summary here (Mon–Sat).") : ""}</div>
     ${note}
     ${mine.length ? `<div class="devs">${L("Aapke devices", "Your devices")}: ${mine.map((d) => `${h(d.device || "Device")}${d.ok_at ? " ✔" : ""}`).join(" · ")}</div>` : ""}
     ${team}</div>`;

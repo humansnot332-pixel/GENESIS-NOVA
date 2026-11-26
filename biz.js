@@ -752,6 +752,7 @@ export async function viewDaily(el) {
   const wd = (d) => new Date(d + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "2-digit" });
   el.innerHTML = `<div class="toolbar"><button class="btn sm" data-dd="-1">‹</button><input class="input" type="date" id="dday" value="${h(day)}" max="${h(today())}" style="width:auto"><button class="btn sm" data-dd="1" ${day >= today() ? "disabled" : ""}>›</button>
       <span class="mu">${day === today() ? L("Aaj (live)", "Today (live)") : h(dOnly(day))}</span><span class="sp" style="flex:1"></span><button class="btn" id="dexp">${ic("download")} Export</button></div>
+    ${isMgr() ? `<div id="dsum"><div class="card sec"><div class="card-b"><div class="empty">📊 ${L("Din ka summary ban raha hai…", "Building the day summary…")}</div></div></div></div>` : ""}
     <div class="kpis">
       <div class="card kpi"><div class="l">Calls</div><div class="v">${num(T("calls"))}</div><div class="s">${num(T("positive"))} positive</div></div>
       <div class="card kpi"><div class="l">Email / WhatsApp</div><div class="v">${num(T("emails"))} / ${num(T("whatsapp"))}</div></div>
@@ -767,6 +768,14 @@ export async function viewDaily(el) {
     </tbody></table></div><div class="card-b mu" style="font-size:12px">${h(L("Login = CRM pehli baar kab khula · Active time = jitni der CRM khula aur use hua (har minute heartbeat). ⏰ = 10:15 ke baad login.", "Login = first time the CRM was opened · Active time = time the CRM was open and in use (heartbeat every minute). ⏰ = login after 10:15."))}</div></div>
     ${(vis || []).length ? `<div class="card sec"><div class="card-h"><h3>📍 ${L("Visits", "Visits")}</h3></div><div class="card-b">${vis.map((v) => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${h(hm(v.created_at))}</b><span>${h(userName(v.user_id))}</span><a href="#/leads/${v.lead_id}">${h(vleads.get(v.lead_id)?.company || "#" + v.lead_id)}</a><span class="mu">${h(v.note || "")}</span>${v.lat != null ? `<a class="right" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps?q=${+v.lat},${+v.lng}">🗺 Map${v.accuracy ? ` (±${v.accuracy}m)` : ""}</a>` : ""}</div>`).join("")}</div></div>` : ""}`;
   $("#dday", el).onchange = (e) => { el.dataset.dday = e.target.value || today(); viewDaily(el); };
+  if (isMgr()) import("./daysum.js").then(async (m) => {
+    const { data: sm, error: se } = await sb.rpc("day_summary", { p_day: day });
+    const box = $("#dsum", el); if (!box) return;
+    box.innerHTML = se || !sm ? "" : m.summaryHtml(sm);
+    // no phone set up for the 5:50 notification yet → a one-line nudge (opens My profile)
+    const { count: ph } = await sb.from("push_subs").select("id", { count: "exact", head: true }).eq("user_id", S.me.id);
+    if (!ph && $("#dsum", el)) $("#dsum", el).insertAdjacentHTML("afterbegin", `<div class="banner" style="margin:0 0 12px">📲 <div><b>${L("5:50 ka summary phone pe bhi chahiye?", "Want the 5:50 summary on your phone too?")}</b> <span>${L("Phone pe CRM kholo → Mera profile → “Notification ON karo” (ek baar).", "Open the CRM on your phone → My profile → “Turn on notifications” (once).")}</span></div><button class="btn sm primary right" data-act="profile">${L("Profile kholo", "Open profile")}</button></div>`);
+  }).catch(() => { const box = $("#dsum", el); if (box) box.innerHTML = ""; });
   $$("[data-dd]", el).forEach((b) => b.onclick = () => { el.dataset.dday = addDays(day, +b.dataset.dd); viewDaily(el); });
   $("#dexp", el).onclick = () => download(`daily-report-${day}.csv`, toCSV(rows.map((r) => ({ ...r, login: hm(r.first_seen), last: hm(r.last_seen), active: hrs(r.active_min) })), [["name", "Name"], ["login", "Login"], ["last", "Last active"], ["active", "Active time"], ["calls", "Calls"], ["positive", "Positive"], ["emails", "Emails"], ["whatsapp", "WhatsApp"], ["quotes", "Quotations"], ["quote_value", "Quote value"], ["won", "Won"], ["payments", "Collected"], ["visits", "Visits"], ["tickets_resolved", "Tickets resolved"]]));
 }
