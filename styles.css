@@ -1132,3 +1132,20 @@ details.stg > summary::-webkit-details-marker { display: none; }
 #qtb.qv-pf #qst, #qtb.qv-pf #qsrc, #qtb.qv-pf .qprod-w { display: none; }
 #qtb.qv-pf #qq { flex: 1 1 160px; min-width: 0; }
 @media (max-width: 640px) { .qtabs { display: flex; width: 100%; } .qtab { flex: 1; justify-content: center; padding: 9px 8px; font-size: 13.5px; } }
+/* v94 · Quotations header: tabs + New button on one row; one tidy filter row */
+.qhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.qhead .qtabs { margin-bottom: 0; }
+.qhead > .btn { margin-left: auto; height: 40px; }
+#qtb { gap: 8px 10px; }
+#qtb #qq { flex: 1 1 220px; min-width: 180px; }
+#qtb .qprod-w { flex: 1 1 220px; min-width: 180px; }
+#qtb #qdb { display: inline-flex; }
+#qtb #qdb[hidden] { display: none; }
+#qtb #qst { flex-wrap: nowrap; }
+@media (max-width: 640px) { .qhead > .btn { margin-left: 0; width: 100%; justify-content: center; } #qtb #qq, #qtb .qprod-w { flex-basis: 100%; } #qtb #qst { flex-wrap: wrap; } }
+/* v94 · toolbar alignment: groups wrap together, no lone buttons */
+.qf-g { display: flex; gap: 8px 10px; align-items: center; flex-wrap: wrap; }
+.toolbar .tb-note { flex: 1 1 260px; text-align: right; font-size: 12.5px; }
+.filters .datebar { margin: 0; }
+.filters .datebar .db-btn { height: 36px; }
+@media (max-width: 640px) { .toolbar .tb-note { text-align: left; flex-basis: 100%; } .toolbar .tb-acts { margin-left: 0; justify-content: flex-start; } }

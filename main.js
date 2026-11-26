@@ -1370,9 +1370,9 @@ VIEWS.leads = async (el, soft) => {
       <select class="input" id="lcity" aria-label="City"><option value="">${L("Sab cities", "All cities")}</option>${LF.city ? `<option selected value="${h(LF.city)}">${h(LF.city)}</option>` : ""}</select>
       <select class="input" id="lsrc" aria-label="Source">${sourceOptions()}</select>
       <select class="input" id="lown" aria-label="Lock"><option value="">Sab leads</option><option value="me" ${LF.owner === "me" ? "selected" : ""}>🔒 Mere (locked by me)</option><option value="none" ${LF.owner === "none" ? "selected" : ""}>🔓 Free pool</option><option value="others" ${LF.owner === "others" ? "selected" : ""}>🔒 Doosron ke paas</option>${isMgr() ? assignable().map((u) => `<option value="${u.id}" ${LF.owner === u.id ? "selected" : ""}>👤 ${h(u.full_name)}</option>`).join("") : ""}</select>
+      ${dateBarHtml("leads", LD)}
       <button class="btn ghost" id="lclr" ${LF.status || LF.category || LF.city || LF.source || LF.owner ? "" : "hidden"}>✕ ${L("Filters hatao", "Clear filters")}</button>
     </div>
-    ${dateBarHtml("leads", LD)}
     <div class="card"><div class="tbl-wrap" id="ltb"></div><div class="pager" id="lpg"></div></div>
     <div id="lbulk"></div>`;
     let t;
@@ -1597,9 +1597,9 @@ VIEWS.rfqs = async (el) => {
   el.innerHTML = `
     <div class="toolbar"><div class="chips">${[["open", "Open"], ...RFQ_STATUSES.map(([k, l]) => [k, l]), ["all", "All"]].map(([k, l]) => `<button class="chip ${RF.st === k ? "on" : ""}" data-rs="${k}">${l}</button>`).join("")}</div>
       <input class="input grow" id="rq" placeholder="Search RFQ…" value="${h(RF.q)}" aria-label="Search RFQs">
-      <button class="btn" data-act="rfqHook">🔗 ${L("Enquiry link", "Enquiry link")}</button>
-      <button class="btn primary" data-act="newRfq">${ic("plus")} RFQ</button></div>
-    ${dateBarHtml("rfqs", RQD)}
+      ${dateBarHtml("rfqs", RQD)}
+      <div class="tb-acts"><button class="btn" data-act="rfqHook">🔗 ${L("Enquiry link", "Enquiry link")}</button>
+      <button class="btn primary" data-act="newRfq">${ic("plus")} RFQ</button></div></div>
     <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>Koi RFQ nahi</b>IndiaMART / website se naye RFQ apne aap yahan aayenge.</div>` : `
       <table class="tbl"><thead><tr><th>RFQ</th><th>Company</th><th>Requirement</th><th>Due</th><th>Status</th><th>Lock</th><th class="num">Quoted</th><th>Source</th></tr></thead><tbody>
       ${data.map((r) => {
@@ -1845,20 +1845,21 @@ const crmMade = (q) => /^⚡ Made by the CRM/.test(q.note_internal || "");
 VIEWS.quotes = async (el, soft) => {
   if (!soft || !$("#qtb", el)) {
     const ST = [["", L("Sab", "All")], ["draft", "Draft"], ["sent", "Sent"], ["won", "Won"], ["lost", "Lost"]];
-    el.innerHTML = `<div class="qtabs" id="qtabs" role="tablist">
+    el.innerHTML = `<div class="qhead"><div class="qtabs" id="qtabs" role="tablist">
       <button class="qtab ${QF.v ? "" : "on"}" data-qv="" role="tab" aria-selected="${!QF.v}">📄 ${L("Quotations", "Quotations")}</button>
       <button class="qtab qtab-pf ${QF.v === "pf" ? "on" : ""}" data-qv="pf" role="tab" aria-selected="${QF.v === "pf"}">🧾 ${L("Proforma", "Proforma")} <span class="qtab-n" id="qpn"></span></button>
       <button class="qtab ${QF.v === "ren" ? "on" : ""}" data-qv="ren" role="tab" aria-selected="${QF.v === "ren"}">⚡ ${L("Renewal drafts", "Renewal drafts")} <span class="qtab-n" id="qrn"></span></button></div>
+      <button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
     <div class="toolbar ${QF.v ? "qv-" + QF.v : ""}" id="qtb">
       <input class="input grow" id="qq" type="search" maxlength="80" autocomplete="off" value="${h(QF.q)}" aria-label="${h(L("Quotation dhoondo", "Search quotations"))}"
         placeholder="${h(L("Quotation no. ya customer ka naam…", "Quotation no. or customer name…"))}">
       <div class="qprod-w"><span class="qprod-ic" aria-hidden="true">🏷</span><input class="input ${QF.p ? "on" : ""}" id="qprod" type="search" maxlength="60" autocomplete="off" list="qprodL" value="${h(QF.p)}"
         aria-label="${h(L("Product se dhoondo", "Filter by product"))}" placeholder="${h(L("Product — jaise autocad, laptop, m365", "Product — e.g. autocad, laptop, m365"))}"><datalist id="qprodL"></datalist></div>
-      <div class="chips" id="qst" role="group" aria-label="Status">${ST.map(([k, t]) => `<button class="chip ${QF.st === k ? "on" : ""}" data-st="${k}" aria-pressed="${QF.st === k}">${h(t)}</button>`).join("")}</div>
+      <span id="qdb" ${QF.v === "ren" ? "hidden" : ""}>${dateBarHtml("quotes", QD)}</span>
+      <div class="qf-g"><div class="chips" id="qst" role="group" aria-label="Status">${ST.map(([k, t]) => `<button class="chip ${QF.st === k ? "on" : ""}" data-st="${k}" aria-pressed="${QF.st === k}">${h(t)}</button>`).join("")}</div>
       <select class="input" id="qsrc" style="width:auto" aria-label="${h(L("Kahan se", "Source"))}">
-        <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select>
-      <span class="sp" style="flex:1"></span><button class="btn primary" data-act="newQuote">${ic("plus")} Quotation</button></div>
-    <div id="qdb" ${QF.v === "ren" ? "hidden" : ""}>${dateBarHtml("quotes", QD)}</div>
+        <option value="">CRM + ERP</option><option value="crm" ${QF.src === "crm" ? "selected" : ""}>${L("Sirf CRM", "CRM only")}</option><option value="erp" ${QF.src === "erp" ? "selected" : ""}>${L("Sirf ERP (purani)", "ERP only (old)")}</option></select></div>
+</div>
     <div id="qren"></div>
     <div id="qlead"></div>
     <div class="card"><div class="tbl-wrap" id="qbody"><div class="empty">Loading…</div></div><div id="qfoot"></div></div>`;

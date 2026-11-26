@@ -59,8 +59,7 @@ export async function viewObf(el) {
   const tabs = [["pending", ap ? L("⏳ Meri approval chahiye", "⏳ Waiting for my approval") : L("⏳ Director ke paas", "⏳ With the Director")],
     ["draft", L("Draft / wapas aaye", "Drafts / sent back")], ["approved", "✅ Approved"], ["mine", L("Mere", "Mine")], ["all", L("Sab", "All")]];
   el.innerHTML = `<div class="toolbar"><div class="chips">${tabs.map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-of="${k}">${h(l)}</button>`).join("")}</div>
-    <span class="sp" style="flex:1"></span><span class="mu" style="font-size:12.5px">📋 ${L("Customer quotation accept kare → OBF apne aap ban jaata hai", "A customer accepts a quotation → the OBF is made by itself")}</span></div>
-  ${dateBarHtml("obf", OD)}
+    ${dateBarHtml("obf", OD)}<span class="mu tb-note">📋 ${L("Customer quotation accept kare → OBF apne aap ban jaata hai", "A customer accepts a quotation → the OBF is made by itself")}</span></div>
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>${L("Yahan koi OBF nahi", "No OBFs here")}</b>${L("Quotation kholo → “📋 OBF” dabao, ya customer online link se accept kare.", "Open a quotation → press “📋 OBF”, or let the customer accept on the online link.")}</div>`
     : `<table class="tbl"><thead><tr><th>OBF</th><th>Customer</th><th>Status</th><th class="num">Grand total</th><th class="num">Contribution</th><th>M.E.</th><th>${L("Kab", "When")}</th></tr></thead><tbody>
     ${data.map((o) => { const p = pctOf(o.subtotal, o.contribution); return `<tr data-obf="${o.id}"><td class="mono">${h(o.obf_no || "—")}</td>

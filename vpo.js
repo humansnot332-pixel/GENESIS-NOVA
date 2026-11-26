@@ -36,8 +36,7 @@ export async function viewPurchase(el) {
   const today = new Date().toISOString().slice(0, 10);
   const late = (p) => p.status === "sent" && (p.expected_at || (p.sent_at && new Date(new Date(p.sent_at).getTime() + 7 * 864e5).toISOString().slice(0, 10))) < today;
   el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Khule", "Open")], ["received", L("Maal aa gaya", "Received")], ["all", L("Sab", "All")], ["vendors", "📇 " + L("Vendors", "Vendors")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-pf="${k}">${h(l)}</button>`).join("")}</div>
-    <span class="sp" style="flex:1"></span><span class="mu" style="font-size:12.5px">📦 ${L("OBF approve hote hi har vendor ka PO apne aap banta hai", "Every vendor gets a PO by itself when an OBF is approved")}</span></div>
-  ${dateBarHtml("vpo", PD)}
+    ${dateBarHtml("vpo", PD)}<span class="mu tb-note">📦 ${L("OBF approve hote hi har vendor ka PO apne aap banta hai", "Every vendor gets a PO by itself when an OBF is approved")}</span></div>
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>${L("Koi vendor PO nahi", "No vendor POs")}</b>${L("OBF mein vendor + cost bharo — approve hote hi PO yahan aa jayega.", "Fill vendor + cost in the OBF — the PO shows up here once it is approved.")}</div>`
     : `<table class="tbl"><thead><tr><th>PO</th><th>Vendor</th><th>Status</th><th class="num">Total</th><th>${L("Kiske liye", "For")}</th><th>${L("Kab tak", "Due")}</th></tr></thead><tbody>
     ${data.map((p) => `<tr data-po="${p.id}"><td class="mono">${h(p.po_no)}</td><td class="co">${h(p.vendor_name)}</td><td>${badge(p.status)}${late(p) ? ` <span class="badge bad">⏰ ${L("late", "late")}</span>` : ""}</td>
