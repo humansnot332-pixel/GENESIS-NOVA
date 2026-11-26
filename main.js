@@ -199,7 +199,7 @@ function stopApp() {
 }
 
 let brandP = null; // the login screen can draw twice at boot → ask for the branding once
-const ME_COLS = "id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp";
+const ME_COLS = "id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp, tour_done_at";
 async function start() {
   fx?.stop(); fx = null;
   const { data: { session } } = await sb.auth.getSession();
@@ -236,6 +236,7 @@ async function start() {
   timers.push(setInterval(() => !document.hidden && reloadMe(), 120e3));      // safety net if the live signal was missed
   subscribeRealtime();
   startOutlookAutoSync();
+  import("./tour.js").then((m) => m.maybeTour()).catch(() => {});      // new employee → a 1-minute guide, once
   if (isMgr()) {      // 5:50 pm day summary pops up once a day on this device
     const ds = () => import("./daysum.js").then((m) => m.popupSummary()).catch(() => {});
     setTimeout(ds, 3000); timers.push(setInterval(() => !document.hidden && ds(), 60e3));
@@ -3451,12 +3452,14 @@ ACT.profile = () => {
       <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="en" ${isEn() ? "selected" : ""}>English</option><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option></select></div>
       <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
       <div id="pPush" style="margin-top:14px"></div>
+      <button type="button" class="btn" id="pTour" style="margin-top:12px">🧭 ${L("Guide dobara dekho", "Replay the guide")}</button>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>
       <input class="input" id="pp1" type="password" placeholder="Naya password (10+ chars)" autocomplete="new-password" style="margin-bottom:8px">
       <input class="input" id="pp2" type="password" placeholder="Confirm" autocomplete="new-password">`,
     foot: `<button class="btn" data-close>Close</button><button class="btn primary" id="ps">Save</button>`,
   });
   pushCard($("#pPush", m)).catch(() => {});
+  $("#pTour", m).onclick = () => { closeModal(); setTimeout(() => import("./tour.js").then((t) => t.startTour({ replay: true })), 250); };
   $("#ps", m).onclick = (e) => busy(e.target, async () => {
     const n = $("#pn", m).value.trim(), p1 = $("#pp1", m).value, p2 = $("#pp2", m).value;
     const upd = { full_name: n || S.me.full_name, designation: $("#pd", m).value.trim() || null, phone: $("#pph", m).value.trim() || null, mail_provider: $("#pmp", m).value, lang: $("#plang", m).value };
