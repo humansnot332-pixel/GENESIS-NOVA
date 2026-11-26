@@ -4,7 +4,7 @@
 //  notifications and lock access-requests.
 // =====================================================================
 import {
-  sb, S, h, ic, dt, ago, toast, fail, modal, closeModal, confirmBox, busy, isMgr, isAdmin, userName, ROLE,
+  sb, S, h, ic, dt, ago, num, inr, dOnly, toast, fail, modal, closeModal, confirmBox, busy, isMgr, isAdmin, userName, ROLE,
   STATUS, OPEN_STATUSES, HOOK, lockOf, canWork, claim, claimFailMsg, claimOkMsg, tplContext, TPL_VARS, fillTemplate,
   mdToPlain, mdToHtml, mdToWhatsApp, composeUrl, URL_LIMIT, waUrl, openTab, copyRich, loadScript, isMobile, callFn, bannerHtml, bannerUrl, bannerOn, toastAction,
 } from "./core.js";
@@ -786,6 +786,31 @@ export function onlyReply(t) {
   const out = t.slice(0, end).replace(/\n{3,}/g, "\n\n").trim();
   return out || t.trim();
 }
+// the quotation this reply is about (number in the subject / text, else the latest one sent before the reply)
+async function replyQuote(box, r, lead) {
+  if (!box) return;
+  const { data: qs } = await sb.from("quotations").select("id, quote_no, quote_date, created_at, status, grand_total, items, view_count, customer_response")
+    .eq("lead_id", lead.id).neq("status", "draft").lte("created_at", new Date(Date.parse(r.created_at) + 864e5).toISOString())
+    .order("created_at", { ascending: false }).limit(15);
+  if (!qs?.length || !box.isConnected) return;
+  const { rankQuotes } = await import("./proforma.js");
+  const ranked = rankQuotes(qs, r, onlyReply(r.body || r.snippet || "")), q = ranked[0];
+  if (!q || !box.isConnected) return;
+  const items = (q.items || []).filter((it) => !it.opt);
+  const st = { sent: ["info", L("Bheji", "Sent")], won: ["good", "🏆 Won"], lost: ["bad", "Lost"] }[q.status] || ["", q.status];
+  box.innerHTML = `<div class="ibq">
+    <div class="ibq-ic" aria-hidden="true">📄</div>
+    <div class="ibq-m">
+      <div class="ibq-t">${L("Ye reply is quotation ka hai", "This reply is about")} <b class="mono">${h(q.quote_no)}</b>
+        <span class="badge ${st[0]}">${h(st[1])}</span>${q.view_count ? ` <span class="badge info" title="${h(L("Customer ne online dekhi", "Viewed online by the customer"))}">👁 ${num(q.view_count)}</span>` : ""}${q.customer_response === "accepted" ? ` <span class="badge good">✅ ${L("Accept ki", "Accepted")}</span>` : ""}</div>
+      <div class="ibq-s">${h(dOnly(q.quote_date || q.created_at))} · ${num(items.length)} ${L("item", items.length === 1 ? "item" : "items")} · <b>${h(inr(+q.grand_total || 0))}</b></div>
+      ${items.length ? `<ol class="ibq-items">${items.slice(0, 4).map((it) => `<li>${h(String(it.desc || "").slice(0, 90))}${+it.qty > 1 ? ` <b>× ${num(+it.qty)}</b>` : ""}</li>`).join("")}${items.length > 4 ? `<li class="mu">+ ${num(items.length - 4)} ${L("aur", "more")}</li>` : ""}</ol>` : ""}
+      ${ranked.length > 1 ? `<a href="#" class="ibq-more" data-ibq-all>${L(`Is customer ki ${ranked.length} quotations dekho →`, `See this customer's ${ranked.length} quotations →`)}</a>` : ""}
+    </div>
+    <div class="ibq-b"><button class="btn sm" data-ibq-pdf title="PDF">👁 PDF</button><button class="btn sm primary" data-act="quote" data-id="${q.id}">${L("Quotation kholo", "Open quotation")}</button></div></div>`;
+  $("[data-ibq-pdf]", box).onclick = (e) => busy(e.currentTarget, () => HOOK.quotePdfView(q.id));
+  $("[data-ibq-all]", box)?.addEventListener("click", (e) => { e.preventDefault(); HOOK.quotesFor(lead.id, lead.company); });
+}
 async function readMail(id, pane, refresh) {
   pane.innerHTML = `<div class="empty">Loading…</div>`;
   const { data: r, error } = await sb.from("email_messages").select("*, leads(id, company, status, owner_id, lock_until, contact_name, email, phone, products, next_follow_up, email_count, reply_count, last_emailed_at, alt_phones, category, city, area), rfqs(id, rfq_no, company, product, qty, contact, email, phone, city, owner_id, lock_until, last_emailed_at)").eq("id", id).single();
@@ -799,6 +824,7 @@ async function readMail(id, pane, refresh) {
       <div class="row" style="margin-top:6px;gap:6px">${intentBadge(r.intent)}${lead ? `<a href="#" data-ol="${lead.id}" class="badge info">📋 ${h(lead.company)} · ${h(STATUS[lead.status]?.l || lead.status)}</a>` : ""}${r.rfqs ? `<span class="badge">${h(r.rfqs.rfq_no)}</span>` : ""}</div></div>
       ${r.thread_url ? `<a class="btn sm" href="${h(r.thread_url)}" target="_blank" rel="noopener noreferrer">${r.provider === "outlook" ? "Outlook" : "Gmail"} mein kholo ↗</a>` : ""}</div></div>
     <div class="ib-body">${h(onlyReply(r.body || r.snippet || "")).replace(/\n/g, "<br>")}</div>
+    ${lead && r.direction !== "out" ? `<div id="ibQuote"></div>` : ""}
     <div id="ibFiles"></div>
     ${mine && lead ? `<div class="dealcard" id="ibDeal" hidden aria-live="polite"></div>` : ""}
     ${mine ? `<div class="smartrep" id="ibSmart" aria-live="polite"></div>` : ""}
@@ -820,7 +846,9 @@ async function readMail(id, pane, refresh) {
       </div>
     </div>` : ""}`;
   pane.querySelector("[data-ol]")?.addEventListener("click", (e) => { e.preventDefault(); HOOK.openLead(lead.id); });
-  const files = await loadFiles("email_id", id);
+  if (lead && r.direction !== "out") replyQuote($("#ibQuote", pane), r, lead).catch(() => {});
+  // our own banner rides along in the quoted signature of every reply — it is not the customer's attachment
+  const files = (await loadFiles("email_id", id)).filter((f) => !/^(geninfo-banner|gnbanner)/i.test(f.name || ""));
   const fb = $("#ibFiles", pane);
   if (fb && files.length) { fb.innerHTML = filesHtml(files, `📎 ${files.length} ${L("photo / file", files.length > 1 ? "attachments" : "attachment")}`); wireFiles(fb, files); }
   // ⚡ ready replies: what the mail asks (price / interest / no / out-of-office / bounce) + the products and quantities in it

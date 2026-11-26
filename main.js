@@ -2660,6 +2660,14 @@ async function quotePdf(q, link) {
     return { blob: r.blob, pages: r.pages, bytes: r.blob.size, name: pdfName(q) };
   } finally { fr.remove(); }
 }
+// Inbox: "👁 PDF" on the quotation a customer replied to
+HOOK.quotePdfView = async (id) => {
+  const { data: q, error } = await sb.from("quotations").select("*").eq("id", id).single();
+  if (error) throw error;
+  const a = await quotePdfPrint(q), u = URL.createObjectURL(a.blob);
+  if (!openTab(u)) saveBlob(a.blob, a.name);
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+};
 // fallback (no online link): the print layout, plain (no tick boxes for the customer)
 async function quotePdfPrint(q) {
   const rep = await quoteRep(q);

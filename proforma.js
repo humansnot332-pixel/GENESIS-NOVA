@@ -76,7 +76,7 @@ export function parsePick(raw, items) {
 }
 
 /** the quotations this mail most likely answers, best first */
-function rankQuotes(quotes, r, text) {
+export function rankQuotes(quotes, r, text) {
   const subj = String(r.subject || "").replace(/^\s*((re|fw|fwd|aw)\s*:\s*)+/i, "");
   const hay = (subj + " " + text).toLowerCase(), sw = new Set(words(subj)), mailAt = Date.parse(r.created_at) || Date.now();
   return quotes.map((q) => {
