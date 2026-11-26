@@ -2,7 +2,7 @@
 //  Genesis CRM — app shell, router and all screens
 // =====================================================================
 import {
-  sb, S, STATUSES, STATUS, OPEN_STATUSES, CATEGORIES, RFQ_STATUSES, ROLES, ROLE, SOURCES, OUTCOMES, OUTCOME,
+  sb, S, STATUSES, STATUS, OPEN_STATUSES, CATEGORIES, RFQ_STATUSES, ROLES, ROLE, ROLE_OPTS, POSTS, postOf, roleLabel, SOURCES, OUTCOMES, OUTCOME,
   isAdmin, isMgr, h, inr, inrShort, num, initials, ago, dt, dOnly, openTab, telHref, waHref, isMobile, statusBadge, rfqBadge,
   userName, online, followBadge, toLocalInput, ic, toast, fail, modal, closeModal, confirmBox, formData, busy,
   toCSV, download, parseCSV, callFn, loadTeam, assignable, toastAction, friendly,
@@ -354,7 +354,7 @@ async function reloadMe(force = false) {
     if (!changed) return;
     await loadTeam().catch(() => {});
     const nav = $(".nav"); if (nav) { nav.innerHTML = navHtml(); tidyNav(); }
-    const rl = $(".side-foot .me small"); if (rl) rl.textContent = ROLE[S.me.role];
+    const rl = $(".side-foot .me small"); if (rl) rl.textContent = S.me.designation || roleLabel(S.me);
     refreshBadges();
     const navItem = NAV.find((n) => n[0] === S.route);
     if (!canSee(S.route) || (navItem?.[3] && !navItem[3]())) route(); else softRefresh(200);
@@ -374,7 +374,7 @@ function renderShell() {
         ${navHtml()}
       </nav>
       <div class="side-foot">
-        <div class="me"><div class="avatar">${h(initials(S.me.full_name))}</div><div style="min-width:0;flex:1"><b>${h(S.me.full_name)}</b><small>${h(ROLE[S.me.role])}</small></div>
+        <div class="me"><div class="avatar">${h(initials(S.me.full_name))}</div><div style="min-width:0;flex:1"><b>${h(S.me.full_name)}</b><small>${h(S.me.designation || roleLabel(S.me))}</small></div>
           <button class="btn ghost icon" data-act="profile" title="Profile" aria-label="Profile">${ic("users")}</button>
           <button class="btn ghost icon" data-act="logout" title="Logout" aria-label="Logout">${ic("logout")}</button></div>
       </div>
@@ -2794,7 +2794,7 @@ VIEWS.team = async (el) => {
     <button class="btn" data-act="distribute">⚡ Pool auto-distribute</button><button class="btn primary" data-act="addUser">${ic("plus")} User</button></div>
   <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th>Role</th><th>${L("Pages", "Pages")}</th><th>Categories</th><th class="num">Target</th><th class="num">Open leads</th><th>Last seen</th><th>Status</th><th></th></tr></thead><tbody>
   ${S.team.map((u) => `<tr style="cursor:default"><td><div class="row" style="flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><div><div class="co">${h(u.full_name)}</div><div class="sub">${h(u.email)}</div></div></div></td>
-    <td>${h(ROLE[u.role])}${u.role !== "admin" && isApprover(u.id) ? ` <span class="badge info" title="${h(L("OBF approve kar sakta hai", "Can approve OBFs"))}">✅ Director</span>` : ""}${phones[u.id] ? ` <span title="${h(L("Phone notification ON", "Phone notifications on") + " · " + phones[u.id])}">📲</span>` : ""}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
+    <td>${h(roleLabel(u))}${u.role !== "admin" && isApprover(u.id) ? ` <span class="badge info" title="${h(L("OBF approve kar sakta hai", "Can approve OBFs"))}">✅ Director</span>` : ""}${phones[u.id] ? ` <span title="${h(L("Phone notification ON", "Phone notifications on") + " · " + phones[u.id])}">📲</span>` : ""}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
     <td class="sub">${h(ago(u.last_seen))}</td><td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge bad">Disabled</span>'}</td>
     <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm icon" data-act="pwUser" data-id="${u.id}" title="${h(L("Password badlo", "Change password"))}" aria-label="${h(L("Password badlo", "Change password"))}">🔑</button> <button class="btn sm" data-act="handover" data-id="${u.id}" title="${h(L("Iske saare leads / RFQs / tasks kisi aur ko do", "Move all their leads / RFQs / tasks to someone else"))}">🔁 Handover</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>
@@ -2814,7 +2814,7 @@ function pageAccessHtml(role, pages) {
 }
 function wirePageAccess(m) {
   const set = (list) => $$("[name=pages]", m).forEach((c) => { c.checked = list.includes(c.value); c.parentElement.classList.toggle("on", c.checked); });
-  const role = () => $("[name=role]", m)?.value;
+  const role = () => { const v = $("[name=role]", m)?.value; return POSTS[v] ? "admin" : v; };
   $$("[data-pa]", m).forEach((b) => b.onclick = () => set(b.dataset.pa === "def" ? rolePages(role()) : b.dataset.pa === "calling" ? ["today", "leads", "tasks"] : b.dataset.pa === "all" ? PAGEABLE : []));
   $("[name=role]", m)?.addEventListener("change", () => { const a = role() === "admin"; $("#paBox", m).hidden = a; $("#paAdmin", m).hidden = !a; set(rolePages(role())); });
 }
@@ -2856,7 +2856,7 @@ ACT.addUser = () => {
     title: "Naya user", body: `<form id="uf"><div class="grid2">
       <div><label class="f">Naam *</label><input class="input" name="full_name" maxlength="80" required></div>
       <div><label class="f">Email *</label><input class="input" name="email" type="email" maxlength="200" required></div>
-      <div><label class="f">Role</label><select class="input" name="role">${ROLES.map(([k, l]) => `<option value="${k}" ${k === "telecaller" ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div><label class="f">Role</label><select class="input" name="role">${ROLE_OPTS.map(([k, l]) => `<option value="${k}" ${k === "telecaller" ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Daily call target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="40"></div></div>
       <label class="f">Categories</label>${catChecks()}
       ${pageAccessHtml("telecaller", null)}
@@ -2872,9 +2872,11 @@ ACT.addUser = () => {
     const f = formData($("#uf", m)); f.categories ||= [];
     if (!f.full_name || !f.email) return toast("Naam aur email daalo", true);
     if (!pwOk(f.password)) return toast("Password 10+ chars, letters + number", true);
+    const post = POSTS[f.role] ? f.role : null; if (post) f.role = "admin";      // Director / IT Head = Admin rights + that designation
     const pages = pagesToSave(m, f.role); delete f.pages;
     if (pages && !pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
     await callFn("admin-users", { action: "create", ...f });
+    if (post) { const { error: de } = await sb.from("profiles").update({ designation: POSTS[post] }).eq("email", f.email.trim().toLowerCase()); if (de) toast(friendly(de), true); }
     if (pages) { const { error: pe } = await sb.from("profiles").update({ pages }).eq("email", f.email.trim().toLowerCase()); if (pe) toast(L("User bana, par page access save nahi hua: ", "User created, but page access not saved: ") + friendly(pe), true); }
     if ($("#uApprover", m)?.checked && f.role !== "admin") {
       const { data: nu } = await sb.from("profiles").select("id").eq("email", f.email.trim().toLowerCase()).maybeSingle();
@@ -2888,7 +2890,7 @@ ACT.editUser = (t) => {
   const m = modal({
     title: "Edit · " + u.full_name, body: `<form id="ef"><div class="grid2">
       <div><label class="f">Naam</label><input class="input" name="full_name" maxlength="80" value="${h(u.full_name)}"></div>
-      <div><label class="f">Role</label><select class="input" name="role" ${u.id === S.me.id ? "disabled" : ""}>${ROLES.map(([k, l]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div><label class="f">Role</label><select class="input" name="role" ${u.id === S.me.id ? "disabled" : ""}>${ROLE_OPTS.map(([k, l]) => `<option value="${k}" ${k === (postOf(u) || u.role) ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Daily target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="${u.daily_target}"></div></div>
       <label class="f">Categories</label>${catChecks(u.categories || [])}
       ${pageAccessHtml(u.role, u.pages)}
@@ -2898,6 +2900,8 @@ ACT.editUser = (t) => {
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
   $("#es", m).onclick = (e) => busy(e.target, async () => {
     const f = formData($("#ef", m)); f.categories ||= []; f.daily_target = +f.daily_target || 0;
+    if (f.role && POSTS[f.role]) { f.designation = POSTS[f.role]; f.role = "admin"; }
+    else if (f.role && postOf(u)) f.designation = null;              // was Director / IT Head, now another role
     f.pages = pagesToSave(m, f.role || u.role);
     if (f.pages && $("#uApprover", m)?.checked && !f.pages.includes("obf")) f.pages.push("obf");
     if (f.pages && !f.pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
@@ -3450,7 +3454,7 @@ ACT.profile = () => {
       <div><label class="f">Phone (signature)</label><input class="input" id="pph" maxlength="40" value="${h(S.me.phone || "")}" placeholder="+91 …"></div>
       <div><label class="f">Email kholne ke liye</label><select class="input" id="pmp">${[["gmail", "Gmail"], ["outlook", "Outlook (web)"], ["mailto", "Computer ka mail app"]].map(([k, l]) => `<option value="${k}" ${k === S.me.mail_provider ? "selected" : ""}>${l}</option>`).join("")}</select></div></div>
       <div><label class="f">Language / Bhasha</label><select class="input" id="plang"><option value="en" ${isEn() ? "selected" : ""}>English</option><option value="hinglish" ${isEn() ? "" : "selected"}>Hinglish</option></select></div>
-      <p class="mu">${h(S.me.email)} · ${h(ROLE[S.me.role])} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
+      <p class="mu">${h(S.me.email)} · ${h(roleLabel(S.me))} · Target ${S.me.daily_target}${L("/din", "/day")}</p>
       <div id="pPush" style="margin-top:14px"></div>
       <button type="button" class="btn" id="pTour" style="margin-top:12px">🧭 ${L("Guide dobara dekho", "Replay the guide")}</button>
       <div class="sec-t" style="margin-top:18px">Password badlo</div>

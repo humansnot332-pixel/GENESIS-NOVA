@@ -45,6 +45,11 @@ export const RFQ_STATUSES = [["new", "New", "info"], ["in_progress", "In progres
 export const RFQ_STATUS = Object.fromEntries(RFQ_STATUSES.map(([k, l, c]) => [k, { l, c }]));
 export const ROLES = [["admin", "Admin"], ["manager", "Manager"], ["sales", "Sales Executive"], ["telecaller", "Telecaller"], ["presales", "Presales / Tech"]];
 export const ROLE = Object.fromEntries(ROLES);
+// top posts: they work with full Admin rights (the security rules know only the roles above); the post is the designation
+export const POSTS = { director: "Director", it_head: "IT Head" };
+export const ROLE_OPTS = [...ROLES, ["director", "Director (Admin access)"], ["it_head", "IT Head (Admin access)"]];
+export const postOf = (u) => (u?.role === "admin" ? Object.keys(POSTS).find((k) => POSTS[k] === u.designation) || null : null);
+export const roleLabel = (u) => (postOf(u) ? POSTS[postOf(u)] : ROLE[u?.role] || "");
 export const SOURCES = { manual: "Manual", import: "CSV import", legacy: "Old desk", google_places: "Auto · Google", osm: "Auto · OpenStreetMap", indiamart: "IndiaMART", webform: "Website", webhook: "Webhook", website: "Website",
   erp: "ERP (ant.myerp)", email: "Email", tradeindia: "TradeIndia", justdial: "JustDial", exportersindia: "ExportersIndia", sulekha: "Sulekha" };
 
@@ -262,7 +267,7 @@ export async function callFn(name, body) {
 
 // ---------- team cache ----------
 export async function loadTeam() {
-  const { data, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, last_seen, created_at, pages").order("full_name");
+  const { data, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, last_seen, created_at, pages, designation").order("full_name");
   if (error) throw error;
   S.team = data || [];
   S.teamById = new Map(S.team.map((u) => [u.id, u]));
