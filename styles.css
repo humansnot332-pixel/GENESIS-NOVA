@@ -1052,3 +1052,18 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .qhit b { color: var(--accent); }
 @media (max-width: 640px) { .qprod-w { flex: 1 1 100%; min-width: 0; } }
 #qtb [data-act="newQuote"] { margin-left: auto; }
+
+/* v90 · Automation → privacy switch */
+.priv-card.on { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.switch-row { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.switch-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-row .sw { flex: none; width: 44px; height: 24px; border-radius: 99px; background: var(--line-2); position: relative; transition: background .2s; margin-top: 2px; }
+.switch-row .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .22s cubic-bezier(.3, 1.4, .5, 1); }
+.switch-row input:checked + .sw { background: var(--accent); }
+.switch-row input:checked + .sw::after { transform: translateX(20px); }
+.switch-row input:focus-visible + .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch-row input:disabled + .sw { opacity: .55; }
+.priv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; font-size: 13px; }
+.priv-grid ul { margin: 6px 0 0; padding-left: 18px; color: var(--tx-2); }
+.priv-grid li { margin: 3px 0; }
+@media (max-width: 640px) { .priv-grid { grid-template-columns: 1fr; } }

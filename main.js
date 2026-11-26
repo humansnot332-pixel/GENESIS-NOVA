@@ -3165,12 +3165,13 @@ async function autoCard(root) {
   }
 }
 VIEWS.automation = async (el) => {
-  const [{ data: s }, { data: runs }, { data: lq }] = await Promise.all([
+  const [{ data: s }, { data: runs }, { data: lq }, { data: pv }] = await Promise.all([
     sb.from("settings").select("value").eq("key", "ingest").single(),
     sb.from("ingest_runs").select("*").order("started_at", { ascending: false }).limit(20),
     sb.rpc("lead_quality"),
+    sb.from("settings").select("value").eq("key", "privacy").maybeSingle(),
   ]);
-  const c = s?.value || {}, ro = !isAdmin();
+  const c = s?.value || {}, ro = !isAdmin(), ownOnly = !!pv?.value?.own_only;
   const nextRun = (() => { for (let i = 0; i < 8; i++) { const d = new Date(); d.setDate(d.getDate() + i); d.setHours(9, 0, 0, 0); if (d > new Date() && (c.days || []).includes(d.getDay())) return d; } return null; })();
   el.innerHTML = `
   <div class="kpis">
@@ -3178,6 +3179,25 @@ VIEWS.automation = async (el) => {
     <div class="card kpi"><div class="l">Next auto-run</div><div class="v" style="font-size:20px">${nextRun && c.enabled ? h(nextRun.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })) : "—"}</div></div>
     <div class="card kpi"><div class="l">Last run</div><div class="v" style="font-size:20px">${runs?.[0] ? h(ago(runs[0].started_at)) : "—"}</div><div class="s">${runs?.[0] ? `+${runs[0].leads_added} leads · +${runs[0].rfqs_added} RFQs` : ""}</div></div>
   </div>
+  <div class="card sec priv-card ${ownOnly ? "on" : ""}" id="privCard"><div class="card-h"><h3>🔒 ${L("Privacy — kaun kya dekhe", "Privacy — who sees what")}</h3><span class="sp"></span>
+    <span class="badge ${ownOnly ? "good" : ""}" id="privBadge">${ownOnly ? L("Sirf apna data · ON", "Own data only · ON") : L("Sab ko sab · OFF", "Everyone sees all · OFF")}</span></div>
+    <div class="card-b">
+      <label class="switch-row"><input type="checkbox" id="ownOnly" ${ownOnly ? "checked" : ""} ${ro ? "disabled" : ""}><span class="sw" aria-hidden="true"></span>
+        <span><b>${L("Har employee sirf apna data dekhe", "Each employee sees only their own data")}</b><br><span class="mu" style="font-size:12.5px">${L("Admin aur Manager ko hamesha sab dikhega", "Admin and Manager always see everything")}${ro ? " · " + L("sirf Admin badal sakta hai", "only the Admin can change this") : ""}</span></span></label>
+      <div class="priv-grid">
+        <div><b>✅ ${L("Employee ko dikhega", "An employee sees")}</b><ul>
+          <li>${L("Apne leads + free pool (jo kisi ke naam nahi) — naya lead lock kar sake", "Own leads + the free pool (no owner) — to pick new leads")}</li>
+          <li>${L("Apne RFQs + bina owner wale RFQs", "Own RFQs + unclaimed RFQs")}</li>
+          <li>${L("Apni quotations, OBF, orders, renewals, emails, tasks, visits", "Own quotations, OBFs, orders, renewals, emails, tasks, visits")}</li>
+          <li>${L("Apne customers ki purani ERP history", "Old ERP history of own customers")}</li>
+          <li>${L("Tickets: jo use diye gaye / usne banaye / apne customers ke / bina engineer wale", "Tickets: assigned to / made by them, their customers', unassigned")}</li></ul></div>
+        <div><b>🚫 ${L("Nahi dikhega", "Hidden")}</b><ul>
+          <li>${L("Dusre employee ke leads, unki call history, unke RFQs", "Other employees' leads, their call history, their RFQs")}</li>
+          <li>${L("Dusron ki quotations, OBF, renewals, ERP history", "Others' quotations, OBFs, renewals, ERP history")}</li>
+          <li>${L("Search, Reports, Dashboard ki ginti mein bhi dusron ka data nahi aata", "Search, Reports and Dashboard counts leave others' data out too")}</li></ul></div>
+      </div>
+      <p class="mu" style="font-size:12px;margin:8px 0 0">${L("Ye rule database mein laga hai — koi employee app ke bahar se bhi dusre ka data nahi nikaal sakta. Band karte hi sab pehle jaisa.", "This rule lives in the database — nobody can read others' data even from outside the app. Turning it off restores the old behaviour.")}</p>
+    </div></div>
   <div class="card sec" id="autoCard"><div class="card-h"><h3>⚡ ${L("Auto follow-up & reminders", "Auto follow-ups & reminders")}</h3><span class="sp"></span>${isAdmin() ? `<button class="btn sm" id="auRun">▶ ${L("Abhi chalao", "Run now")}</button>` : ""}</div><div class="card-b" id="auBody"><div class="mu">…</div></div></div>
   <div class="card sec" id="rfqSrc"><div class="card-h"><h3>📨 ${L("RFQ apne aap — 4 raaste", "RFQs automatically — 4 ways")}</h3></div><div class="card-b"><div class="grid2">
     <div><b>1. IndiaMART</b> <span id="imState" class="mu">…</span>
@@ -3243,6 +3263,16 @@ VIEWS.automation = async (el) => {
     if (data?.rfqsAdded) softRefresh();
   }));
   $("#emUpd", el)?.addEventListener("click", () => gmailSetup(() => VIEWS.automation(el)));
+  $("#ownOnly", el)?.addEventListener("change", async (e) => {
+    const on = e.target.checked, box = e.target; box.disabled = true;
+    try {
+      const { error } = await sb.from("settings").upsert({ key: "privacy", value: { own_only: on }, updated_by: S.me.id, updated_at: new Date().toISOString() });
+      if (error) throw error;
+      $("#privCard", el)?.classList.toggle("on", on);
+      const b = $("#privBadge", el); if (b) { b.className = "badge " + (on ? "good" : ""); b.textContent = on ? L("Sirf apna data · ON", "Own data only · ON") : L("Sab ko sab · OFF", "Everyone sees all · OFF"); }
+      toast(on ? L("🔒 Ab har employee sirf apna data dekhega", "🔒 Each employee now sees only their own data") : L("Ab sab employees sab data dekh sakte hain", "Everyone can see all data again"));
+    } catch (err) { box.checked = !on; fail(err); } finally { box.disabled = false; }
+  });
   Promise.all([sb.rpc("mail_status"), sb.from("mail_enquiry_log").select("result").gte("at", new Date(Date.now() - 7 * 864e5).toISOString()).limit(2000)]).then(([{ data: ms }, { data: lg }]) => {
     const st = $("#emState", el); if (!st) return;
     const g = !ms?.connected ? `<span class="badge">Gmail: ${L("connect nahi", "not connected")}</span>`
