@@ -67,7 +67,8 @@ const dec = (v, places) => new RegExp(`^\\d+(\\.\\d{1,${places}})?$`).test(Strin
  *  k = "name" | "contact" | "phone" | "email" | "gstin" | "state" | "items" | "desc" | "qty" | "price" | "hsn" | "date" | "validity"
  *  i = item row (for item fields)
  */
-export function checkQuote(q, tp, { today = new Date().toISOString().slice(0, 10), keepDate = null } = {}) {
+const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;   // the date on the wall here (toISOString gives UTC: a day early in India before 5:30 am / for local midnights)
+export function checkQuote(q, tp, { today = localDay(), keepDate = null } = {}) {
   const e = [], L2 = (h, en) => ({ h, en });
   const name = String(tp.name || "").trim();
   if (name.length < 2) e.push({ k: "name", ...L2("Customer ka naam daalo", "Enter the customer's name") });

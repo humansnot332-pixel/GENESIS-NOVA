@@ -163,7 +163,7 @@ function toISODate(v) {
   if (m) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`; }
   m = s.match(/^(\d{1,2})[ -]([a-z]{3})[a-z]*[ -,]*(\d{2,4})/i);
   if (m) { const mo = "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(m[2].toLowerCase()) / 3 + 1; if (mo > 0) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; return `${y}-${String(mo).padStart(2, "0")}-${m[1].padStart(2, "0")}`; } }
-  const d = new Date(s); return isNaN(d) ? "" : d.toISOString().slice(0, 10);
+  const d = new Date(s); return isNaN(d) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;   // local date (toISOString would shift it a day back)
 }
 const LEAD_ST = [[/won|customer|order|converted|closed ?won|po/i, "won"], [/lost|not interested|closed ?lost|reject/i, "lost"], [/junk|invalid|wrong|spam/i, "junk"], [/negoti/i, "negotiation"], [/demo|meeting/i, "demo"], [/quot/i, "quote_sent"], [/interest|hot|warm/i, "interested"], [/contact|called|follow/i, "contacted"]];
 const QUOTE_ST = [[/won|order|po|accept|approv|confirm/i, "won"], [/lost|reject|declin|cancel/i, "lost"], [/sent|submit|shared|mailed/i, "sent"]];

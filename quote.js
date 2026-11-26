@@ -42,13 +42,14 @@ function calc(q, items) {
   return { sub: r2(sub), tax: r2(tax), grand: q.round_off === false ? raw : Math.round(raw), lines };
 }
 const niceDay = (s) => s ? new Date(String(s).slice(0, 10) + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
-const plusDays = (s, n) => { const d = new Date(String(s).slice(0, 10) + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;   // the date on the wall here (toISOString gives UTC: a day early in India before 5:30 am / for local midnights)
+const plusDays = (s, n) => { const d = new Date(String(s).slice(0, 10) + "T00:00:00"); d.setDate(d.getDate() + n); return localDay(d); };
 function termRows(q) {
   const rows = [["Valid till", q.date ? niceDay(plusDays(q.date, +q.validity_days || 7)) : ""], ["Payment terms", q.payment_terms], ["Delivery", q.delivery], ["Your reference", q.ref]];
   const a = q.amc;
   if (a?.start) {
     const e = new Date(a.start + "T00:00:00"); e.setMonth(e.getMonth() + (+a.months || 12)); e.setDate(e.getDate() - 1);
-    rows.push(["AMC period", `${niceDay(a.start)} – ${niceDay(e.toISOString().slice(0, 10))} (${+a.months || 12} months)`], ["Coverage", a.coverage], ["Preventive visits", a.pm], ["Standby", a.standby],
+    rows.push(["AMC period", `${niceDay(a.start)} – ${niceDay(localDay(e))} (${+a.months || 12} months)`], ["Coverage", a.coverage], ["Preventive visits", a.pm], ["Standby", a.standby],
       ["Billing", (a.billing || "") + (/monthly|quarterly/i.test(a.billing || "") && a.bill_day ? `, bill on day ${a.bill_day}` : "")]);
   }
   return rows.filter(([, v]) => v);

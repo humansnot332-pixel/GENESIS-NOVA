@@ -33,8 +33,8 @@ export async function viewPurchase(el) {
   if (f === "open") q = q.in("status", ["draft", "sent"]); else if (f === "received") q = q.eq("status", "received");
   q = applyDates(q, "created_at", PD, true);
   const { data, error } = await q; if (error) throw error;
-  const today = new Date().toISOString().slice(0, 10);
-  const late = (p) => p.status === "sent" && (p.expected_at || (p.sent_at && new Date(new Date(p.sent_at).getTime() + 7 * 864e5).toISOString().slice(0, 10))) < today;
+  const ist = (d) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }), today = ist(new Date());
+  const late = (p) => p.status === "sent" && (p.expected_at || (p.sent_at && ist(new Date(new Date(p.sent_at).getTime() + 7 * 864e5)))) < today;
   el.innerHTML = `<div class="toolbar"><div class="chips">${[["open", L("Khule", "Open")], ["received", L("Maal aa gaya", "Received")], ["all", L("Sab", "All")], ["vendors", "📇 " + L("Vendors", "Vendors")]].map(([k, l]) => `<button class="chip ${f === k ? "on" : ""}" data-pf="${k}">${h(l)}</button>`).join("")}</div>
     ${dateBarHtml("vpo", PD)}<span class="mu tb-note">📦 ${L("OBF approve hote hi har vendor ka PO apne aap banta hai", "Every vendor gets a PO by itself when an OBF is approved")}</span></div>
   <div class="card"><div class="tbl-wrap">${!data.length ? `<div class="empty"><b>${L("Koi vendor PO nahi", "No vendor POs")}</b>${L("OBF mein vendor + cost bharo — approve hote hi PO yahan aa jayega.", "Fill vendor + cost in the OBF — the PO shows up here once it is approved.")}</div>`

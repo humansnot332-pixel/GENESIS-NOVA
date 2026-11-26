@@ -189,7 +189,7 @@ export async function openObf(id, done) {
     let n = 0;
     o.items.forEach((it) => {
       const pid = ids.get(String(it.desc || "").trim().toLowerCase()); if (!pid || (it.cost != null && it.cost !== "")) return;
-      const best = (vp || []).filter((v) => v.product_id === pid && (!v.valid_till || v.valid_till >= new Date().toISOString().slice(0, 10))).sort((a, b) => a.price - b.price)[0];
+      const best = (vp || []).filter((v) => v.product_id === pid && (!v.valid_till || v.valid_till >= new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }))).sort((a, b) => a.price - b.price)[0];
       if (best) { it.cost = +best.price; it.vendor ||= best.vendor; n++; }
     });
     drawLines(); toast(n ? L(`✔ ${n} items ki cost bhar di`, `✔ Filled the cost of ${n} items`) : L("Vendor price nahi mila", "No vendor price found"), !n);

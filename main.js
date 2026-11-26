@@ -1482,7 +1482,7 @@ ACT.exportLeads = (b) => busy(b, async () => {
     const { data, error } = await leadQuery("*").order("id").range(p * 1000, p * 1000 + 999);
     if (error) throw error; rows.push(...data); if (data.length < 1000) break;
   }
-  download(`leads-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(rows, [
+  download(`leads-${isoDay()}.csv`, toCSV(rows, [
     ["company", "Company"], ["contact_name", "Contact"], ["designation", "Designation"], ["phone", "Phone"], ["email", "Email"], ["website", "Website"],
     ["area", "Area"], ["city", "City"], ["industry", "Industry"], ["category", "Category"], ["products", "Products"], ["status", "Status"], ["score", "Score"],
     [(r) => userName(r.owner_id), "Owner"], ["deal_value", "Deal value"], ["next_follow_up", "Next follow-up"], ["call_count", "Calls"], ["source", "Source"], ["notes", "Notes"], ["created_at", "Created"],
@@ -1688,7 +1688,7 @@ function rfqForm(r) {
       <div><label class="f">Email</label><input class="input" name="email" type="email" maxlength="200" value="${h(r.email || "")}"></div>
       <div><label class="f">Product *</label><input class="input" name="product" maxlength="200" value="${h(r.product || "")}"></div>
       <div class="grid2" style="gap:0 8px"><div><label class="f">Qty</label><input class="input" name="qty" maxlength="40" value="${h(r.qty || "")}"></div><div><label class="f">City</label><input class="input" name="city" maxlength="80" value="${h(r.city || "")}"></div></div>
-      <div><label class="f">Due date</label><input class="input" name="due_date" type="date" value="${h(r.due_date || new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10))}"></div>
+      <div><label class="f">Due date</label><input class="input" name="due_date" type="date" value="${h(r.due_date || isoDay(new Date(Date.now() + 3 * 864e5)))}"></div>
       <div><label class="f">Status</label><select class="input" name="status">${RFQ_STATUSES.map(([k, l]) => `<option value="${k}" ${k === (r.status || "new") ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div><label class="f">Quoted value (₹)</label><input class="input" name="quoted_value" type="number" min="0" value="${h(r.quoted_value || "")}"></div>
       <div><label class="f">Lock / owner</label>${isMgr() ? `<select class="input" name="owner_id"><option value="">— Free pool —</option>${assignable().map((u) => `<option value="${u.id}" ${u.id === r.owner_id ? "selected" : ""}>${h(u.full_name)}</option>`).join("")}</select>` : `<input class="input" disabled value="${h(isNew ? "Aap (save pe)" : lk.free ? "Free" : lk.holder)}">`}</div>
@@ -3415,7 +3415,7 @@ ACT.runIngest = (b) => busy(b, async () => {
 VIEWS.audit = async (el) => {
   const page = +(el.dataset.p || 0);
   const tbl = el.dataset.t || "";
-  let q = sb.from("audit_log").select("*", { count: "exact" }).order("at", { ascending: false }).range(page * 100, page * 100 + 99);
+  let q = sb.from("audit_log").select("*", { count: "estimated" }).order("at", { ascending: false }).range(page * 100, page * 100 + 99);
   if (tbl) q = q.eq("table_name", tbl);
   const { data, count, error } = await q; if (error) throw error;
   const short = (c) => !c ? "" : Object.entries(c).slice(0, 4).map(([k, v]) => Array.isArray(v) && v.length === 2 ? `${k}: ${JSON.stringify(v[0])} → ${JSON.stringify(v[1])}` : k).join("; ");
