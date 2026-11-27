@@ -1196,3 +1196,12 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .tour-n { margin-right: auto; }
 .tour.centre .tour-n { margin-right: 0; }
 .tour.centre .tour-dots { justify-content: center; }
+/* v104 · Teams card (Team page) */
+.teams-card .card-h { flex-wrap: wrap; gap: 6px 10px; }
+.teams-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.team-tile { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 7px; background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  transition: transform .15s, box-shadow .15s; }
+.team-tile:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgb(0 0 0 / .08); }
+.tt-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px; }
+.tt-cats { display: flex; flex-wrap: wrap; gap: 4px; }
+.tt-row { font-size: 13px; }

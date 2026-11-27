@@ -267,12 +267,17 @@ export async function callFn(name, body) {
 
 // ---------- team cache ----------
 export async function loadTeam() {
-  const { data, error } = await sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, last_seen, created_at, pages, designation").order("full_name");
+  const [{ data, error }, { data: teams }] = await Promise.all([
+    sb.from("profiles").select("id, email, full_name, role, active, daily_target, categories, last_seen, created_at, pages, designation, team_id").order("full_name"),
+    sb.from("teams").select("id, name, categories, manager_id").order("name")]);
   if (error) throw error;
   S.team = data || [];
   S.teamById = new Map(S.team.map((u) => [u.id, u]));
+  S.teams = teams || []; S.teamsById = new Map(S.teams.map((t) => [t.id, t]));
 }
-export const assignable = () => S.team.filter((u) => u.active);
+// a team Manager (role manager + a team) works only with his own people; Admins / team-less Managers with everyone
+export const teamMgr = () => S.me?.role === "manager" && !!S.me?.team_id;
+export const assignable = () => S.team.filter((u) => u.active && (!teamMgr() || u.team_id === S.me.team_id));
 
 // =====================================================================
 //  Cross-module hooks (main.js fills these; comms.js calls them)
@@ -298,6 +303,7 @@ export async function claim(entity, id) {
   return data || { ok: false };
 }
 export function claimFailMsg(r) {
+  if (r.reason === "team") return L(`🏷 Ye “${r.category}” ka lead hai — aapki team ka nahi. Apni team ke leads lo.`, `🏷 This is a “${r.category}” lead — not your team's. Take your team's leads.`);
   if (r.reason === "limit") return L(`Aapke paas already ${r.limit} active locks hain — pehle kuch release karo`, `You already hold ${r.limit} active locks — release some first`);
   if (r.reason === "locked") return L(`🔒 ${r.holder_name || "Koi aur"} is pe kaam kar raha hai (till ${dt(r.until)})`, `🔒 ${r.holder_name || "Someone"} is working on this (until ${dt(r.until)})`);
   if (r.reason === "cooldown") return L(`🚫 Is lead pe aapke chances khatam ho gaye — ${dt(r.until)} ke baad hi dobara le sakte ho. Zaroori hai to Admin se bolo, wo reset kar sakta hai.`,

@@ -8,6 +8,7 @@ import {
   toCSV, download, parseCSV, callFn, loadTeam, assignable, toastAction, friendly,
   HOOK, lockOf, canWork, lockBadge, claim, claimFailMsg, claimOkMsg, lockHistoryHtml, maskPhone, maskEmail, bannerCfg, bannerHtml, bannerUrl,
 } from "./core.js";
+import * as TM from "./teams.js";
 import {
   openComposer, ensureWork, viewInbox, viewTemplates, viewRequests, askRelease, releasedMsg, dropsUsed, openHandover, toggleNotifications, unreadCounts,
   requestAccess, startOutlookAutoSync, outlookForget, outlookConnect, outlookReady, openChip, gmailSetup,
@@ -199,7 +200,7 @@ function stopApp() {
 }
 
 let brandP = null; // the login screen can draw twice at boot → ask for the branding once
-const ME_COLS = "id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp, tour_done_at";
+const ME_COLS = "id, email, full_name, role, active, daily_target, categories, phone, designation, signature, mail_provider, lang, last_seen, pages, mail_webapp, tour_done_at, team_id";
 async function start() {
   fx?.stop(); fx = null;
   const { data: { session } } = await sb.auth.getSession();
@@ -835,7 +836,7 @@ VIEWS.dashboard = async (el) => {
   // calls in the chosen dates
   const myCalls = (calls || []).filter((c) => isMgr() || c.user_id === S.me.id);
   const perDay = callSeries(myCalls, from, to), callsN = myCalls.reduce((a, c) => a + Number(c.calls), 0);
-  const lb = isMgr() ? S.team.filter((u) => u.active && u.role !== "admin").map((u) => ({ u, c: myCalls.filter((c) => c.user_id === u.id).reduce((a, c) => a + Number(c.calls), 0) })).sort((a, b) => b.c - a.c) : [];
+  const lb = isMgr() ? assignable().filter((u) => u.role !== "admin").map((u) => ({ u, c: myCalls.filter((c) => c.user_id === u.id).reduce((a, c) => a + Number(c.calls), 0) })).sort((a, b) => b.c - a.c) : [];
   const lbMax = Math.max(1, ...lb.map((x) => x.c));
   const drOn = dateActive(DD), bs = drOn ? r.by_status || {} : s.by_status || {};
 
@@ -2781,7 +2782,8 @@ VIEWS.reports = async (el) => {
 //  TEAM (admin)
 // ---------------------------------------------------------------------
 VIEWS.team = async (el) => {
-  const [, { data: cnt0 }, { data: subs }, { data: ob }] = await Promise.all([
+  const [tm, , { data: cnt0 }, { data: subs }, { data: ob }] = await Promise.all([
+    import("./teams.js"),
     loadTeam(),
     sb.rpc("open_lead_counts"),
     sb.from("push_subs").select("user_id"),
@@ -2792,13 +2794,15 @@ VIEWS.team = async (el) => {
   const phones = {}; (subs || []).forEach((x) => { phones[x.user_id] = (phones[x.user_id] || 0) + 1; });
   el.innerHTML = `<div class="toolbar"><span class="mu">${S.team.filter((u) => u.active).length} active users · ${S.team.filter(online).length} online</span><span class="sp" style="flex:1"></span>
     <button class="btn" data-act="distribute">⚡ Pool auto-distribute</button><button class="btn primary" data-act="addUser">${ic("plus")} User</button></div>
+  ${isAdmin() ? tm.teamsCardHtml() : ""}
   <div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Naam</th><th>Role</th><th>${L("Pages", "Pages")}</th><th>Categories</th><th class="num">Target</th><th class="num">Open leads</th><th>Last seen</th><th>Status</th><th></th></tr></thead><tbody>
   ${S.team.map((u) => `<tr style="cursor:default"><td><div class="row" style="flex-wrap:nowrap"><span class="dot ${online(u) ? "on" : ""}"></span><div><div class="co">${h(u.full_name)}</div><div class="sub">${h(u.email)}</div></div></div></td>
-    <td>${h(roleLabel(u))}${u.role !== "admin" && isApprover(u.id) ? ` <span class="badge info" title="${h(L("OBF approve kar sakta hai", "Can approve OBFs"))}">✅ Director</span>` : ""}${phones[u.id] ? ` <span title="${h(L("Phone notification ON", "Phone notifications on") + " · " + phones[u.id])}">📲</span>` : ""}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
+    <td>${h(roleLabel(u))}${u.team_id ? ` <span class="badge acc" title="Team">👥 ${h(tm.teamName(u.team_id))}</span>` : ""}${u.role !== "admin" && isApprover(u.id) ? ` <span class="badge info" title="${h(L("OBF approve kar sakta hai", "Can approve OBFs"))}">✅ Director</span>` : ""}${phones[u.id] ? ` <span title="${h(L("Phone notification ON", "Phone notifications on") + " · " + phones[u.id])}">📲</span>` : ""}</td><td class="sub" title="${h((u.role === "admin" ? PAGEABLE : u.pages || rolePages(u.role)).map((r) => TITLES[r]).join(", "))}">${u.role === "admin" ? L("Sab", "All") : u.pages ? `<span class="badge acc">${u.pages.length} ${L("chune hue", "custom")}</span>` : `${rolePages(u.role).length} · ${L("role default", "role default")}`}</td><td class="sub">${h((u.categories || []).join(", ") || "All")}</td><td class="num">${u.daily_target}</td><td class="num">${num(cnt[u.id] || 0)}</td>
     <td class="sub">${h(ago(u.last_seen))}</td><td>${u.active ? '<span class="badge good">Active</span>' : '<span class="badge bad">Disabled</span>'}</td>
     <td style="white-space:nowrap"><button class="btn sm" data-act="editUser" data-id="${u.id}">Edit</button>${u.id !== S.me.id ? ` <button class="btn sm icon" data-act="pwUser" data-id="${u.id}" title="${h(L("Password badlo", "Change password"))}" aria-label="${h(L("Password badlo", "Change password"))}">🔑</button> <button class="btn sm" data-act="handover" data-id="${u.id}" title="${h(L("Iske saare leads / RFQs / tasks kisi aur ko do", "Move all their leads / RFQs / tasks to someone else"))}">🔁 Handover</button> <button class="btn sm ${u.active ? "danger" : ""}" data-act="toggleUser" data-id="${u.id}">${u.active ? "Disable" : "Enable"}</button>` : ""}</td></tr>`).join("")}
   </tbody></table></div></div>
   <p class="mu" style="font-size:12.5px">🔒 Disable karte hi user ka login band, aur uske pending (new/contacted) leads pool mein wapas. Har change Audit log mein record hota hai.</p>`;
+  if (isAdmin()) tm.wireTeams(el, () => VIEWS.team(el));
 };
 const catChecks = (sel = []) => `<div class="chips">${CATEGORIES.map((c) => `<label class="chip ${sel.includes(c) ? "on" : ""}"><input type="checkbox" class="sr" name="categories" data-multi="1" value="${h(c)}" ${sel.includes(c) ? "checked" : ""}>${h(c)}</label>`).join("")}</div><div class="mu" style="font-size:12px;margin-top:4px">Kuch select nahi = saari categories</div>`;
 const pwOk = (p) => p && p.length >= 10 && /[a-z]/i.test(p) && /\d/.test(p);
@@ -2857,7 +2861,8 @@ ACT.addUser = () => {
       <div><label class="f">Naam *</label><input class="input" name="full_name" maxlength="80" required></div>
       <div><label class="f">Email *</label><input class="input" name="email" type="email" maxlength="200" required></div>
       <div><label class="f">Role</label><select class="input" name="role">${ROLE_OPTS.map(([k, l]) => `<option value="${k}" ${k === "telecaller" ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-      <div><label class="f">Daily call target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="40"></div></div>
+      <div><label class="f">Daily call target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="40"></div>
+      ${S.teams?.length ? TM.teamSelectHtml(null) : ""}</div>
       <label class="f">Categories</label>${catChecks()}
       ${pageAccessHtml("telecaller", null)}
       ${approverHtml("telecaller", false)}
@@ -2873,10 +2878,11 @@ ACT.addUser = () => {
     if (!f.full_name || !f.email) return toast("Naam aur email daalo", true);
     if (!pwOk(f.password)) return toast("Password 10+ chars, letters + number", true);
     const post = POSTS[f.role] ? f.role : null; if (post) f.role = "admin";      // Director / IT Head = Admin rights + that designation
+    const teamId = f.team_id ? +f.team_id : null; delete f.team_id;
     const pages = pagesToSave(m, f.role); delete f.pages;
     if (pages && !pages.length) return toast(L("Kam se kam 1 page chuno", "Pick at least 1 page"), true);
     await callFn("admin-users", { action: "create", ...f });
-    if (post) { const { error: de } = await sb.from("profiles").update({ designation: POSTS[post] }).eq("email", f.email.trim().toLowerCase()); if (de) toast(friendly(de), true); }
+    if (post || teamId) { const { error: de } = await sb.from("profiles").update({ ...(post ? { designation: POSTS[post] } : {}), ...(teamId ? { team_id: teamId } : {}) }).eq("email", f.email.trim().toLowerCase()); if (de) toast(friendly(de), true); }
     if (pages) { const { error: pe } = await sb.from("profiles").update({ pages }).eq("email", f.email.trim().toLowerCase()); if (pe) toast(L("User bana, par page access save nahi hua: ", "User created, but page access not saved: ") + friendly(pe), true); }
     if ($("#uApprover", m)?.checked && f.role !== "admin") {
       const { data: nu } = await sb.from("profiles").select("id").eq("email", f.email.trim().toLowerCase()).maybeSingle();
@@ -2891,7 +2897,8 @@ ACT.editUser = (t) => {
     title: "Edit · " + u.full_name, body: `<form id="ef"><div class="grid2">
       <div><label class="f">Naam</label><input class="input" name="full_name" maxlength="80" value="${h(u.full_name)}"></div>
       <div><label class="f">Role</label><select class="input" name="role" ${u.id === S.me.id ? "disabled" : ""}>${ROLE_OPTS.map(([k, l]) => `<option value="${k}" ${k === (postOf(u) || u.role) ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-      <div><label class="f">Daily target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="${u.daily_target}"></div></div>
+      <div><label class="f">Daily target</label><input class="input" name="daily_target" type="number" min="0" max="500" value="${u.daily_target}"></div>
+      ${S.teams?.length ? TM.teamSelectHtml(u.team_id) : ""}</div>
       <label class="f">Categories</label>${catChecks(u.categories || [])}
       ${pageAccessHtml(u.role, u.pages)}
       ${approverHtml(u.role, isApprover(u.id))}</form>`,
@@ -2900,6 +2907,7 @@ ACT.editUser = (t) => {
   $$(".chip input", m).forEach((c) => c.onchange = () => c.parentElement.classList.toggle("on", c.checked));
   $("#es", m).onclick = (e) => busy(e.target, async () => {
     const f = formData($("#ef", m)); f.categories ||= []; f.daily_target = +f.daily_target || 0;
+    if ("team_id" in f) f.team_id = f.team_id ? +f.team_id : null;
     if (f.role && POSTS[f.role]) { f.designation = POSTS[f.role]; f.role = "admin"; }
     else if (f.role && postOf(u)) f.designation = null;              // was Director / IT Head, now another role
     f.pages = pagesToSave(m, f.role || u.role);
