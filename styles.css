@@ -1206,3 +1206,6 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .tt-cats { display: flex; flex-wrap: wrap; gap: 4px; }
 .tt-row { font-size: 13px; }
 .lockbar.free.pending { animation: lkPend 1s ease-in-out infinite alternate; }
+/* phone-only bits of a table row (e.g. the date under the customer name) */
+.ph-only { display: none; }
+@media (max-width: 640px) { .ph-only { display: block; } .tbl .ph-hide { display: none; } }

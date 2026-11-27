@@ -11,7 +11,7 @@ import { L } from "./i18n.js";
 
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-const day = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const day = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "\u00a0") : "—";
 const fyStart = (y) => `${y}-04-01`, fyEnd = (y) => `${y + 1}-03-31`;
 function periods() {
   const now = new Date(), y = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1, ago = new Date(now); ago.setFullYear(now.getFullYear() - 1); ago.setDate(ago.getDate() + 1);

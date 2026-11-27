@@ -329,8 +329,8 @@ export async function viewRenewals(el) {
     ${f === "erp" ? `<div class="banner" style="margin:0 0 12px;background:var(--warn-soft);border-color:transparent">❓ <div><b>${L("Ye renewals purane ERP se andaze se bane hain", "These renewals were guessed from the old ERP")}</b><br><span class="mu">${L("Date = aakhri quotation + 1 saal, isliye sach nahi bhi ho sakti. Jab tak aap confirm nahi karte, inka na overdue count hota hai, na reminder jaata hai, na quotation banti hai. Customer se poochke ✔ Haan, hai (date / amount sahi karke) ya ✕ Nahi hai dabao.", "Date = last quotation + 1 year, so it may be wrong. Until you confirm one, it is not counted as overdue, sends no reminder and makes no quotation. Ask the customer, then press ✔ Yes, it's real (fix date / amount) or ✕ Not a renewal.")}</span></div></div>` : ""}
     ${rs ? `<div class="mu" style="font-size:12.5px;margin:-4px 0 10px">🔍 “${h(rs)}”: ${data.length} ${L("mile", data.length === 1 ? "found" : "found")} ${["erp", "closed"].includes(f) ? "" : L("— saare renewals mein dhoondha (sirf 30 din wale nahi)", "— searched all renewals (not only the next 30 days)")}</div>` : ""}
     ${rp ? `<div class="mu" style="font-size:12.5px;margin:-4px 0 10px">🏷️ ${h(rp)}: ${data.length} ${L("renewal is filter mein", data.length === 1 ? "renewal in this view" : "renewals in this view")}${data.length ? ` · ${inrShort(data.reduce((a, r) => a + +(r.amount || 0), 0))}` : ""}</div>` : ""}
-    <div class="card"><div class="tbl-wrap">${!data.length ? empty("Is filter mein koi renewal nahi", "No renewals in this filter") : `<table class="tbl"><thead><tr><th>${L("Company", "Company")}</th><th>Product</th><th>${L("Type", "Type")}</th><th>${L("Expiry", "Expiry")}</th><th class="num">${L("Amount", "Amount")}</th><th>Owner</th><th></th></tr></thead><tbody>
-    ${data.map((r) => { const l = leads.get(r.lead_id) || {}; return `<tr data-rid="${r.id}"><td class="co">${h(l.company || "#" + r.lead_id)}</td><td>${h(r.product)}${r.qty > 1 ? ` <span class="mu">× ${h(+r.qty)}</span>` : ""}${r.vendor ? `<div class="sub">${h(r.vendor)}</div>` : ""}</td><td>${h(RKIND.find((k) => k[0] === r.kind)?.[1] || r.kind)}</td>
+    <div class="card"><div class="tbl-wrap">${!data.length ? empty("Is filter mein koi renewal nahi", "No renewals in this filter") : `<table class="tbl"><thead><tr><th>${L("Company", "Company")}</th><th>Product</th><th class="ph-hide">${L("Type", "Type")}</th><th>${L("Expiry", "Expiry")}</th><th class="num">${L("Amount", "Amount")}</th><th>Owner</th><th></th></tr></thead><tbody>
+    ${data.map((r) => { const l = leads.get(r.lead_id) || {}; return `<tr data-rid="${r.id}"><td class="co">${h(l.company || "#" + r.lead_id)}</td><td>${h(r.product)}${r.qty > 1 ? ` <span class="mu">× ${h(+r.qty)}</span>` : ""}${r.vendor ? `<div class="sub">${h(r.vendor)}</div>` : ""}</td><td class="ph-hide">${h(RKIND.find((k) => k[0] === r.kind)?.[1] || r.kind)}</td>
       <td>${h(dOnly(r.end_date))}<div>${renBadge(r)}</div></td><td class="num">${r.amount != null ? inr(r.amount) : "—"}</td><td>${h(userName(r.owner_id))}</td>
       <td style="white-space:nowrap">${r.status === "unconfirmed" ? `<button class="btn sm primary" data-rok="${r.id}">✔ ${L("Haan, hai", "Yes, it's real")}</button> <button class="btn sm danger" data-rno="${r.id}">✕ ${L("Nahi hai", "Not a renewal")}</button>`
         : r.status === "active" ? `<button class="btn sm" data-rmail="${r.id}" title="Email reminder">${ic("mail")}</button> <button class="btn sm" data-rwa="${r.id}" title="WhatsApp">${ic("wa")}</button> <button class="btn sm primary" data-rdone="${r.id}">✔ ${L("Renewed", "Renewed")}</button>` : ""}</td></tr>`; }).join("")}</tbody></table>`}</div></div>
@@ -808,27 +808,38 @@ export function checkIn(lead, done) {
 // =====================================================================
 //  DUPLICATE CLEANER + SMART SCORING (managers)
 // =====================================================================
-export async function viewDuplicates(el) {
-  const { data: groups, error } = await sb.rpc("find_duplicates"); if (error) throw error;
-  const all = await leadsById(groups.flatMap((g) => g.ids));
-  const { data: extra } = groups.length ? await sb.from("leads").select("id, call_count, created_at, score, source").in("id", [...all.keys()]) : { data: [] };
-  (extra || []).forEach((x) => Object.assign(all.get(x.id) || {}, x));
+// one call: the groups + the leads in them. Merge / "not a duplicate" take the card away at once (no reload)
+export async function viewDuplicates(el, again) {
+  const pick = new Map($$("input[type=radio]:checked", el).map((r) => [r.closest(".dupg")?.dataset.k, r.value]));   // keep choices across a redraw
+  const y = again ? window.scrollY : 0;
+  const { data: res, error } = await sb.rpc("dup_groups"); if (error) throw error;
+  const groups = res?.groups || [], all = new Map((res?.leads || []).map((l) => [l.id, l]));
   el.innerHTML = `<div class="toolbar"><span class="mu">${groups.length ? L(`${groups.length} duplicate groups mile`, `${groups.length} duplicate groups found`) : ""}</span><span class="sp" style="flex:1"></span>
     <button class="btn" id="rescore">⚡ ${L("Lead scores dobara calculate karo", "Recalculate lead scores")}</button></div>
-    ${!groups.length ? `<div class="card">${empty("Koi duplicate nahi mila — data saaf hai ✨", "No duplicates found — your data is clean ✨")}</div>` : groups.map((g, gi) => `<div class="card sec dupg" data-g="${gi}"><div class="card-h"><h3>${h(L({ "Same GSTIN": "Same GSTIN", "Same email": "Same email", "Same company name": "Same company naam" }[g.reason] || g.reason, g.reason))}</h3><span class="sp"></span>
+    ${!groups.length ? `<div class="card">${empty("Koi duplicate nahi mila — data saaf hai ✨", "No duplicates found — your data is clean ✨")}</div>` : groups.map((g, gi) => `<div class="card sec dupg" data-g="${gi}" data-k="${h(g.key)}"><div class="card-h"><h3>${h(L({ "Same GSTIN": "Same GSTIN", "Same email": "Same email", "Same company name": "Same company naam" }[g.reason] || g.reason, g.reason))}</h3><span class="sp"></span>
       <button class="btn sm" data-ign="${gi}">${L("Ye duplicate nahi hai", "Not a duplicate")}</button> <button class="btn sm primary" data-merge="${gi}">🔗 ${L("Merge karo", "Merge")}</button></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>${L("Rakhna hai", "Keep")}</th><th>${L("Company", "Company")}</th><th>Contact</th><th>Phone / Email</th><th>Status</th><th>Owner</th><th class="num">Calls</th><th>${L("Added", "Added")}</th></tr></thead><tbody>
-      ${g.ids.map((id, i) => { const l = all.get(id) || { id }; return `<tr style="cursor:default"><td><input type="radio" name="p${gi}" value="${id}" ${i === 0 ? "checked" : ""} aria-label="Keep"></td><td><a href="#/leads/${id}" class="co">${h(l.company || "#" + id)}</a><div class="sub">${h([l.city, l.gstin].filter(Boolean).join(" · "))}</div></td><td>${h(l.contact_name || "—")}</td><td class="sub">${h(l.phone || "")}${l.email ? "<br>" + h(l.email) : ""}</td><td>${statusBadge(l.status)}</td><td>${h(userName(l.owner_id))}</td><td class="num">${num(l.call_count)}</td><td class="sub">${h(dOnly(l.created_at))}</td></tr>`; }).join("")}
+      ${g.ids.map((id, i) => { const l = all.get(id) || { id }; return `<tr style="cursor:default"><td><input type="radio" name="p${gi}" value="${id}" ${(pick.has(g.key) ? pick.get(g.key) === String(id) : i === 0) ? "checked" : ""} aria-label="Keep"></td><td><a href="#/leads/${id}" class="co">${h(l.company || "#" + id)}</a><div class="sub">${h([l.city, l.gstin].filter(Boolean).join(" · "))}</div></td><td>${h(l.contact_name || "—")}</td><td class="sub">${h(l.phone || "")}${l.email ? "<br>" + h(l.email) : ""}</td><td>${statusBadge(l.status)}</td><td>${h(userName(l.owner_id))}</td><td class="num">${num(l.call_count)}</td><td class="sub">${h(dOnly(l.created_at))}</td></tr>`; }).join("")}
       </tbody></table></div></div>`).join("")}
     <p class="mu" style="font-size:12.5px">🔗 ${h(L("Merge: jo lead “Rakhna hai” chuna wo bachegi — baaki ke calls, emails, quotations, tasks, orders, tickets usme aa jayenge, khaali fields bhar jayenge, extra phone numbers alt numbers ban jayenge.", "Merge: the lead marked “Keep” stays — the others' calls, emails, quotations, tasks, orders and tickets move into it, empty fields get filled and extra phone numbers become alternate numbers."))}</p>`;
+  if (again) window.scrollTo(0, y);
+  const head = $(".toolbar .mu", el);
+  const gone = (card) => {     // the card leaves; the count follows
+    card.style.transition = "opacity .18s, transform .18s"; card.style.opacity = "0"; card.style.transform = "scale(.98)";
+    setTimeout(() => { card.remove(); const left = $$(".dupg", el).length; if (head) head.textContent = left ? L(`${left} duplicate groups mile`, `${left} duplicate groups found`) : ""; }, 180);
+  };
   $("#rescore", el).onclick = (e) => busy(e.target, async () => { const { data, error: x } = await sb.rpc("recompute_scores"); if (x) throw x; toast(L(`⚡ ${data} leads ka score update hua`, `⚡ ${data} lead scores updated`)); });
   $$("[data-merge]", el).forEach((b) => b.onclick = () => busy(b, async () => {
-    const g = groups[+b.dataset.merge], keep = +$(`input[name=p${b.dataset.merge}]:checked`, el).value, others = g.ids.filter((x) => x !== keep);
+    const gi = +b.dataset.merge, g = groups[gi], keep = +$(`input[name=p${gi}]:checked`, el).value, others = g.ids.filter((x) => x !== keep);
     if (!(await confirmBox(L(`${others.length} lead(s) ko "${all.get(keep)?.company}" mein merge karna hai? Ye wapas nahi hoga.`, `Merge ${others.length} lead(s) into "${all.get(keep)?.company}"? This cannot be undone.`), L("Merge karo", "Merge")))) return;
+    const card = b.closest(".dupg");
     const { error: x } = await sb.rpc("merge_leads", { p_primary: keep, p_others: others }); if (x) throw x;
-    toast(L("🔗 Merge ho gaya", "🔗 Merged")); HOOK.softRefresh(); viewDuplicates(el);
+    toast(L("🔗 Merge ho gaya", "🔗 Merged")); gone(card); HOOK.softRefresh();
+    // another group that had a merged-away lead is out of date → redraw it quietly from fresh data
+    if (groups.some((o, oi) => oi !== gi && o.ids.some((id) => others.includes(id)))) setTimeout(() => { if (el.isConnected) viewDuplicates(el, true).catch(() => {}); }, 250);
   }));
   $$("[data-ign]", el).forEach((b) => b.onclick = () => busy(b, async () => {
-    const { error: x } = await sb.from("duplicate_ignores").insert({ key: groups[+b.dataset.ign].key }); if (x) throw x; viewDuplicates(el);
+    const card = b.closest(".dupg");
+    const { error: x } = await sb.from("duplicate_ignores").insert({ key: groups[+b.dataset.ign].key }); if (x) throw x; gone(card);
   }));
 }
 

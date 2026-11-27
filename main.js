@@ -1877,6 +1877,13 @@ const w3 = (n) => (n >= 100 ? W1[Math.floor(n / 100)] + " Hundred" + (n % 100 ? 
 function wInt(n) { if (!n) return "Zero"; const p = [], cr = Math.floor(n / 1e7); n %= 1e7; const la = Math.floor(n / 1e5); n %= 1e5; const th = Math.floor(n / 1e3); n %= 1e3; if (cr) p.push(wInt(cr) + " Crore"); if (la) p.push(w2(la) + " Lakh"); if (th) p.push(w2(th) + " Thousand"); if (n) p.push(w3(n)); return p.join(" "); }
 const rupeesWords = (v) => { v = r2(v); const r = Math.floor(v), ps = Math.round((v - r) * 100); return wInt(r) + " Rupees" + (ps ? " and " + w2(ps) + " Paise" : "") + " Only"; };
 
+// product filter words: a picked suggestion ("Autodesk Civil 3D") searches its product name ("Civil 3D") — quotation
+// lines rarely carry the brand; typed text: every word, any order ("lt autocad" finds "AutoCAD LT 2026")
+const PROD_LABELS = new Map();
+const prodWords = (v) => {
+  const t = String(v || "").trim().toLowerCase(), base = PROD_LABELS.get(t) || t;
+  return [...new Set(base.toLowerCase().split(/[^\p{L}\p{N}.+-]+/u).filter((w) => w.length > 1 || /\d/.test(w)))];
+};
 // Quotations page: search (number / customer), status, CRM vs ERP history, one customer, 100 at a time
 const QF = { q: "", st: "", src: "", lead: null, leadName: "", n: 100, p: "", v: "" };   // p = product filter · v = "" (quotations) | "ren" (⚡ renewal drafts)
 const QD = dateState("quotes");
@@ -1915,7 +1922,9 @@ VIEWS.quotes = async (el, soft) => {
     $("#qprod", el).oninput = (e) => { clearTimeout(tp); tp = setTimeout(() => { QF.p = e.target.value.trim(); QF.n = 100; e.target.classList.toggle("on", !!QF.p); loadQuotes(el); }, 320); };
     // suggestions: the product list (brand + name), loaded once
     loadProducts().then((ps) => { const dl = $("#qprodL", el); if (!dl) return;
-      const names = [...new Set((ps || []).filter((x) => x.active !== false).map((x) => [x.brand, x.name].filter(Boolean).join(" ").trim()).filter(Boolean))].sort();
+      const act = (ps || []).filter((x) => x.active !== false && x.name);
+      act.forEach((x) => PROD_LABELS.set([x.brand, x.name].filter(Boolean).join(" ").trim().toLowerCase(), x.name));
+      const names = [...new Set(act.map((x) => [x.brand, x.name].filter(Boolean).join(" ").trim()).filter(Boolean))].sort();
       dl.innerHTML = names.slice(0, 400).map((n) => `<option value="${h(n)}">`).join(""); }).catch(() => {});
     $$("#qst .chip", el).forEach((b) => b.onclick = () => {
       QF.st = b.dataset.st; QF.n = 100;
@@ -1946,10 +1955,10 @@ async function loadQuotes(el) {
   if (QF.v === "ren") return loadRenDrafts(el, seq);
   $("#qren", el).innerHTML = "";
   if (QF.v === "pf") return loadProformas(el, seq);
-  const pw = QF.p.toLowerCase().split(/[^\p{L}\p{N}.+-]+/u).filter(Boolean);
+  const pw = prodWords(QF.p);
   let q = sb.from("quotations").select("id, quote_no, to_party, status, grand_total, quote_date, created_at, owner_id, lead_id, view_count, customer_response, import_batch, note_internal" + (pw.length ? ", items" : ""), { count: "exact" })
     .order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, QF.n - 1);
-  if (pw.length) q = q.ilike("items_text", `%${pw.join("%")}%`);
+  for (const w of pw) q = q.ilike("items_text", `%${w}%`);            // every word, in any order
   q = q.eq("ren_draft", false);         // CRM's renewal drafts live in their own tab
   if (QF.st) q = q.eq("status", QF.st);
   q = applyDates(q, "quote_date", QD);
@@ -1969,8 +1978,8 @@ async function loadQuotes(el) {
     .slice(0, 2).map((it) => `<div class="qhit">🏷 ${h(String(it.desc).slice(0, 90))}${+it.qty > 1 ? ` <b>× ${num(+it.qty)}</b>` : ""}${it.opt ? ` <span class="mu">(${L("optional", "optional")})</span>` : ""}</div>`).join("");
   $("#qbody", el).innerHTML = !data.length ? (filtered ? `<div class="empty"><b>${L("Kuch nahi mila", "Nothing found")}</b>${L("Search ya filter badal ke dekho", "Try another search or filter")}</div>`
       : `<div class="empty"><b>Abhi koi quotation nahi</b>Lead ya RFQ se “Quotation banao” dabao.</div>`)
-    : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th>Date</th><th></th></tr></thead><tbody>
-  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}${hit(q)}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${q.owner_id ? h(userName(q.owner_id)) : crmMade(q) ? `<span class="badge" title="${h(L("CRM ne renewal ke liye khud banayi", "Made by the CRM for a renewal"))}">⚡ CRM</span>` : h(erpBy(q) || "—")}</td><td class="sub">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
+    : `<table class="tbl"><thead><tr><th>No.</th><th>Customer</th><th>Status</th><th class="num">Total</th><th>Owner</th><th class="ph-hide">Date</th><th></th></tr></thead><tbody>
+  ${data.map((q) => `<tr data-act="quote" data-id="${q.id}"><td class="mono">${h(q.quote_no)}${q.import_batch ? ` <span class="badge" title="${h(L("Purane ERP (ant.myerp) se aayi", "Brought in from the old ERP (ant.myerp)"))}">ERP</span>` : ""}</td><td class="co">${h(q.to_party?.name || "")}<div class="sub ph-only">${h(dOnly(q.quote_date || q.created_at))}</div>${hit(q)}</td><td><span class="badge ${q.status === "won" ? "good" : q.status === "lost" ? "bad" : q.status === "sent" ? "info" : ""}">${h(q.status)}</span>${q.customer_response === "accepted" ? ' <span class="badge good" title="Customer accepted online">✅</span>' : q.customer_response === "changes" ? ' <span class="badge warn" title="Customer requested changes">✏️</span>' : ""}${q.view_count ? ` <span class="badge info" title="${L("Customer ne online dekhi", "Viewed online by customer")}">👁 ${q.view_count}</span>` : ""}</td><td class="num">${inr(q.grand_total)}</td><td>${q.owner_id ? h(userName(q.owner_id)) : crmMade(q) ? `<span class="badge" title="${h(L("CRM ne renewal ke liye khud banayi", "Made by the CRM for a renewal"))}">⚡ CRM</span>` : h(erpBy(q) || "—")}</td><td class="sub ph-hide">${h(dOnly(q.quote_date || q.created_at))}</td><td style="width:44px">${isMgr() || q.owner_id === S.me.id ? `<button class="btn ghost icon sm danger" data-act="delQuote" data-id="${q.id}" data-no="${h(q.quote_no)}" data-co="${h(q.to_party?.name || "")}" title="${L("Delete karo", "Delete")}" aria-label="Delete">${ic("trash")}</button>` : ""}</td></tr>`).join("")}</tbody></table>`;
   const total = count ?? data.length;
   $("#qfoot", el).innerHTML = data.length ? `<div class="row" style="padding:10px 16px;border-top:1px solid var(--line)"><span class="mu">${L(`${num(data.length)} / ${num(total)} dikh rahi hain`, `Showing ${num(data.length)} of ${num(total)}`)}</span><span class="sp" style="flex:1"></span>${total > data.length ? `<button class="btn sm" id="qmore">${L("100 aur dikhao", "Show 100 more")}</button>` : ""}</div>` : "";
   const more = $("#qmore", el);

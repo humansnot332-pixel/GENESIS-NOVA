@@ -30,7 +30,7 @@ const num = (v) => { const n = parseFloat(String(v ?? "").replace(/[^\d.]/g, "")
 const okDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d + "T00:00:00")) && new Date(d + "T00:00:00").toISOString().slice(0, 10) === d;
 const addDays = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 const yearBefore = (d) => { const x = new Date(d + "T00:00:00Z"); x.setUTCFullYear(x.getUTCFullYear() - 1); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); };
-const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "\u00a0") : "—";
 const guessKind = (p, t) => {
   const x = `${t || ""} ${p || ""}`.toLowerCase();
   if (/\bamc\b|maintenance|engineer|\bfms\b|facility/.test(x)) return "amc";

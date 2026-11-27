@@ -10,7 +10,7 @@ if (!window.supabase) throw new Error("supabase-js failed to load");
 const UNDO_TABLES = /\/rest\/v1\/(leads|rfqs|quotations|products|renewals|orders|invoices|payments|tickets|tasks|message_templates|email_messages|announcements)\?/;
 const UNDO_RPC = /\/rest\/v1\/rpc\/(merge_leads|assign_leads|undo_import)\b/;
 // look-ups sent as POST: they are not "my change", so they must not hide a teammate's live update
-const READ_RPC = /\/rest\/v1\/rpc\/(mail_status|dashboard_stats|calls_report|stale_locks|recent_changes|public_branding|product_costs|lock_bans|lead_quality|lead_cities|heartbeat|find_duplicates|email_report|daily_report|banner_team_status|badge_counts)\b/;
+const READ_RPC = /\/rest\/v1\/rpc\/(mail_status|dashboard_stats|calls_report|stale_locks|recent_changes|public_branding|product_costs|lock_bans|lead_quality|lead_cities|heartbeat|find_duplicates|dup_groups|lead_dupes|rfq_dupes|customer_sales|email_report|daily_report|banner_team_status|badge_counts)\b/;
 async function crmFetch(input, init = {}) {
   const res = await fetch(input, init);
   try {
@@ -89,8 +89,15 @@ export function ago(t) {
   const v = a < 60 ? "abhi" : a < 3600 ? Math.round(a / 60) + " min" : a < 86400 ? Math.round(a / 3600) + " ghante" : Math.round(a / 86400) + " din";
   return a < 60 ? v : f ? v + " mein" : v + " pehle";
 }
-export const dt = (t) => t ? new Date(t).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
-export const dOnly = (t) => t ? new Date(t).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+// dates never break inside ("14 Nov 2026" stays on one line in narrow table cells); a plain "YYYY-MM-DD" is that local day;
+// date + time shows the year when it is not this year (old ERP history read "12 Mar, 10:30 am" with no year)
+export const nbsp = (s) => String(s).replace(/ /g, "\u00a0");
+const asDate = (t) => new Date(typeof t === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t + "T00:00:00" : t);
+export const dt = (t) => {
+  if (!t) return "—"; const d = asDate(t); if (isNaN(d)) return "—";
+  return nbsp(d.toLocaleString("en-IN", { day: "2-digit", month: "short", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}), hour: "2-digit", minute: "2-digit" })).replace(/,\u00a0/, ", ");
+};
+export const dOnly = (t) => { if (!t) return "—"; const d = asDate(t); return isNaN(d) ? "—" : nbsp(d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })); };
 export const telHref = (p) => { const d = String(p || "").replace(/[^\d+]/g, ""); return d ? "tel:" + d : ""; };
 export const waHref = (p, text = "") => {
   let d = String(p || "").replace(/\D/g, "");
