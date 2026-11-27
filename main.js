@@ -939,9 +939,14 @@ VIEWS.today = async (el) => {
 let poolIds = [];
 ACT.callNext = (b) => busy(b, async () => {
   if (queueIds.length) return openLead(queueIds[0], { queue: true });
-  for (const id of poolIds.slice(0, 15)) {                 // grab the next free lead nobody else took
-    const r = await claim("lead", id);
-    if (r.ok) { poolIds = poolIds.filter((x) => x !== id); softRefresh(); return openLead(id, { queue: true }); }
+  for (const id of poolIds.slice(0, 15)) {                 // grab the next free lead nobody else took — lock + load together
+    const [r, bundle] = await Promise.all([claim("lead", id), leadBundle(id)]);
+    if (r.ok) {
+      poolIds = poolIds.filter((x) => x !== id); softRefresh();
+      const [{ data: l }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = bundle;
+      if (!l) return openLead(id, { queue: true });
+      return openLead(id, { queue: true, have: { l: { ...l, owner_id: S.me.id, locked_at: new Date().toISOString(), lock_until: r.until || l.lock_until }, acts, tasks, lhist, mails } });
+    }
     if (r.reason === "limit") return toast(claimFailMsg(r), true);
   }
   toast("Abhi koi free lead nahi mila — refresh karke dekho", true);
@@ -955,20 +960,26 @@ function closeDrawer() { $$(".drawer, .scrim:not(.m)").forEach((n) => n.remove()
 let leadSeq = 0;   // only the latest openLead() call may draw (stops two drawers stacking on double-click / double route)
 // a lock's end: a won customer's lock never ends ("infinity" in the database)
 const lockTill = (u) => { const d = u ? new Date(u) : null; return !d || isNaN(d) || d.getFullYear() > 9000 ? L("hamesha ke liye (won)", "permanently (won)") : L("till ", "until ") + dt(u); };
+// everything the lead drawer shows, in one round (also used to prefetch the next lead of the queue)
+const leadBundle = (id) => Promise.all([
+  sb.from("leads").select("*").eq("id", id).single(),
+  sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
+  sb.from("tasks").select("*").eq("lead_id", id).eq("done", false).order("due_at"),
+  sb.from("lock_history").select("*").eq("entity", "lead").eq("entity_id", id).order("at", { ascending: false }).limit(30),
+  sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20),
+]);
+let nextPre = null;      // { id, p, at } the next queue lead, already loading
 async function openLead(id, opt = {}) {
   const seq = ++leadSeq;
   const panelP = leadPanelData(id), salesP = Promise.resolve(sb.rpc("customer_sales", { p_from: null, p_to: null, p_q: null, p_cat: null, p_owner: null, p_lead: id, p_limit: 1 }));   // starts now (supabase queries are lazy)
   // opt.have = the drawer's own data, just changed on this screen (e.g. after "Lock & start") → draw at once, no refetch
   const hv = opt.have; opt = { ...opt, have: undefined };
+  const pre = nextPre && nextPre.id === id && Date.now() - nextPre.at < 60e3 ? nextPre.p : null; if (pre) nextPre = null;
   const [{ data: l, error }, { data: acts }, { data: tasks }, { data: lhist }, { data: mails }] = hv
     ? [{ data: hv.l, error: null }, { data: hv.acts }, { data: hv.tasks }, { data: hv.lhist }, { data: hv.mails }]
-    : await Promise.all([
-    sb.from("leads").select("*").eq("id", id).single(),
-    sb.from("activities").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(100),
-    sb.from("tasks").select("*").eq("lead_id", id).eq("done", false).order("due_at"),
-    sb.from("lock_history").select("*").eq("entity", "lead").eq("entity_id", id).order("at", { ascending: false }).limit(30),
-    sb.from("email_messages").select("id, direction, counterpart, subject, snippet, intent, created_at, user_id").eq("lead_id", id).order("created_at", { ascending: false }).limit(20),
-  ]);
+    : await (pre || leadBundle(id));
+  // working through a queue: the next lead starts loading now, so "next" opens at once
+  if (opt.queue && !hv) { const nx = queueIds.filter((x) => x !== id)[0]; if (nx && nextPre?.id !== nx) nextPre = { id: nx, p: leadBundle(nx), at: Date.now() }; }
   const lastDrop = (lhist || []).find((x) => !x.to_user && x.reason);
   if (error?.code === "PGRST116") return toast(L("Ye lead nahi mila — shayad delete ho gaya hai ya aapke access mein nahi hai", "Lead not found — it may have been deleted or is outside your access"), true);
   if (error) return fail(error);
@@ -1096,10 +1107,17 @@ async function openLead(id, opt = {}) {
     if (a === "release" || a === "force") {
       const why = await askRelease({ force: a === "force", holder: lk.holder, used: dropsUsed(lhist) });
       if (why === false) return;
+      const bar = $(".lockbar", d);
+      if (bar) { bar.className = "lockbar free pending"; bar.innerHTML = `🔓 <div><b>${L("Release ho raha hai…", "Releasing…")}</b></div>`; }
       const { data, error: e1 } = await sb.rpc("release", { p_entity: "lead", p_id: id, p_reason: why });
-      if (e1) throw e1;
+      if (e1) { reopen(); throw e1; }
       toast(a === "force" ? (data?.ok ? L("🔓 Lock hata diya — lead pool mein hai", "🔓 Lock removed — lead is in the pool") : L("Release nahi hua", "Couldn't release")) : releasedMsg(data), !data?.ok || !!data?.banned_until); after();
-      return opt.queue ? nextInQueue(id) : reopen();
+      if (opt.queue) return nextInQueue(id);
+      if (!data?.ok) return reopen();
+      // free now: draw straight from what's on screen (no reload)
+      const now = new Date().toISOString();
+      const h2 = [{ entity: "lead", entity_id: id, why: a === "force" ? "manager" : "release", from_user: l.owner_id, to_user: null, at: now, reason: why || null }, ...(lhist || [])];
+      return openLead(id, { ...opt, have: { l: { ...l, owner_id: null, lock_until: null, locked_at: null }, acts, tasks, lhist: h2, mails } });
     }
     if (a === "request") return requestAccess("lead", l);
   }));

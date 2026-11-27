@@ -1205,3 +1205,4 @@ details.stg > summary::-webkit-details-marker { display: none; }
 .tt-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px; }
 .tt-cats { display: flex; flex-wrap: wrap; gap: 4px; }
 .tt-row { font-size: 13px; }
+.lockbar.free.pending { animation: lkPend 1s ease-in-out infinite alternate; }

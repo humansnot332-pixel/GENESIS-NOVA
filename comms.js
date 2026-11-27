@@ -1441,7 +1441,7 @@ export function askRelease({ force = false, holder = "", used = 0 } = {}) {
       foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" id="rrGo">🔓 Release</button>`,
     });
     const inp = $("#rrT", m);
-    $$("[data-rr]", m).forEach((c) => c.onclick = () => { $$("[data-rr]", m).forEach((x) => x.classList.toggle("on", x === c)); inp.value = c.dataset.rr; });
+    $$("[data-rr]", m).forEach((c) => c.onclick = () => { $$("[data-rr]", m).forEach((x) => x.classList.toggle("on", x === c)); inp.value = c.dataset.rr; closeModal(); fin(c.dataset.rr); });   // one tap = done
     $("#rrGo", m).onclick = () => {
       const v = inp.value.trim();
       if (!force && !v) { inp.focus(); return toast(L("Ek wajah chuno — agle bande ke kaam aayegi", "Pick a reason — it helps the next person"), true); }
